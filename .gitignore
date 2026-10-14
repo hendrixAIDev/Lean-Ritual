@@ -1,0 +1,6 @@
+.env
+data/
+node_modules/
+
+# build.js 生成
+public/index.html

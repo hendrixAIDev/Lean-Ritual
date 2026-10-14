@@ -1,0 +1,13 @@
+[Unit]
+Description=Bojin Rike
+After=network.target
+
+[Service]
+User=bojin
+WorkingDirectory=/opt/bojin
+EnvironmentFile=/opt/bojin/.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

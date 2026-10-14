@@ -1,0 +1,2090 @@
+<title>薄肌日课</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* 布局：手机优先的单栏训练本，底部五个标签；数字用窄体，像杠铃片上的刻字 */
+:root{
+  --bg:#EEF2F0; --surface:#FFFFFF; --sunk:#E3E9E6; --ink:#15201C; --muted:#5B6964; --line:#D3DBD7;
+  --accent:#0C7560; --accent-soft:#D5EBE4; --on-accent:#FFFFFF;
+  --good:#2C7A4B; --warn:#A5610A; --bad:#A83A3A; --warn-soft:#F6E7CF; --bad-soft:#F4DADA;
+  --f-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  --f-num:"Barlow Condensed","DIN Alternate","Arial Narrow",var(--f-body);
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1412; --surface:#161E1B; --sunk:#1D2724; --ink:#E3EAE7; --muted:#8FA09A; --line:#2A3632;
+  --accent:#3FBF9E; --accent-soft:#17362E; --on-accent:#05211A;
+  --good:#5BC285; --warn:#E3A24A; --bad:#E77B7B; --warn-soft:#3A2C16; --bad-soft:#3B1E1E; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1412; --surface:#161E1B; --sunk:#1D2724; --ink:#E3EAE7; --muted:#8FA09A; --line:#2A3632;
+  --accent:#3FBF9E; --accent-soft:#17362E; --on-accent:#05211A;
+  --good:#5BC285; --warn:#E3A24A; --bad:#E77B7B; --warn-soft:#3A2C16; --bad-soft:#3B1E1E; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+#app{max-width:560px;margin:0 auto;padding-inline:16px;padding-block:12px 96px}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.3}
+h1{font-size:22px;font-weight:700}
+h2{font-size:17px;font-weight:700}
+h3{font-size:15px;font-weight:700}
+p{margin:0}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.between{justify-content:space-between}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--muted);font-weight:500}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:4px 10px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:5}
+.datebar{display:flex;align-items:center;gap:4px}
+.datebar .d{font-family:var(--f-num);font-size:22px;font-weight:600;min-width:7.5em;text-align:center}
+.iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);width:34px;height:34px;border-radius:8px;font-size:16px;cursor:pointer}
+button{font:inherit;cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:8px 14px;border-radius:8px;font-weight:500}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.block{width:100%;padding:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.danger{color:var(--bad)}
+.link{background:none;border:none;color:var(--accent);padding:0;font-weight:500}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:var(--sunk);font-size:13px;color:var(--ink);border:1px solid transparent;white-space:nowrap}
+.chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);font-weight:700}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+button.chip{cursor:pointer}
+.tip .chip:not(.on){background:var(--surface);border-color:var(--line)}
+label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px;min-width:0}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+textarea{min-height:64px;resize:vertical}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.checks{display:flex;flex-wrap:wrap;gap:6px}
+.checks input{position:absolute;opacity:0;width:1px;height:1px}
+.checks label{flex-direction:row}
+.checks span{display:inline-block;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
+.checks input:checked+span{background:var(--accent-soft);border-color:var(--accent);font-weight:700}
+.checks input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.sec-n{font-family:var(--f-num);font-size:26px;color:var(--accent);font-weight:700;line-height:1}
+.ex{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.ex:first-of-type{border-top:none;padding-top:0}
+.ex-h{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ex-h b{font-size:15px}
+.presc{font-family:var(--f-num);font-size:18px;font-weight:600;white-space:nowrap}
+.sets{display:grid;grid-template-columns:2.2em 1fr 1fr;gap:6px;align-items:center}
+.sets .n{font-family:var(--f-num);color:var(--muted);font-size:15px}
+.sets input{padding:6px 8px;font-family:var(--f-num);font-size:17px}
+.tip{background:var(--sunk);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink)}
+.tip.warn{background:var(--warn-soft)}
+.tip.bad{background:var(--bad-soft)}
+.bar{height:8px;background:var(--sunk);border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.bar i.over{background:var(--warn)}
+.macro{display:grid;grid-template-columns:3.2em 1fr auto;gap:8px;align-items:center;font-size:13px}
+.big{font-family:var(--f-num);font-size:34px;font-weight:700;line-height:1}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.kpi{display:flex;flex-direction:column;gap:2px;min-width:0}
+.kpi .v{font-family:var(--f-num);font-size:22px;font-weight:600;line-height:1.1}
+.kpi .k{font-size:12px;color:var(--muted)}
+.meal{display:grid;grid-template-columns:84px 1fr;gap:12px;border-top:1px solid var(--line);padding-top:12px}
+.meal:first-child{border-top:none;padding-top:0}
+.meal .ph{width:84px;height:84px;border-radius:8px;background:var(--sunk);object-fit:cover;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
+.meal .body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.meal .more{display:flex;flex-wrap:wrap;gap:8px}
+.meal .more figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
+.meal .more img,.meal .more .ph2{width:56px;height:56px;border-radius:6px;object-fit:cover;background:var(--sunk)}
+.previews{display:flex;gap:6px;overflow-x:auto}.previews .preview{width:auto;max-width:48%;flex:1 1 0}
+label.chip input[type=file]{display:none}
+.preview{max-height:180px;border-radius:8px;object-fit:cover;width:100%}
+.ins{display:grid;grid-template-columns:6px 1fr;gap:10px}
+.ins .s{border-radius:3px;background:var(--muted)}
+.ins.good .s{background:var(--good)} .ins.warn .s{background:var(--warn)} .ins.bad .s{background:var(--bad)} .ins.info .s{background:var(--accent)}
+.ins .b{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);z-index:10}
+.tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:560px}
+.tabs button{background:none;border:none;color:var(--muted);padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
+.tabs button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
+.tabs button.on{color:var(--accent);font-weight:700}
+.banner{font-size:13px;padding:8px 12px;border-radius:8px;background:var(--warn-soft);color:var(--ink)}
+.day{display:flex;justify-content:space-between;gap:8px;padding-block:10px;border-top:1px solid var(--line);align-items:center}
+.day:first-child{border-top:none}
+.chart{width:100%;height:auto;display:block}
+.ai-out{white-space:pre-wrap;font-size:14px}
+ul.clean{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+details.how{background:var(--sunk);border-radius:8px;padding:6px 10px}
+details.how summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:500}
+details.how[open]{padding-bottom:10px}
+details.how[open] > *:not(summary){margin-top:6px}
+.toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:99px;font-size:14px;z-index:20;pointer-events:none}
+.hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
+.hero .big{font-size:40px;color:var(--accent)}
+@media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div id="app"><p class="muted" style="padding-top:40px;text-align:center">正在载入薄肌日课…</p></div>
+<nav class="tabs" id="tabs" hidden></nav>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* ============ 纲领数据 ============ */
+// 独立部署版（window.claude.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
+const HOSTED = !!window.claude?.hosted;
+const GUIDE_URL = HOSTED ? "/guide.html" : "https://claude.ai/code/artifact/202e9d14-97d7-4406-a180-3b8f1642c637";
+const ORDER = ["push","pull","legs"];
+function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
+const PROGRAM = {
+  push:{label:"推", title:"Day 1 · 推", ex:[
+    E("上斜杠铃卧推",3,4,6,"3 分钟",2.5,{shoulder:"上斜哑铃卧推（中立握）",wrist:"上斜哑铃卧推",elbow:"上斜哑铃卧推"},{name:"下斜俯卧撑（脚垫高）",lo:6,hi:12,inc:0,subs:{shoulder:"上斜俯卧撑（手撑高处）",wrist:"上斜俯卧撑（手撑高处）"}}),
+    E("平板杠铃卧推",3,4,6,"3 分钟",2.5,{shoulder:"哑铃地板卧推",wrist:"平板哑铃卧推",elbow:"平板哑铃卧推"},{name:"俯卧撑（可背负重）",lo:6,hi:12,inc:0,subs:{shoulder:"上斜俯卧撑（手撑高处）"}}),
+    E("站姿杠铃推举",3,4,6,"3 分钟",2.5,{shoulder:"地雷架单臂推举",lowback:"坐姿哑铃推举",wrist:"坐姿哑铃推举"},{name:"派克俯卧撑",lo:6,hi:12,inc:0,subs:{shoulder:{name:"弹力带侧平举",lo:12,hi:20}}}),
+    E("侧平举",3,10,15,"1–2 分钟",1,{shoulder:"侧平举（轻重量，只抬到 70°）"},{name:"弹力带侧平举",lo:12,hi:20,inc:0}),
+    E("三头伸展（绳索/哑铃）",3,8,12,"1–2 分钟",1,{elbow:"绳索下压（轻重量）"},{name:"窄距俯卧撑",lo:8,hi:15,inc:0})
+  ]},
+  pull:{label:"拉", title:"Day 2 · 拉", ex:[
+    E("硬拉",3,4,6,"3 分钟",5,{lowback:{name:"杠铃臀推",lo:8,hi:10},hip:"六角杠铃硬拉（无痛幅度）"},{name:"单腿罗马尼亚硬拉（背包负重）",lo:8,hi:12,inc:0,subs:{lowback:{name:"臀桥（可背包负重）",lo:10,hi:15},hip:{name:"臀桥（可背包负重）",lo:10,hi:15}}}),
+    E("引体向上（能做 6 个后负重）",3,4,6,"3 分钟",2.5,{shoulder:"高位下拉（中立握）",elbow:"高位下拉（中立握）"},{name:"引体向上",lo:4,hi:10,inc:0}),
+    E("杠铃划船",3,4,6,"3 分钟",2.5,{lowback:"胸托哑铃划船"},{name:"反向划船（桌下或低杠）",lo:6,hi:12,inc:0}),
+    E("面拉",3,12,15,"1–2 分钟",1,{},{name:"弹力带面拉",lo:15,hi:20,inc:0}),
+    E("二头弯举",3,8,12,"1–2 分钟",1,{elbow:"锤式弯举（轻重量）",wrist:"锤式弯举"},{name:"背包弯举",lo:10,hi:15,inc:0})
+  ]},
+  legs:{label:"腿+肩", title:"Day 3 · 腿+肩", ex:[
+    E("深蹲",3,4,6,"3 分钟",5,{knee:"箱式深蹲（无痛深度）",lowback:{name:"腿举",lo:6,hi:10},hip:"高脚杯深蹲（无痛深度）",ankle:"箱式深蹲（脚跟垫高）"},{name:"保加利亚分腿蹲",lo:6,hi:12,inc:0,subs:{lowback:{name:"分腿蹲（不负重）",lo:8,hi:12},knee:{name:"箱式深蹲（坐到椅子）",lo:8,hi:12},hip:{name:"箱式深蹲（坐到椅子）",lo:8,hi:12}}}),
+    E("罗马尼亚硬拉",3,6,8,"2–3 分钟",5,{lowback:{name:"俯卧腿弯举",lo:8,hi:12,inc:2.5}},{name:"单腿罗马尼亚硬拉",lo:8,hi:12,inc:0,subs:{lowback:{name:"单腿臀桥",lo:10,hi:15},hip:{name:"单腿臀桥",lo:10,hi:15}}}),
+    E("哑铃推举",3,4,6,"3 分钟",1,{shoulder:"地雷架单臂推举"},{name:"派克俯卧撑",lo:6,hi:12,inc:0,subs:{shoulder:{name:"弹力带侧平举",lo:12,hi:20}}}),
+    E("侧平举",3,10,15,"1–2 分钟",1,{shoulder:"侧平举（轻重量，只抬到 70°）"},{name:"弹力带侧平举",lo:12,hi:20,inc:0}),
+    E("面拉或后飞鸟",3,12,15,"1–2 分钟",1,{},{name:"俯身后飞鸟（水瓶）",lo:15,hi:20,inc:0}),
+    E("腹肌（悬垂举腿/器械卷腹）",3,10,15,"1 分钟",0,{lowback:{name:"平板支撑（秒）",lo:30,hi:60},shoulder:"器械卷腹"},{name:"仰卧举腿",lo:10,hi:20,inc:0,subs:{lowback:{name:"平板支撑（秒）",lo:30,hi:60}}})
+  ]}
+};
+const INJ = {shoulder:"肩",elbow:"肘",wrist:"腕",lowback:"下背/腰",hip:"髋",knee:"膝",ankle:"踝"};
+const MOBILITY = {
+  shoulder:"弹力带外旋 2×15、墙壁天使 2×10",
+  elbow:"轻重量腕屈伸 2×15、前臂按压放松",
+  wrist:"腕关节环绕、轻重量腕屈伸 2×15",
+  lowback:"猫牛式 2×10、死虫 2×8、鸟狗 2×8",
+  hip:"90/90 转髋 2×8、髋屈肌拉伸各 30 秒",
+  knee:"靠墙静蹲 3×30 秒（无痛角度）、弹力带侧走 2×15",
+  ankle:"膝触墙踝背屈 2×10、单腿站立 3×30 秒"
+};
+// 姿势要点：按动作基本名（去掉括号说明）查找
+const CUES = {
+  "上斜杠铃卧推":["凳子调到 30° 左右，肩胛骨后收下沉、贴紧凳面","杠铃下放到锁骨下方，前臂始终垂直地面","双脚踩实地面，臀部不离凳，推起时不要锁死肘关节"],
+  "上斜哑铃卧推":["凳子 30° 左右，肩胛后收下沉","哑铃下放到胸上部两侧，肘部与身体约 45–60°","推起时两只哑铃向中间靠拢，不要撞在一起"],
+  "平板杠铃卧推":["肩胛后收下沉，保持自然的上背弓，臀部不离凳","握距略宽于肩，杠铃下放到乳头连线附近","肘部与身体约 45–70°，不要完全外展成 90°"],
+  "平板哑铃卧推":["肩胛后收，哑铃下放到胸部两侧","下放到上臂略低于凳面即可，控制 2 秒下放","推起时向胸前中线靠拢"],
+  "哑铃地板卧推":["躺在地上，上臂触地即停，幅度天然受限、对肩更友好","肘部与身体约 45°","每次触地后停半秒再推，不借反弹"],
+  "下斜俯卧撑":["脚放在凳子或床上，身体从头到脚一条直线","双手略宽于肩，胸部下到接近地面","收紧腹部和臀部，腰不要塌"],
+  "上斜俯卧撑":["手撑在桌子或台阶上，越高越轻松","身体一条直线，胸口贴近台面","肘部与身体约 45°，适合肩或腕不适时使用"],
+  "俯卧撑":["双手略宽于肩，身体从头到脚一条直线","胸部下到离地一拳，肘部与身体约 45°","能轻松做 12 次后背双肩包加负重"],
+  "站姿杠铃推举":["握距略宽于肩，杠铃从锁骨处起推","收紧臀部和腹部，身体不要后仰","杠铃过额头后头部前移，锁定时杠在头顶正上方"],
+  "坐姿哑铃推举":["靠背调直或接近直立，背部贴紧靠背","哑铃从耳朵高度推到头顶，不要互相碰撞","下放到上臂与地面平行或略低即可"],
+  "地雷架单臂推举":["杠铃一端固定在墙角，手握另一端在肩前","斜向前上方推出，轨迹比垂直推举对肩更友好","收紧核心，身体不要扭转"],
+  "派克俯卧撑":["臀部抬高，身体呈倒 V 字","头部向双手前方的地面下落，肘部向后","脚垫高可以加难度"],
+  "哑铃推举":["坐姿或站姿，哑铃从耳朵高度推到头顶","收紧核心，腰不要过度后弓","下放时控制速度"],
+  "侧平举":["身体微前倾，手肘微屈且固定","用肘部带动向两侧抬起，抬到与肩同高即可","不要耸肩，下放控制 2 秒；重量宁轻勿借力"],
+  "弹力带侧平举":["双脚踩住弹力带中间，手肘微屈","向两侧抬到与肩同高","顶端停 1 秒，慢慢放下"],
+  "三头伸展":["绳索或哑铃过头，上臂固定贴近耳朵","只动前臂，伸直时收紧三头","肘有不适就换成绳索下压"],
+  "绳索下压":["上臂贴紧身体两侧不动","下压到手臂伸直，底部把绳子向两侧分开","回放到前臂与地面平行"],
+  "窄距俯卧撑":["双手与肩同宽或略窄","肘部贴着身体向后弯","身体保持一条直线"],
+  "硬拉":["杠铃在脚中部正上方，小腿接近杠铃","吸气收紧核心，背部保持中立，杠铃贴着腿上下","站直时臀部发力锁定，不要后仰；腰椎有伤禁止做"],
+  "六角杠铃硬拉":["站在六角杠中间，握把在身体两侧","更像深蹲的发力方式，对下背压力更小","背部中立，只在无痛幅度内做"],
+  "杠铃臀推":["上背靠在凳边，杠铃放在髋部（垫护垫）","脚跟发力把髋推到与身体成一条直线","顶端夹紧臀部，腰椎不要过度伸展，肋骨下沉"],
+  "平板支撑":["前臂撑地，肘在肩正下方，身体成一条直线","收腹夹臀，腰不塌、不撅屁股","呼吸不要憋住；腰不舒服就缩短时间，以“标准姿势撑住”为准"],
+  "死虫":["仰卧，双臂朝天、髋膝各屈 90°","下背始终贴地，对侧手脚慢慢伸远再收回","腰离地就缩小幅度；慢比快有效"],
+  "鸟狗式":["四足跪姿，背部平直，核心收紧","对侧手臂和腿同时伸出，髋不要左右晃","顶端停 2 秒再收回，腰椎友好的核心/下背练习"],
+  "侧桥":["侧卧，前臂撑地，肘在肩下","髋抬起，头到脚成一条直线，不要塌腰","两侧都做；下背有伤时先从屈膝版开始"],
+  "反向卷腹":["仰卧屈膝，双手放身侧","用下腹把骨盆卷离地面，不要甩腿借力","慢慢放下，腰不要弓起"],
+  "臀桥":["仰卧屈膝，脚跟靠近臀部","脚跟发力把髋抬起，肩到膝成一条直线","顶端夹臀 1–2 秒；腰不要反弓，可在腹部放背包加负重"],
+  "单腿臀桥":["一条腿屈膝踩地，另一条腿伸直或抱膝","支撑腿脚跟发力抬髋","两侧髋部保持水平，不要歪"],
+  "单腿罗马尼亚硬拉":["支撑腿膝盖微屈，髋部向后推","身体和后腿像跷跷板一样同步下落，背部平直","感觉到大腿后侧拉伸即停；腰椎有伤禁止做"],
+  "罗马尼亚硬拉":["膝盖微屈固定，髋部向后推，杠铃贴腿下滑","背部保持平直，下到大腿后侧明显拉伸即停（通常在膝下）","用臀部把髋向前推回站直；腰椎有伤禁止做"],
+  "俯卧腿弯举":["趴在器械上，膝盖对准转轴","勾起时髋部不要离开垫子","下放控制 2–3 秒"],
+  "引体向上":["正手略宽于肩，先把肩胛骨下沉","胸口向单杠拉，下巴过杠","下放到手臂接近伸直，不要甩腿借力"],
+  "高位下拉":["中立握把，大腿固定在挡垫下","肩胛先下沉，再把把手拉到上胸","身体略后倾 10–15°，不要大幅后仰"],
+  "杠铃划船":["屈髋让上身前倾约 45°，背部平直","杠铃拉向肚脐，肘部贴身体向后","腰椎有伤换胸托哑铃划船"],
+  "胸托哑铃划船":["胸口贴在上斜凳上，腰部完全不受力","把哑铃拉向髋部方向","顶端夹紧肩胛，慢慢放下"],
+  "反向划船":["躺在结实的桌子或低杠下，双手握住边缘","身体绷直，把胸口拉向桌边","脚放得越远越难"],
+  "面拉":["绳索调到脸部高度，掌心相对握绳","拉向额头，同时双手向两侧分开、外旋","肘部高于手腕，顶端停 1 秒"],
+  "弹力带面拉":["弹力带固定在脸部高度","拉向额头，双手向两侧分开","顶端夹紧后背"],
+  "面拉或后飞鸟":["面拉：绳索拉向额头并外旋，肘高于手腕","后飞鸟：俯身，手肘微屈向两侧打开","都用轻重量，感受后肩发力"],
+  "俯身后飞鸟":["俯身约 45°（腰有伤可趴在上斜凳上），背部平直","手肘微屈向两侧打开到与身体平行","不要耸肩，慢放"],
+  "二头弯举":["上臂贴紧身体，肘部不前后移动","卷起到顶端收紧，下放控制 2 秒","身体不要摆动借力"],
+  "锤式弯举":["掌心相对握哑铃，对肘和腕更友好","上臂固定，只动前臂","两侧交替或同时都可以"],
+  "背包弯举":["背包装书或水瓶，握住提手","上臂贴紧身体，只动前臂","能轻松做 15 次就加重量"],
+  "深蹲":["杠铃放在斜方肌上，双脚与肩同宽、脚尖略外展","吸气收紧核心，髋和膝同时弯曲，膝盖对准脚尖方向","蹲到大腿至少与地面平行，脚掌全脚着地发力站起"],
+  "箱式深蹲":["身后放一个箱子或椅子，高度设在无痛深度","坐到箱子上停半秒，不要完全放松","脚跟发力站起，膝盖对准脚尖"],
+  "高脚杯深蹲":["哑铃竖着抱在胸前","上身保持直立，手肘在两膝之间下蹲","只在无痛深度内做"],
+  "腿举":["背部和臀部全程贴紧靠垫","脚放在踏板中部，与肩同宽","下放到膝盖约 90° 即可，臀部离开靠垫就停；腰椎有伤不要压太深"],
+  "保加利亚分腿蹲":["后脚放在凳子上，前脚离凳约一大步","身体垂直下蹲，前膝对准脚尖","前脚脚跟发力站起，可手提水瓶加负重"],
+  "分腿蹲":["前后脚站开一大步，上身直立","后膝垂直下落接近地面","不负重，上身不要前倾，腰椎保持中立"],
+  "腹肌":["悬垂举腿：卷起骨盆，不要甩腿","器械卷腹：用腹部卷起，不要用手拉","腰椎有伤改做死虫或平板支撑"],
+  "死虫 / 平板支撑":["死虫：仰卧，腰背始终贴地，对侧手脚慢慢伸出","平板支撑：肘在肩正下方，身体一条直线","这两个动作腰椎承压小，适合椎间盘问题"],
+  "器械卷腹":["坐稳后用腹部把上身卷向骨盆","呼气时卷起，顶端停 1 秒","不要用手臂拉"],
+  "仰卧举腿":["仰卧，双手放在臀下或身体两侧","腰背贴地，双腿抬起到与地面垂直","下放时腰一旦离地就停；腰椎有伤改做死虫"]
+};
+const SEARCH_KW = {"面拉或后飞鸟":"面拉","腹肌":"悬垂举腿","死虫 / 平板支撑":"死虫 动作","三头伸展":"绳索三头下压"};
+const baseName = n => n.replace(/（.*?）/g, "").trim();
+// 名字带“（秒）”的动作按秒记（平板支撑、侧桥等），次数一栏改成秒
+const isTimed = n => /（秒）|\(秒\)/.test(n || "");
+function howTo(name){
+  const b = baseName(name), cues = CUES[b] || [], kw = SEARCH_KW[b] || b;
+  const mine = S.library?.links?.[b];
+  const open = S.openCues?.has(b);
+  const back = (S.profile?.injuries || []).includes("lowback") ? `<li>腰椎有伤：全程收紧核心，腰不塌不弓；出现向腿放射的麻痛立即停止。</li>` : "";
+  return `<details class="how" data-cue="${esc(b)}" ${open?"open":""}><summary>姿势讲解</summary>
+    ${cues.length ? `<ul class="clean small">${cues.map(c => `<li>${esc(c)}</li>`).join("")}${back}</ul>` : ""}
+    <div class="row small">
+      ${mine ? `<a class="chip on" href="${esc(mine)}" target="_blank" rel="noopener">我收藏的视频</a>` : ""}
+      <a class="chip" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(kw + " 标准动作 教学")}" target="_blank" rel="noopener">B站教学视频</a>
+      <a class="chip" href="https://www.youtube.com/results?search_query=${encodeURIComponent(kw + " 动作教学")}" target="_blank" rel="noopener">YouTube</a>
+    </div>
+    <div class="row" style="flex-wrap:nowrap"><input id="lib-${esc(b)}" data-lib="${esc(b)}" type="url" placeholder="看到好视频？粘贴链接收藏" value="${esc(mine||"")}"><button class="chip" data-act="save-lib" data-v="${esc(b)}">收藏</button></div>
+  </details>`;
+}
+const SLOT = {am:"上午", pm:"下午", eve:"晚上"};
+const SLOT_TIP = {
+  am:"起床后先吃点易消化的碳水加蛋白（香蕉加酸奶），40–60 分钟后开练。咖啡因在训练前 30–60 分钟，3–5 mg/kg。练完 2 小时内吃一顿含蛋白 30–50 g 的正餐。",
+  pm:"午饭后 2–3 小时训练最合适。纲领要求咖啡因中午前喝完，下午训练就不再额外补。练完 2 小时内吃一顿含蛋白和碳水的正餐。",
+  eve:"晚饭后 1.5–2 小时或晚饭前加餐后训练，结束离睡觉至少 2 小时。不用咖啡因。练后一顿含蛋白 30–50 g，碳水适量，不影响睡眠。"
+};
+const STAGE = {cut:"减脂", maintain:"维持", bulk:"精益增肌"};
+const MEAL_TYPES = ["早餐","午餐","晚餐","加餐","练前","练后"];
+const FEEL = ["","很轻松","正常","有点吃力","很吃力","力竭/状态差"];
+const WEEKDAYS = ["日","一","二","三","四","五","六"];
+const GUIDE_TEXT = `纲领要点（BLS 理论 + 薄肌战神计划）：
+- 每周 3 练：推 / 拉 / 腿+肩。复合动作 3×4–6，孤立 8–15 次（侧平举、面拉 10–15）。复合组间 3 分钟。
+- 双重渐进：同重量加次数，第一个正式组做到区间上限就加重（下肢和硬拉 +5 kg，卧推推举划船 +2.5 kg，哑铃每只 +1–2 kg）；加重后第一组不到 4 次则退回。正式组停在力竭前 1–2 次；深蹲硬拉不做到力竭。连续 3 次无进步先查睡眠和热量，再换动作变体。减脂期力量保持即成功。
+- 每 8–10 周减载 1 周（重量约 60%、组数减半），关节疼、力量连续下滑、睡不好时可提前。
+- 热量：BMR（有体脂用 Katch-McArdle，否则 Mifflin）× 活动系数 = TDEE。减脂 TDEE×0.75–0.8，蛋白 2.2 g/kg，脂肪 0.6–0.8 g/kg；维持 TDEE，蛋白 1.8–2.0；增肌 TDEE×1.05–1.1，蛋白 1.6–2.0。碳水拿剩余。
+- 校准：只看 7 日均体重。减脂期连续 2 周周降不到 0.5%：每日 −100–150 kcal 或多走 2000 步；周降超过 1% 且力量下滑：+100–150 kcal。增肌期每月涨幅超过 1%：−100 kcal。
+- 饮食：蛋白分 3–4 顿，每顿 30–50 g；训练前后 2 小时内各一顿含蛋白和碳水；80–90% 热量来自天然食物；默认不吃添加糖，含糖饮料禁；不设欺骗餐（减脂超过 8 周后每 1–2 周一天维持热量高碳水日）。
+- 有氧：日均 8000–10000 步；平台期再加每周 2 次 20 分钟间歇。睡眠 7–9 小时。
+- 补剂：肌酸 3–5 g/天；蛋白粉补缺口；咖啡因练前 3–5 mg/kg 且中午前；维 D、鱼油按需；不用燃脂补剂。
+- 阶段：体脂 >13% 减脂，到 10% 左右维持，≤11% 可精益增肌，涨到 13–15% 再减。`;
+
+/* ============ 工具 ============ */
+const $ = (s, r=document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const clone = o => o == null ? o : JSON.parse(JSON.stringify(o));
+const pad = n => String(n).padStart(2,"0");
+const ds = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const todayStr = () => ds(new Date());
+const parseD = s => new Date(s + "T12:00:00");
+const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate()+n); return ds(d); };
+const diffDays = (a, b) => Math.round((parseD(a) - parseD(b)) / 864e5);
+const fmtDate = s => { const d = parseD(s); return `${d.getMonth()+1}月${d.getDate()}日 周${WEEKDAYS[d.getDay()]}`; };
+const r05 = x => Math.round(x*2)/2;
+const r25 = x => Math.round(x/2.5)*2.5;
+const numOr = (v, d=null) => (v === "" || v == null || isNaN(+v)) ? d : +v;
+const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+function toast(msg, ms=2200){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(()=> t.hidden = true, ms); }
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+/* ============ 存储 ============ */
+const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
+  profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
+  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null };
+
+function mkLocal(){
+  const K = "bj-store"; const load = () => lsGet(K, {});
+  return {
+    async get(p){ return clone(load()[p] ?? null); },
+    async set(p, d){ const mem = load(); mem[p] = clone(d); lsSet(K, mem); },
+    async del(p){ const mem = load(); delete mem[p]; lsSet(K, mem); },
+    async list(col){ const mem = load(); return Object.keys(mem).filter(k => k.startsWith(col+"/") && k.split("/").length === col.split("/").length+1).map(k => ({id:k.split("/").pop(), data:clone(mem[k])})); }
+  };
+}
+function mkCloud(db, prefix){
+  const P = x => prefix ? prefix + "/" + x : x;
+  return {
+    async get(p){ const s = await db.doc(P(p)).get(); return s.exists ? clone(s.data()) : null; },
+    async set(p, d){ await db.doc(P(p)).set(d); },
+    async del(p){ await db.doc(P(p)).delete(); },
+    async list(col, opt={}){ let q = db.collection(P(col)); if (opt.order) q = q.orderBy(opt.order, "desc"); if (opt.limit) q = q.limit(opt.limit); const s = await q.get(); return s.docs.map(d => ({id:d.id, data:clone(d.data())})); }
+  };
+}
+/* ---- 每人一份数据：data/users/<id>/app/... ----
+   v27 之前所有数据存在共享根路径（app/profile、days/…）。主人第一次打开新版时，把根路径的记录复制到自己的个人空间；
+   根路径的旧记录原样保留，不删除。之后每次主人打开，再补齐个人空间里缺的文档（例如旧页面后来写进根路径的某天）。 */
+const LEGACY_DOCS = ["app/profile", "app/library"], LEGACY_COLS = ["days", "feedback", "profileHistory", "workoutLog"];
+async function migrateLegacy(db, store){
+  const raw = mkCloud(db, ""), counts = {};
+  if (!(await raw.get("app/profile"))) return null;
+  for (const p of LEGACY_DOCS) { const d = await raw.get(p); if (d && !(await store.get(p))) { await store.set(p, d); counts[p] = 1; } }
+  for (const c of LEGACY_COLS) {
+    const [src, dst] = await Promise.all([raw.list(c), store.list(c)]);
+    const have = new Set(dst.map(x => x.id)); let n = 0;
+    for (const x of src) if (!have.has(x.id)) { await store.set(c + "/" + x.id, x.data); n++; }
+    if (n) counts[c] = n;
+  }
+  const mark = await store.get("meta/migration");
+  if (!mark) await store.set("meta/migration", {from:"legacy-root", at:new Date().toISOString(), counts});
+  else if (Object.keys(counts).length) await store.set("meta/migration", {...mark, lastCatchUp:new Date().toISOString(), catchUp:counts});
+  return counts;
+}
+/* 看图估算队列：vq/<用户 id>/req/<餐 id>。主人和编辑者（Claude 用主人的额度处理）能读所有人的队列，其他人只能读写自己的。 */
+/* ============ AI 服务：Claude 账号 或 OpenRouter ============ */
+// 主人（jaychang2016）默认用自己的 Claude 账号；其他人默认用自己的 OpenRouter 密钥。密钥只存在这台设备的浏览器里，不进云端、不进页面。
+const OR_DEFAULT_MODEL = "google/gemini-2.5-flash";
+const aiCfg = () => { const c = lsGet("bj-ai", {}) || {}; if (HOSTED) return {prov:"claude", key:"", model:""}; return {prov:c.prov === "claude" || c.prov === "openrouter" ? c.prov : (S.owner ? "claude" : "openrouter"), key:String(c.key || ""), model:String(c.model || "").trim() || OR_DEFAULT_MODEL}; };
+const blobToDataURL = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+async function shrinkImg(blob, max=1280){
+  try {
+    const bmp = await createImageBitmap(blob); const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(b => r(b || blob), "image/jpeg", 0.85));
+  } catch { return blob; }
+}
+function parseJSONText(t){
+  t = String(t || "").replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+  try { return JSON.parse(t); } catch {}
+  const i = t.search(/[\[{]/), j = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+  if (i >= 0 && j > i) { try { return JSON.parse(t.slice(i, j+1)); } catch {} }
+  throw {code:"invalid_json", message:"回答不是 JSON"};
+}
+// 和平台 sample 一样的用法：ask(input, opts) -> {text}；ask.json(input, opts) -> 解析好的 JSON
+function mkOpenRouter(key, model){
+  const ask = async (input, opts={}) => {
+    const turns = typeof input === "string" ? [{role:"user", content:input}] : input.map(t => ({role:t.role, content:String(t.content ?? "")}));
+    const imgs = [];
+    for (const b of (opts.images || [])) { if (b) imgs.push(await blobToDataURL(await shrinkImg(b))); }
+    if (imgs.length) { const last = turns[turns.length-1]; last.content = [{type:"text", text:last.content}, ...imgs.map(u => ({type:"image_url", image_url:{url:u}}))]; }
+    let r;
+    try {
+      r = await fetch("https://openrouter.ai/api/v1/chat/completions", {method:"POST", signal:opts.signal,
+        headers:{"Authorization":"Bearer " + key, "Content-Type":"application/json", "X-Title":"Bojin Rike"},
+        body:JSON.stringify({model, messages:turns})});
+    } catch (e) { if (e?.name === "AbortError") throw {code:"cancelled"}; throw {code:"network", message:"连不上 OpenRouter：" + String(e?.message || e).slice(0, 120)}; }
+    let j = null; try { j = await r.json(); } catch {}
+    if (!r.ok || j?.error) {
+      const s = r.status, msg = String(j?.error?.message || r.statusText || "").slice(0, 160);
+      throw {code: s === 401 ? "or_key" : s === 402 ? "or_credit" : s === 429 ? "rate_limited" : (s === 400 && imgs.length) ? "image_rejected" : "or_" + s, message:msg};
+    }
+    const text = String(j?.choices?.[0]?.message?.content ?? "");
+    if (opts.onText) { try { opts.onText({text, delta:text}); } catch {} }
+    return {text, truncated: j?.choices?.[0]?.finish_reason === "length"};
+  };
+  ask.json = async (input, opts) => parseJSONText((await ask(input, opts)).text);
+  ask.limits = async () => ({images:{max:4, mediaTypes:["image/jpeg","image/png","image/webp"]}});
+  ask.provider = "openrouter"; ask.model = model;
+  return ask;
+}
+// 按当前设置挑 AI：claude = 平台 sample（花自己的 Claude 订阅，看图请求可走排队）；openrouter = 自己的密钥，直接看图，不走排队
+function applyAI(){
+  const c = aiCfg(); S.aiProv = c.prov;
+  if (c.prov === "openrouter") {
+    S.sample = c.key ? mkOpenRouter(c.key, c.model) : null; S.imgOK = c.key ? true : false; S.comments = null;
+  } else { S.sample = S.claudeSample; S.imgOK = S.claudeImgOK; S.comments = S.claudeComments; }
+}
+function vqPath(id){ return `vq/${S.uid}/req/${id}`; }
+// 一餐的多张照片：photo 是第一张（旧字段不变），more 是后加的 [{id 资产id|null, thumb?, tag:"剩下"|"其他", at}]
+const MORE_TAG = {"剩下":"吃完剩下的", "其他":""};
+const moreOf = m => Array.isArray(m?.more) ? m.more.filter(p => p && (p.id || p.thumb)) : [];
+const hasLeft = m => moreOf(m).some(p => p.tag === "剩下");
+const photoCount = m => (m.photo || m.thumb ? 1 : 0) + moreOf(m).length;
+async function enqueueVision(date, id){
+  if (!S.raw || !S.uid || S.aiProv === "openrouter") return;
+  const m = S.days[date]?.meals?.find(x => x.id === id); if (!m) return;
+  const at = m.visionReq?.at || new Date().toISOString();
+  try {
+    await S.raw.doc(`vq/${S.uid}`).set({uid:S.uid, last:at});
+    await S.raw.doc(vqPath(id)).set({uid:S.uid, date, mealId:id, type:m.type || "", text:(m.text || "").slice(0, 500), photo:m.photo || null, thumb:m.photo ? null : (m.thumb || null), photos:moreOf(m).map(p => ({id:p.id || null, thumb:p.id ? null : (p.thumb || null), tag:p.tag || "其他"})), status:"pending", at});
+  } catch (e) { console.warn("enqueue failed", e); }
+}
+async function pullVision(date, m){
+  if (!S.raw || !S.uid) return false;
+  let r; try { const s = await S.raw.doc(vqPath(m.id)).get(); r = s.exists ? s.data() : null; } catch { return false; }
+  if (!r || r.status !== "done" || !r.est) return false;
+  await updateDay(date, d => { const x = d.meals.find(y => y.id === m.id); if (!x || x.visionReq?.status === "done") return;
+    if (x.est) x.prevEst = clone(x.est); x.est = clone(r.est); x.visionReq = {...(x.visionReq || {}), status:"done", doneAt:r.doneAt || new Date().toISOString()}; }, {quiet:true, silent:true});
+  S.raw.doc(vqPath(m.id)).update({status:"applied", appliedAt:new Date().toISOString(), thumb:null}).catch(() => {});
+  return true;
+}
+const queues = {};
+function write(path, data){
+  const p = (queues[path] || Promise.resolve()).catch(()=>{}).then(() => S.store.set(path, data));
+  queues[path] = p;
+  return p.catch(e => { toast("保存失败：" + (e?.message || e?.code || "请稍后再试")); throw e; });
+}
+/* 数据规则：只加字段不删字段；读到旧数据先补默认值；写入时保留所有未知字段 */
+const SCHEMA_VERSION = 2;
+function migrateProfile(p){
+  if (!p) return p;
+  return {kcalAdjust:0, deloadEvery:9, swaps:{}, adjustLog:[], injuries:[], supps:[], trainDays:[1,3,5], slot:"eve", equipment:"gym", ...p, schema:SCHEMA_VERSION};
+}
+function migrateDay(d){ return {meals:[], ...d, meals:Array.isArray(d.meals) ? d.meals : []}; }
+function snapTargets(){ const t = targets(); return {kcal:t.kcal, protein:t.protein, carbs:t.carbs, fat:t.fat, st:t.st, w:Math.round(t.w*10)/10, tdee:t.tdee}; }
+// 当天的营养目标存一份快照；以后改计划，这一天仍按当时的目标显示
+function stampTargets(d){ if (S.profile && (!d.targets || d.date === todayStr())) d.targets = snapTargets(); }
+/* 防丢数据：每次写入前先读服务器上的最新版本，只改这次操作涉及的部分再写回。
+   这样另一个打开着的页面（另一台设备、旧窗口）不会用它手里的旧数据覆盖新记录。读不到最新版本就不写。 */
+const locks = {};
+function mutate(path, fn){
+  const p = (locks[path] || Promise.resolve()).catch(() => {}).then(async () => {
+    const cur = await S.store.get(path);
+    const next = fn(cur ? clone(cur) : null);
+    if (next == null) return cur;
+    await S.store.set(path, next);
+    return next;
+  });
+  locks[path] = p;
+  return p;
+}
+const saveErr = e => toast("保存失败（" + (e?.code || e?.message || "网络问题") + "），请刷新页面后再试");
+async function updateDay(date, fn, opt = {}){
+  const local = migrateDay(S.days[date] || {date, meals:[]}); fn(local); stampTargets(local); S.days[date] = local;
+  if (!opt.quiet) render();
+  try {
+    const next = await mutate("days/" + date, cur => { const d = migrateDay(cur || {date, meals:[]}); fn(d); stampTargets(d); return d; });
+    S.days[date] = migrateDay(next);
+    if (!opt.quiet) render();
+    return next;
+  } catch (e) { console.warn("day write failed", e); if (!opt.silent) saveErr(e); throw e; }
+}
+async function updateProfile(fn){
+  fn(S.profile); render();
+  try { const next = await mutate("app/profile", cur => { const p = migrateProfile(cur || {}); fn(p); return p; }); S.profile = migrateProfile(next); render(); return next; }
+  catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
+}
+/* 训练记录另存一份只增不改的备份：即使某天的记录被覆盖，也能从这里恢复 */
+function backupWorkout(date, w){
+  const id = date + "__" + Date.now();
+  const b = lsGet("bj-wbackup", {}); b[date] = w; lsSet("bj-wbackup", b);
+  return write("workoutLog/" + id, {date, savedAt:new Date().toISOString(), workout:w}).catch(e => console.warn("backup failed", e));
+}
+async function restoreWorkouts(){
+  let logs = [];
+  try { logs = (await S.store.list("workoutLog", {order:"savedAt", limit:1000})).map(d => d.data); } catch {}
+  const latest = {};
+  logs.forEach(l => { if (l?.date && l.workout && (!latest[l.date] || l.savedAt > latest[l.date].savedAt)) latest[l.date] = l; });
+  const local = lsGet("bj-wbackup", {});
+  Object.entries(local).forEach(([date, w]) => { if (!latest[date] && w?.done) latest[date] = {date, workout:w, savedAt:w.savedAt || ""}; });
+  const restored = [];
+  for (const [date, l] of Object.entries(latest)) {
+    if (S.days[date]?.workout?.done) continue;
+    try { await updateDay(date, d => { if (!d.workout?.done) d.workout = clone(l.workout); }, {quiet:true, silent:true}); restored.push(date); } catch {}
+  }
+  if (restored.length) toast(`已从备份恢复 ${restored.length} 天的训练记录`, 8000);
+}
+const dayTargets = date => S.days[date]?.targets || targets();
+
+async function loadAll(){
+  try {
+    S.profile = migrateProfile(await S.store.get("app/profile"));
+    const days = await S.store.list("days", {order:"date", limit:1000});
+    S.days = {}; days.forEach(d => { if (d.data?.date) S.days[d.data.date] = migrateDay(d.data); });
+    const ph = await S.store.list("profileHistory", {order:"savedAt", limit:30}).catch(() => []);
+    S.profileHistory = ph.map(d => d.data).sort((a,b) => (b.savedAt||"").localeCompare(a.savedAt||""));
+    S.library = (await S.store.get("app/library").catch(() => null)) || {links:{}};
+    await restoreWorkouts();
+    const fb = await S.store.list("feedback", {order:"createdAt", limit:20});
+    S.feedback = fb.map(d => d.data).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+  } catch (e) { console.error(e); S.loadError = true; }
+}
+
+/* ============ 计算 ============ */
+function checkins(){ return Object.values(S.days).filter(d => numOr(d.checkin?.weight) != null).sort((a,b)=>a.date.localeCompare(b.date)); }
+function avgWeight(endDate, span=7){
+  const start = addDays(endDate, -(span-1));
+  const w = checkins().filter(d => d.date >= start && d.date <= endDate).map(d => +d.checkin.weight);
+  return w.length >= 3 ? mean(w) : null;
+}
+function curWeight(){ return avgWeight(todayStr()) ?? numOr(S.profile.weight); }
+/* 体脂秤读数（打卡里的 checkin.bf）：家用秤单次误差大，取最近 14 天至少 3 次的平均；不够就用资料里的体脂 */
+function avgBf(endDate, span=14){
+  const start = addDays(endDate, -(span-1));
+  const v = Object.values(S.days).filter(d => d.date >= start && d.date <= endDate).map(d => numOr(d.checkin?.bf)).filter(x => x != null && x > 2 && x < 60);
+  return v.length >= 3 ? mean(v) : null;
+}
+function curBf(p = S.profile){ const a = avgBf(todayStr()); return a != null ? Math.round(a*10)/10 : numOr(p.bf); }
+function stageOf(p){
+  if (p.stage && p.stage !== "auto") return p.stage;
+  const bf = curBf(p);
+  if (bf == null) return "maintain";
+  return bf > 13 ? "cut" : bf <= 11 ? "bulk" : "maintain";
+}
+function targets(p = S.profile){
+  const w = curWeight(), h = +p.height, a = +p.age, bf = curBf(p);
+  const lbm = bf != null ? w*(1-bf/100) : null;
+  const bmr = lbm != null ? 370 + 21.6*lbm : 10*w + 6.25*h - 5*a + (p.sex === "f" ? -161 : 5);
+  const steps = +p.steps || 6500;
+  const af = steps < 5000 ? 1.35 : steps < 8000 ? 1.4 : steps < 11000 ? 1.475 : 1.55;
+  const tdee = bmr * af, st = stageOf(p);
+  const base = tdee * (st === "cut" ? 0.775 : st === "bulk" ? 1.075 : 1);
+  const kcal = Math.round((base + (+p.kcalAdjust || 0))/10)*10;
+  let protein = w * (st === "cut" ? 2.2 : st === "bulk" ? 1.8 : 1.9);
+  if (bf != null && bf > 20) protein = 2.5 * lbm;
+  const fat = w * (st === "cut" ? 0.7 : 0.9);
+  const carbs = Math.max(0, (kcal - 4*protein - 9*fat)/4);
+  return {w, bmr:Math.round(bmr), tdee:Math.round(tdee), af, kcal, protein:Math.round(protein), fat:Math.round(fat), carbs:Math.round(carbs), lbm, bf, bfAvg: avgBf(todayStr()) != null, st, formula: lbm != null ? "Katch-McArdle" : "Mifflin-St Jeor"};
+}
+function weekIndex(date){ return Math.max(0, Math.floor(diffDays(date, S.profile.startDate || date)/7)); }
+function isDeload(date){
+  const p = S.profile;
+  if (p.deloadFrom && date >= p.deloadFrom && diffDays(date, p.deloadFrom) < 7) return "manual";
+  const every = +p.deloadEvery || 9, wi = weekIndex(date);
+  return wi > 0 && (wi+1) % (every+1) === 0 ? "scheduled" : false;
+}
+function nextKey(date){
+  // 只按推/拉/腿轮换；自选训练不占轮换。未来日期按“今天起每个训练日依次轮下去”推算
+  const t = todayStr();
+  const done = Object.values(S.days).filter(d => d.workout?.done && ORDER.includes(d.workout.key));
+  const before = dt => done.filter(d => d.date < dt).sort((a,b)=>b.date.localeCompare(a.date))[0]?.workout.key;
+  let last = before(date > t ? t : date);
+  const nx = () => last ? ORDER[(ORDER.indexOf(last)+1) % 3] : "push";
+  if (date <= t) return nx();
+  for (let d = t; d < date; d = addDays(d, 1)) {
+    const day = S.days[d] || {};
+    let k = null;
+    if (day.workout?.done) k = day.workout.key;
+    else if (day.override && day.override !== "rest") k = day.override;
+    else if (day.override !== "rest" && (S.profile.trainDays || []).includes(parseD(d).getDay())) k = nx();
+    if (ORDER.includes(k)) last = k;
+  }
+  return nx();
+}
+function resolveEx(ex){
+  const p = S.profile;
+  let o = {name:ex.name, sets:ex.sets, lo:ex.lo, hi:ex.hi, rest:ex.rest, inc:ex.inc, orig:ex.name, why:null};
+  const home = p.equipment === "home" && ex.home;
+  if (home) { const {subs, ...h} = ex.home; Object.assign(o, h, {why:"居家器械"}); }
+  const subs = home ? (ex.home.subs || {}) : ex.subs;
+  for (const k of (p.injuries || [])) {
+    const s = subs[k];
+    if (s) { Object.assign(o, typeof s === "string" ? {name:s} : s, {why: INJ[k] + "有伤，已替换"}); break; }
+  }
+  const sw = (p.swaps || {})[ex.name];
+  if (sw) Object.assign(o, {name:sw, why:"根据反馈调整"});
+  const pe = (p.exEdits || {})[ex.name];
+  if (pe) Object.assign(o, pe, {why:"你设定的长期调整"});
+  return o;
+}
+// 加练：任何一练（推/拉/腿）都能在后面追加动作，存在 day.extra.ex；保存训练时并入 workout.plan（带 extra:true）
+const extraEx = day => (day.extra?.ex || []).map(e => ({name:e.name || "未命名动作", sets:+e.sets || 3, lo:e.lo === "" ? "" : (+e.lo || ""), hi:e.hi === "" ? "" : (+e.hi || ""), rest:"1–2 分钟", inc:0, orig:e.name || "未命名动作", why:"加练", extra:true}));
+function planFor(date){
+  const p = S.profile, day = S.days[date] || {};
+  const dow = parseD(date).getDay();
+  const isTrainDay = (p.trainDays || []).includes(dow);
+  let key = day.workout?.done ? day.workout.key : (day.override || (isTrainDay ? nextKey(date) : null));
+  if (day.override === "rest" && !day.workout?.done) key = null;
+  const deload = isDeload(date);
+  const slot = day.slot || p.slot || "eve";
+  if (!key) return {key:null, isTrainDay, deload, slot};
+  if (day.workout?.done) return {key, isTrainDay, deload:day.workout.deload ? "saved" : false, slot:day.workout.slot || slot, ex:[...savedPlan(day.workout), ...extraEx(day)], title:PROGRAM[key]?.title || (key === "custom" ? "自选训练" : "训练"), saved:true};
+  if (key === "custom") {
+    const cex = (day.custom?.ex || []).map(e => ({name:e.name || "未命名动作", sets:+e.sets || 3, lo:e.lo === "" ? "" : (+e.lo || ""), hi:e.hi === "" ? "" : (+e.hi || ""), rest:"1–2 分钟", inc:0, orig:e.name || "未命名动作", why:null}));
+    return {key, isTrainDay, deload:false, slot, ex:cex, title:"自选训练", custom:true};
+  }
+  if (!PROGRAM[key]) return {key:null, isTrainDay, deload, slot};
+  const dayEd = day.exEdits || {};
+  const ex = PROGRAM[key].ex.map(resolveEx).map(e => dayEd[e.orig] ? {...e, ...dayEd[e.orig], why:"只今天替换"} : e).map(e => deload ? {...e, sets:Math.ceil(e.sets/2)} : e).concat(extraEx(day));
+  return {key, isTrainDay, deload, slot, ex, title:PROGRAM[key].title};
+}
+// 已完成的训练永远按当时保存的动作显示，改计划不会改写历史
+function exMeta(name){
+  for (const k of ORDER) for (const ex of PROGRAM[k].ex) {
+    const hb = ex.home ? {...ex, ...ex.home} : null;
+    const cands = [[ex, ex], [ex, ex.home], ...Object.values(ex.subs).map(c => [ex, c]), ...Object.values(ex.home?.subs || {}).map(c => [hb, c])].filter(x => x[1]);
+    for (const [base, c] of cands) { const n = typeof c === "string" ? c : c.name; if (n === name) return {...base, ...(typeof c === "string" ? {} : c), name, subs:undefined, home:undefined}; }
+  }
+  return null;
+}
+function savedPlan(w){
+  if (Array.isArray(w.plan) && w.plan.length) return w.plan.map(e => ({rest:"", inc:1, ...e}));
+  return (w.exercises || []).map(e => { const m = exMeta(e.name) || {}; return {name:e.name, sets:(e.sets||[]).length, lo:m.lo ?? "", hi:m.hi ?? "", rest:m.rest || "", inc:m.inc ?? 1}; });
+}
+function history(name, before, n=3){
+  const out = [];
+  const days = Object.values(S.days).filter(d => d.date < before && d.workout?.done).sort((a,b)=>b.date.localeCompare(a.date));
+  for (const d of days) {
+    const e = (d.workout.exercises || []).find(x => x.name === name);
+    const s0 = e?.sets?.find(s => numOr(s.w) != null && numOr(s.r) != null);
+    if (s0) out.push({date:d.date, w:+s0.w, r:+s0.r, sets:e.sets});
+    if (out.length >= n) break;
+  }
+  return out;
+}
+function suggest(ex, date, deload){
+  const h = history(ex.name, date, 3);
+  const tm = isTimed(ex.name);
+  if (!h.length) return {w:null, text: tm ? `第一次做：每组撑到动作开始变形前停（目标 ${ex.lo}–${ex.hi} 秒），记下秒数，负重填 0。` : `第一次做：选一个能做 ${ex.hi} 次、还留 1–2 次余力的重量，记下来。`};
+  const last = h[0];
+  let w = last.w, text;
+  if (tm && ex.inc === 0) {
+    text = last.r >= ex.hi ? `上次 ${fmtW(last.w)} 撑了 ${last.r} 秒，已到上限，可以背上负重或换更难的变式（如抬一条腿）。` : `上次 ${fmtW(last.w)} 撑了 ${last.r} 秒，今天争取 ${last.r+5} 秒。`;
+  } else if (ex.inc === 0) {
+    text = last.r >= ex.hi ? `上次 ${fmtW(last.w)}×${last.r} 已到上限，加负重或换更难的变式。` : `上次 ${fmtW(last.w)}×${last.r}，今天争取 ${last.r+1} 次。`;
+  } else if (last.r >= ex.hi) { w = r05(last.w + ex.inc); text = `上次 ${fmtW(last.w)}×${last.r} 做到上限，今天加到 ${fmtW(w)}。`; }
+  else if (last.r < ex.lo) { text = `上次 ${fmtW(last.w)}×${last.r} 不到 ${ex.lo} 次。保持重量打磨；如果是刚加的重，退回上一个重量。`; }
+  else text = `上次 ${fmtW(last.w)}×${last.r}，同重量争取 ${last.r+1} 次。`;
+  const stall = h.length === 3 && h.every(x => x.w === h[0].w) && h[0].r <= h[2].r;
+  if (deload) { w = w != null ? r25(w*0.6) || w : w; text = `减载周：用约 60% 重量（${fmtW(w)}），组数减半，动作做标准。`; }
+  return {w, text, stall};
+}
+const fmtW = w => w === 0 ? "自重" : `${w}kg`;
+function dayMacros(date){
+  const meals = S.days[date]?.meals || [];
+  const t = {kcal:0, protein:0, carbs:0, fat:0, n:meals.length, est:0};
+  meals.forEach(m => { const e = m.est; if (e && numOr(e.kcal) != null) { t.est++; t.kcal += +e.kcal||0; t.protein += +e.protein||0; t.carbs += +e.carbs||0; t.fat += +e.fat||0; } });
+  return t;
+}
+
+/* ============ 渲染 ============ */
+const ICON = {
+  today:'<svg viewBox="0 0 24 24"><path d="M3 10h3v4H3zM18 10h3v4h-3zM6 8h2v8H6zM16 8h2v8h-2zM8 12h8"/></svg>',
+  food:'<svg viewBox="0 0 24 24"><path d="M5 3v8a2 2 0 0 0 2 2v8M9 3v8a2 2 0 0 1-2 2M7 3v6M16 3c-2 1-3 4-3 7h3v11"/></svg>',
+  log:'<svg viewBox="0 0 24 24"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg>',
+  fb:'<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg>',
+  me:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>'
+};
+const TABS = [["today","今天"],["food","饮食"],["log","记录"],["fb","反馈"],["me","我的"]];
+
+function render(){
+  const app = $("#app"), tabs = $("#tabs");
+  if (!S.ready) return;
+  if (!S.profile || S.editing) { tabs.hidden = true; app.innerHTML = banner() + viewSetup(); return; }
+  tabs.hidden = false;
+  tabs.innerHTML = `<div class="in">${TABS.map(([k,l]) => `<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k}">${ICON[k]}<span>${l}</span></button>`).join("")}</div>`;
+  const v = {today:viewToday, food:viewFood, log:viewLog, fb:viewFeedback, me:viewMe}[S.tab] || viewToday;
+  app.innerHTML = banner() + v();
+  prefetchSend();
+}
+/* 平台只认点击当下发出的「发给 Claude」；锚点和可用性要提前备好，点击时不能再有任何等待 */
+function prefetchSend(){
+  if (!S.comments || !S.cloud) return;
+  const b = document.querySelector('[data-act="add-meal"][data-v="ai"]'); if (!b) return;
+  S.comments.anchorFor(b).then(a => { S.mealAnchor = a; }).catch(() => {});
+  if (!prefetchSend.t || Date.now() - prefetchSend.t > 30000) { prefetchSend.t = Date.now(); S.comments.canSendToClaude().then(c => { S.canSend = c; }).catch(() => {}); }
+}
+function banner(){
+  if (S.loadError) return `<div class="banner" style="margin-bottom:10px">读取云端数据时出错了，刷新页面再试一次。</div>`;
+  if (S.noId) return `<div class="banner" style="margin-bottom:10px">没认出你的 Claude 账号，记录先只存在这台设备上。登录 Claude 后再打开这个页面，就会存到你自己的个人空间。</div>`;
+  if (!S.cloud) return `<div class="banner" style="margin-bottom:10px">现在连不上云端存储，记录只保存在这台设备的浏览器里。在 Claude 里打开这个页面即可同步。</div>`;
+  return "";
+}
+function dateBar(){
+  const t = todayStr();
+  return `<div class="top"><div class="datebar">
+    <button class="iconbtn" data-act="date" data-v="-1" aria-label="前一天">‹</button>
+    <span class="d">${fmtDate(S.date)}</span>
+    <button class="iconbtn" data-act="date" data-v="1" aria-label="后一天" ${S.date>=addDays(t,7)?"disabled":""}>›</button></div>
+    ${S.date !== t ? `<button class="link" data-act="date" data-v="0">回到今天</button>` : `<span class="chip on">${STAGE[stageOf(S.profile)]}</span>`}</div>`;
+}
+
+/* ---- 建档 ---- */
+function viewSetup(){
+  const p = S.profile || {sex:"m", steps:9500, exp:"new", stage:"auto", trainDays:[1,3,5], slot:"eve", equipment:"gym", injuries:[], supps:["creatine","protein"]};
+  const ck = (name, val, arr, label) => `<label><input type="checkbox" name="${name}" value="${val}" ${arr.includes(val)?"checked":""}><span>${label}</span></label>`;
+  const rd = (name, val, cur, label) => `<label><input type="radio" name="${name}" value="${val}" ${String(cur)===String(val)?"checked":""}><span>${label}</span></label>`;
+  return `<form id="setup" class="stack" novalidate>
+  <div class="hero"><span class="eyebrow">薄肌日课</span><h1>${S.profile ? "修改我的资料" : "先花一分钟建档"}</h1>
+  <p class="muted">填完后，每天按《薄肌训练与饮食纲领》给你排好训练和饮食目标。数字以后随时能改。</p></div>
+  <section class="card"><div class="row"><span class="sec-n num">1</span><h2>身体指标</h2></div>
+    <div class="checks">${rd("sex","m",p.sex,"男")}${rd("sex","f",p.sex,"女")}</div>
+    <div class="grid3">
+      <label>年龄<input id="f-age" name="age" type="number" inputmode="numeric" value="${esc(p.age??"")}" placeholder="28"></label>
+      <label>身高 cm<input id="f-height" name="height" type="number" inputmode="decimal" value="${esc(p.height??"")}" placeholder="175"></label>
+      <label>体重 kg<input id="f-weight" name="weight" type="number" inputmode="decimal" step="0.1" value="${esc(p.weight??"")}" placeholder="70"></label>
+    </div>
+    <div class="grid2">
+      <label>体脂率 %（不知道可空）<input id="f-bf" name="bf" type="number" inputmode="decimal" step="0.1" value="${esc(p.bf??"")}" placeholder="例如 16"></label>
+      <label>日均步数<select id="f-steps" name="steps">
+        ${[[4000,"5000 以下"],[6500,"5000–8000"],[9500,"8000–11000"],[12000,"11000 以上"]].map(([v,l])=>`<option value="${v}" ${+p.steps===v?"selected":""}>${l}</option>`).join("")}
+      </select></label>
+    </div>
+  </section>
+  <section class="card"><div class="row"><span class="sec-n num">2</span><h2>训练阶段</h2></div>
+    <label>训练经验</label>
+    <div class="checks">${rd("exp","new",p.exp,"新手（不到 1 年）")}${rd("exp","mid",p.exp,"1–3 年")}${rd("exp","adv",p.exp,"3 年以上")}</div>
+    <label>当前目标</label>
+    <div class="checks">${rd("stage","auto",p.stage,"按体脂自动判断")}${rd("stage","cut",p.stage,"减脂")}${rd("stage","maintain",p.stage,"维持")}${rd("stage","bulk",p.stage,"精益增肌")}</div>
+    <p class="small muted">自动判断：体脂高于 13% 减脂，11% 以下精益增肌，中间维持。没填体脂时按维持算。</p>
+    <label>每周哪几天练（纲领默认 3 天，至少隔一天）</label>
+    <div class="checks">${[1,2,3,4,5,6,0].map(d => ck("trainDays", String(d), (p.trainDays||[]).map(String), "周"+WEEKDAYS[d])).join("")}</div>
+    <label>通常在什么时候练</label>
+    <div class="checks">${Object.entries(SLOT).map(([k,l]) => rd("slot",k,p.slot,l)).join("")}</div>
+    <label>在哪练</label>
+    <div class="checks">${rd("equipment","gym",p.equipment,"健身房")}${rd("equipment","home",p.equipment,"在家（自重/弹力带/单杠）")}</div>
+  </section>
+  <section class="card"><div class="row"><span class="sec-n num">3</span><h2>身上有没有伤</h2></div>
+    <p class="small muted">勾选后，会把压到这个部位的动作换成更安全的版本，并在休息日加康复动作。不勾就是没有。</p>
+    <div class="checks">${Object.entries(INJ).map(([k,l]) => ck("injuries",k,p.injuries||[],l)).join("")}</div>
+    <label>补充说明（可空）<textarea id="f-injnote" name="injNote" placeholder="例如：右肩前侧卧推到底会疼，去年扭过左脚踝">${esc(p.injNote||"")}</textarea></label>
+  </section>
+  <section class="card"><h2>正在吃的补剂</h2>
+    <div class="checks">${[["protein","蛋白粉"],["creatine","肌酸"],["caffeine","咖啡因"],["vitd","维生素 D3"],["fishoil","鱼油"]].map(([k,l]) => ck("supps",k,p.supps||[],l)).join("")}</div>
+  </section>
+  <p id="setup-err" class="small" style="color:var(--bad)" hidden></p>
+  <button class="btn primary block" type="submit">${S.profile ? "保存修改" : "生成我的计划"}</button>
+  ${S.profile ? `<button class="btn block" type="button" data-act="cancel-edit">取消</button>` : ""}
+  </form>`;
+}
+function profileDiff(a, b){
+  const lbl = {sex:"性别",age:"年龄",height:"身高",weight:"体重",bf:"体脂",steps:"步数",exp:"经验",stage:"目标",trainDays:"训练日",slot:"时段",equipment:"地点",injuries:"伤病",injNote:"伤病说明",supps:"补剂"};
+  const fmt = (k, v) => k === "stage" ? ({auto:"自动",...STAGE}[v] || v) : k === "trainDays" ? (v||[]).map(d=>"周"+WEEKDAYS[d]).join("") : k === "injuries" ? ((v||[]).map(x=>INJ[x]).join("、") || "无") : k === "slot" ? SLOT[v] : k === "equipment" ? (v==="home"?"在家":"健身房") : Array.isArray(v) ? v.join("、") : (v ?? "空");
+  return Object.keys(lbl).filter(k => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null)).map(k => `${lbl[k]}：${fmt(k, a[k])} → ${fmt(k, b[k])}`);
+}
+async function submitSetup(form){
+  const fd = new FormData(form);
+  const g = k => fd.get(k), all = k => fd.getAll(k);
+  const req = {age:g("age"), height:g("height"), weight:g("weight")};
+  const bad = Object.entries({age:"年龄",height:"身高",weight:"体重"}).filter(([k]) => !(+req[k] > 0)).map(([,l])=>l);
+  const days = all("trainDays").map(Number);
+  const err = $("#setup-err");
+  if (bad.length || !days.length) { err.hidden = false; err.textContent = bad.length ? `还差：${bad.join("、")}。` : "至少选一天训练。"; return; }
+  const prev = clone(S.profile || {});
+  const fields = {sex:g("sex")||"m", age:+g("age"), height:+g("height"), weight:+g("weight"), bf: g("bf") === "" ? null : +g("bf"),
+    steps:+g("steps"), exp:g("exp")||"new", stage:g("stage")||"auto", trainDays:days, slot:g("slot")||"eve", equipment:g("equipment")||"gym",
+    injuries:all("injuries"), injNote:g("injNote")||"", supps:all("supps"),
+    updatedAt:new Date().toISOString()};
+  const today = todayStr();
+  const apply = p => { Object.assign(p, fields); p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION; };
+  if (!S.profile) S.profile = {};
+  S.editing = false; S.tab = "today";
+  window.scrollTo(0,0);
+  try {
+    if (prev.startDate) {
+      const after = clone(prev); apply(after);
+      const h = {id:uid(), savedAt:new Date().toISOString(), before:prev, changes:profileDiff(prev, after)};
+      S.profileHistory = [h, ...(S.profileHistory||[])];
+      await write("profileHistory/" + h.id, h);
+    }
+    await updateProfile(apply); toast(prev.startDate ? "已保存，以往记录都保留" : "已保存");
+  } catch {}
+}
+
+/* ---- 今天 ---- */
+// 草稿按“日期|哪一练”分开存，换练别的日子不会冲掉已经填的数
+const draftKey = (date, key) => date + "|" + key;
+function getDraft(date, plan){
+  const saved = S.days[date]?.workout, k = draftKey(date, plan.key);
+  let d = S.drafts[k];
+  if (!d && S.drafts[date]?.key === plan.key) { d = S.drafts[date]; S.drafts[k] = d; delete S.drafts[date]; persistDrafts(); }
+  if (!d) {
+    const srv = S.days[date]?.workoutDraft;
+    d = saved && saved.key === plan.key ? clone(saved) : srv && srv.key === plan.key ? clone(srv) : {key:plan.key, exercises:plan.ex.map(e => ({name:e.name, sets:Array.from({length:e.sets}, () => ({w:"", r:""}))})), feel:"", pain:"none", painArea:"", note:""};
+    S.drafts[k] = d;
+  }
+  // 训练动作变化时补齐；已经填过数的保留
+  const hasData = x => x?.sets?.some(t => t.w !== "" || t.r !== "");
+  plan.ex.forEach((e,i) => { const old = d.exercises[i]; if (!old || old.name !== e.name) d.exercises[i] = {name:e.name, sets: hasData(old) ? old.sets : Array.from({length:e.sets}, () => ({w:"", r:""}))}; });
+  plan.ex.forEach((e,i) => { const ss = d.exercises[i].sets; while (ss.length < e.sets) ss.push({w:"", r:""}); if (ss.length > e.sets && ss.slice(e.sets).every(x => x.w === "" && x.r === "")) ss.length = e.sets; });
+  d.exercises.length = plan.ex.length;
+  return d;
+}
+function overrideRow(plan, day){
+  const cur = plan.key, fut = day.date > todayStr() || (!day.date && S.date > todayStr());
+  return `<div class="stack" style="gap:6px"><span class="small muted">${fut ? "这天想练" : "今天想练（换一练不会打乱后面的轮换）"}</span><div class="row">
+    ${ORDER.map(k => `<button class="chip ${cur===k?"on":""}" data-act="override" data-v="${k}">${PROGRAM[k].title}</button>`).join("")}
+    <button class="chip ${cur==="custom"?"on":""}" data-act="override" data-v="custom">自选训练</button>
+    <button class="chip ${!cur?"on":""}" data-act="override" data-v="rest">休息</button>
+    ${day.override ? `<button class="chip" data-act="override" data-v="">恢复自动</button>` : ""}</div></div>`;
+}
+const CORE = [["平板支撑（秒）",3,30,60],["死虫",3,8,12],["鸟狗式",3,8,12],["侧桥（秒）",3,20,40],["反向卷腹",3,10,15],["臀桥",3,10,15]];
+function extraEditor(){
+  return `<div class="tip stack" style="gap:8px"><b>加练</b>
+    <p class="small muted">今天额外做了别的动作？加在这里，和本练一起保存，不用切到自选训练。</p>
+    <div class="row">${CORE.map(([n]) => `<button class="chip" data-act="ex-add" data-v="${esc(n)}">＋ ${esc(n)}</button>`).join("")}</div>
+    <div class="row" style="flex-wrap:nowrap"><input id="ex-new" list="ex-all" placeholder="其他动作名"><button class="chip on" data-act="ex-add" data-v="">加上</button></div>
+    <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist></div>`;
+}
+function customEditor(day){
+  const c = day.custom?.ex || [];
+  return `<div class="tip stack" style="gap:10px"><b>自选训练：想练什么就加什么</b>
+    ${c.length ? "" : `<p class="small muted">还没有动作。点下面的快速添加，或加一个空白动作自己填名字。</p>`}
+    ${c.map((e,i) => `<div class="stack" style="gap:6px;border-top:1px solid var(--line,#8884);padding-top:8px">
+      <div class="row" style="flex-wrap:nowrap"><input id="cu-${i}-name" data-cu="${i}.name" list="ex-all" value="${esc(e.name)}" placeholder="动作名"><button class="chip bad" data-act="cu-del" data-v="${i}">删除</button></div>
+      <div class="grid3"><label>组数<input id="cu-${i}-sets" data-cu="${i}.sets" type="number" inputmode="numeric" min="1" max="10" value="${esc(e.sets)}"></label>
+      <label>最少次数<input id="cu-${i}-lo" data-cu="${i}.lo" type="number" inputmode="numeric" min="1" value="${esc(e.lo)}"></label>
+      <label>最多次数<input id="cu-${i}-hi" data-cu="${i}.hi" type="number" inputmode="numeric" min="1" value="${esc(e.hi)}"></label></div></div>`).join("")}
+    <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+    <div><span class="small muted">腰/核心快速添加（腰椎友好）</span><div class="row" style="margin-top:4px">${CORE.map(([n]) => `<button class="chip" data-act="cu-add" data-v="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
+    <div><button class="chip on" data-act="cu-add" data-v="">＋ 添加空白动作</button></div></div>`;
+}
+function weekStrip(){
+  const t = todayStr();
+  return `<section class="card"><h3>未来 7 天</h3><div class="stack" style="gap:4px">${Array.from({length:8}, (_,i) => addDays(t, i)).map(d => {
+    const p = planFor(d), label = p.key ? (p.key === "custom" ? "自选训练" : PROGRAM[p.key].title) : "休息";
+    return `<button class="row between" data-act="goto" data-v="${d}" style="cursor:pointer;padding:6px 0"><span>${d===t?"今天 ":""}${fmtDate(d)}</span><span class="${p.key?"":"muted"}">${label}${p.saved?" ✓":""}</span></button>`;
+  }).join("")}</div><p class="small muted">点某一天可以提前看动作，也能提前改成自选训练或休息。</p></section>`;
+}
+/* viewFuture 已合并到 viewToday() 中；保留此函数作备用 */
+function viewFuture(){
+  return viewToday();
+}
+function viewToday(){
+  const p = S.profile, date = S.date, plan = planFor(date), day = S.days[date] || {}, t = targets(), m = dayMacros(date), dt = dayTargets(date);
+  const wk = weekIndex(date) + 1;
+  const isFuture = date > todayStr();
+  let html = dateBar();
+  html += `<div class="stack">`;
+  // 训练卡
+  if (plan.key) {
+    const d = getDraft(date, plan), done = day.workout?.done;
+    html += `<section class="card">
+      <div class="row between"><div><span class="eyebrow">第 ${wk} 周 · ${SLOT[plan.slot]}训练${isFuture?" · 计划预览":""}</span><h2>${plan.title}${plan.deload?" · 减载":""}</h2></div>
+      ${done ? `<span class="chip on">已完成</span>` : ""}</div>
+      <div class="row">${Object.entries(SLOT).map(([k,l]) => `<button class="chip ${plan.slot===k?"on":""}" data-act="slot" data-v="${k}">${l}</button>`).join("")}</div>
+      <p class="tip">${esc(SLOT_TIP[plan.slot])}</p>
+      ${plan.deload ? `<p class="tip warn">${plan.deload==="manual"?"你开启了减载周":"按计划这是减载周"}：重量降到约 60%，组数减半，让关节和神经恢复。</p>` : ""}
+      ${(p.injuries||[]).length ? `<p class="tip bad">有伤部位：${p.injuries.map(k=>INJ[k]).join("、")}。所有动作只在无痛范围内做，疼痛超过 3/10 就停掉这个动作；持续疼痛请看医生。</p>` : ""}
+      ${plan.custom ? customEditor(day) : ""}
+      ${plan.ex.map((e,i) => exCard(e, i, d, date, plan)).join("")}
+      ${plan.custom ? "" : extraEditor()}
+      <div class="ex"><b>整体感受</b>
+        <div class="row">${[1,2,3,4,5].map(n => `<button class="chip ${+d.feel===n?"on":""}" data-act="feel" data-v="${n}">${FEEL[n]}</button>`).join("")}</div>
+        <b>有没有哪里疼</b>
+        <div class="row">${[["none","没有"],["mild","有点不舒服"],["pain","明显疼痛"]].map(([k,l]) => `<button class="chip ${d.pain===k?"on":""}" data-act="pain" data-v="${k}">${l}</button>`).join("")}</div>
+        ${d.pain !== "none" ? `<label>哪里、做什么动作时<input id="w-painarea" data-f="painArea" value="${esc(d.painArea)}" placeholder="例如：平板卧推最后一组右肩前侧"></label>` : ""}
+        <label>备注<textarea id="w-note" data-f="note" placeholder="睡眠、状态、器械被占换了动作……">${esc(d.note)}</textarea></label>
+      </div>
+      <button class="btn primary block" data-act="save-workout">${done ? "更新训练记录" : "完成训练，保存"}</button>
+      ${done ? "" : overrideRow(plan, day)}
+    </section>`;
+  } else {
+    const next = nextKey(date);
+    html += `<section class="card">
+      <span class="eyebrow">第 ${wk} 周 · 休息日</span><h2>今天不练力量</h2>
+      <p>步数目标 8000–10000，饭后散步最好。睡够 7–9 小时，比多练一次更能保住肌肉。</p>
+      ${(p.injuries||[]).length ? `<div class="tip"><b>康复 10 分钟</b><ul class="clean">${p.injuries.map(k => `<li>${INJ[k]}：${MOBILITY[k]}</li>`).join("")}</ul></div>` : ""}
+      <p class="small muted">下一练是 ${PROGRAM[next].title}。</p>
+      ${overrideRow(plan, day)}
+    </section>`;
+  }
+  // 打卡
+  const c = day.checkin || {};
+  html += `<section class="card"><div class="row between"><h2>今日打卡</h2>${day.checkin?`<span class="chip on">已记录</span>`:""}</div>
+    <p class="small muted">体重在晨起空腹、上完厕所后称。计划只看 7 日平均。</p>
+    <div class="grid2">
+      <label>体重 kg<input id="c-weight" type="number" inputmode="decimal" step="0.1" value="${esc(c.weight??"")}" placeholder="${esc(t.w?.toFixed?.(1) ?? "")}"></label>
+      <label>步数<input id="c-steps" type="number" inputmode="numeric" value="${esc(c.steps??"")}" placeholder="9000"></label>
+      <label>昨晚睡了几小时<input id="c-sleep" type="number" inputmode="decimal" step="0.5" value="${esc(c.sleep??"")}" placeholder="7.5"></label>
+      <label>体脂率 %（体脂秤）<input id="c-bf" type="number" inputmode="decimal" step="0.1" value="${esc(c.bf??"")}" placeholder="${esc(curBf() ?? "可空")}"></label>
+      ${c.waist != null ? `<label>腰围 cm<input id="c-waist" type="number" inputmode="decimal" step="0.5" value="${esc(c.waist)}"></label>` : ""}
+    </div>
+    <p class="small muted">体脂秤单次误差有 3–5 个百分点，计划用最近 14 天的平均（至少 3 次）。</p>
+    <button class="btn" data-act="save-checkin">保存打卡</button></section>`;
+  // 饮食
+  html += `<section class="card"><div class="row between"><h2>今日饮食</h2><button class="link" data-act="tab" data-v="food">去记录 ›</button></div>
+    ${macroBars(dt, m)}</section>`;
+  // 补剂
+  const sup = [];
+  if ((p.supps||[]).includes("creatine")) sup.push("肌酸 3–5 g，任意时间");
+  if ((p.supps||[]).includes("caffeine") && plan.key && plan.slot === "am") sup.push(`练前 30–60 分钟咖啡因约 ${Math.round(t.w*3)}–${Math.round(t.w*5)} mg`);
+  if ((p.supps||[]).includes("protein")) sup.push("蛋白粉只用来补当天的蛋白缺口");
+  if ((p.supps||[]).includes("vitd")) sup.push("维生素 D3 1000–2000 IU");
+  if ((p.supps||[]).includes("fishoil")) sup.push("鱼油 EPA+DHA 1–2 g");
+  if (sup.length) html += `<section class="card"><h3>补剂</h3><ul class="clean small">${sup.map(s=>`<li>${s}</li>`).join("")}</ul></section>`;
+  return html + weekStrip() + `</div>`;
+}
+function exCard(e, i, d, date, plan){
+  const s = suggest(e, date, plan.deload), de = d.exercises[i];
+  const warm = i === 0 && s.w ? `<p class="small muted">热身：${r25(s.w*0.5)}kg×10、${r25(s.w*0.7)}kg×4、${r25(s.w*0.9)}kg×1，组间 1 分钟。</p>` : "";
+  return `<div class="ex">
+    <div class="ex-h"><b>${esc(e.name)}</b><span class="presc">${e.sets}${e.lo!==""&&e.lo!=null?` × ${e.lo}–${e.hi}${isTimed(e.name)?" 秒":""}`:" 组"}</span></div>
+    ${e.why ? `<span class="small muted">${e.name !== e.orig ? `替换自「${esc(e.orig)}」· ` : ""}${esc(e.why)}</span>` : ""}
+    ${e.extra ? `<div><button class="chip ${S.exDel === date + "|" + i ? "bad" : ""}" data-act="ex-del" data-v="${i}">${S.exDel === date + "|" + i ? "再点一次确认删除" : "删除这个加练"}</button></div>` : !plan.custom ? (S.ed?.date === date && S.ed.i === i ? editor(e) : `<div><button class="chip" data-act="ed-open" data-v="${i}">${plan.saved ? "改这个动作（已记录的这次）" : "编辑这个动作"}</button></div>`) : ""}
+    <p class="small">${esc(s.text)} <span class="muted">组间 ${e.rest}</span></p>
+    ${s.stall ? `<p class="tip warn">连续 3 次没进步。先检查睡眠和热量，再考虑换动作变体。</p>` : ""}
+    ${warm}
+    ${howTo(e.name)}
+    <div class="sets"><span class="small muted"></span><span class="small muted">${e.inc===0?"负重 kg（自重填 0）":"重量 kg"}</span><span class="small muted">${isTimed(e.name)?"秒":"次数"}</span>
+    ${de.sets.map((st,j) => `<span class="n">${j+1}</span>
+      <input id="w-${i}-${j}-w" data-set="${i}.${j}.w" type="number" inputmode="decimal" step="0.5" value="${esc(st.w)}" placeholder="${s.w!=null?s.w:""}" aria-label="第${j+1}组重量">
+      <input id="w-${i}-${j}-r" data-set="${i}.${j}.r" type="number" inputmode="numeric" value="${esc(st.r)}" placeholder="${e.lo!==""&&e.lo!=null?e.lo+"–"+e.hi:""}" aria-label="第${j+1}组${isTimed(e.name)?"秒数":"次数"}">`).join("")}
+    </div></div>`;
+}
+/* ---- 动作编辑 ---- */
+function altsFor(orig){
+  const out = [];
+  for (const k of ORDER) for (const ex of PROGRAM[k].ex) if (ex.name === orig) {
+    [ex, ex.home, ...Object.values(ex.subs), ...Object.values(ex.home?.subs || {})].filter(Boolean).forEach(c => out.push(typeof c === "string" ? c : c.name));
+  }
+  return [...new Set(out)];
+}
+function allExNames(){
+  const out = new Set();
+  for (const k of ORDER) for (const ex of PROGRAM[k].ex) altsFor(ex.name).forEach(n => out.add(n));
+  Object.keys(CUES).forEach(n => out.add(n));
+  return [...out];
+}
+function editor(e){
+  const ed = S.ed, dayKey = planFor(S.date).key;
+  return `<div class="tip stack" style="gap:10px">
+    <div class="row between"><b>调整「${esc(e.orig)}」这一项</b><button class="link" data-act="ed-cancel">收起</button></div>
+    <div><span class="small muted">常用替代</span><div class="row" style="margin-top:4px">${altsFor(e.orig).map(n => `<button class="chip ${ed.name===n?"on":""}" data-act="ed-pick" data-v="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
+    <label>新动作（可从列表选，也可以自己写）<input id="ed-name" data-ed="name" list="ex-all" value="${esc(ed.name)}"></label>
+    <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+    <div class="grid3">
+      <label>组数<input id="ed-sets" data-ed="sets" type="number" inputmode="numeric" min="1" max="8" value="${esc(ed.sets)}"></label>
+      <label>最少次数<input id="ed-lo" data-ed="lo" type="number" inputmode="numeric" min="1" value="${esc(ed.lo)}"></label>
+      <label>最多次数<input id="ed-hi" data-ed="hi" type="number" inputmode="numeric" min="1" value="${esc(ed.hi)}"></label>
+    </div>
+    ${S.sample ? `<div class="stack" style="gap:6px">
+      <label>想换的原因（给 AI 参考，可空）<input id="ed-why" data-ed="why" value="${esc(ed.why)}" placeholder="例如：器械被占了 / 做的时候腰不舒服 / 想练得更侧重上胸"></label>
+      <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${ed.aiBusy ? "AI 思考中…" : "让 AI 推荐 3 个"}</button></div>
+      ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${ed.name===a.name?"border-color:var(--accent)":""}"><b class="small">${esc(a.name)} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
+      ${ed.aiErr ? `<p class="small" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
+    </div>` : ""}
+    <div><span class="small muted">换多久</span><div class="row" style="margin-top:4px">
+      <button class="chip ${ed.scope==="once"?"on":""}" data-act="ed-scope" data-v="once">${ed.rec ? "只改这次记录" : "只换今天"}</button>
+      <button class="chip ${ed.scope==="always"?"on":""}" data-act="ed-scope" data-v="always">以后每次${PROGRAM[dayKey]?.label||""}日都换</button></div></div>
+    <div class="grid2"><button class="btn primary" data-act="ed-save">保存</button>${ed.rec ? "" : `<button class="btn" data-act="ed-reset">恢复默认</button>`}</div>
+    <p class="small muted">${ed.rec ? "改的是这一天已保存的记录，已经填的重量和次数（秒数）都保留；组数只能加，不会删掉填过的组。" : "已记录的训练不受影响。长期调整可以随时在这里恢复默认。"}</p>
+  </div>`;
+}
+function openEditor(i){
+  const plan = planFor(S.date), e = plan.ex[i];
+  const longTerm = !!(S.profile.exEdits || {})[e.orig];
+  S.ed = {date:S.date, i, orig:e.orig, name:e.name, sets:e.sets, lo:e.lo, hi:e.hi, why:"", ai:[], scope: plan.saved ? "once" : longTerm ? "always" : "once", rec:!!plan.saved};
+}
+async function aiSuggest(){
+  const ed = S.ed, p = S.profile, plan = planFor(ed.date), e = plan.ex[ed.i];
+  ed.aiBusy = true; ed.aiErr = null; render();
+  const prompt = `你是力量训练教练。学员想替换今天课表里的一个动作，请推荐 3 个替代动作。
+今天：${plan.title}，其他动作：${plan.ex.filter((_,k)=>k!==ed.i).map(x=>x.name).join("、")}
+要替换的：${e.name}（原课表动作「${e.orig}」，${e.sets} 组 × ${e.lo}–${e.hi} 次）
+训练地点：${p.equipment==="home"?"在家（自重、弹力带、单杠、背包负重）":"健身房"}
+伤病：${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"}${p.injNote?"（"+p.injNote+"）":""}
+训练经验：${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]||"未知"}
+想换的原因：${ed.why || "没说"}
+原则：练到同一块肌肉；伤病部位不负重、不做有风险的姿势；复合动作 4–8 次，孤立动作 8–15 次；动作名用中文常见叫法。
+只回复一个 JSON 数组：[{"name":"动作名","sets":3,"lo":8,"hi":12,"why":"一句话理由"}]`;
+  try {
+    const r = await S.sample.json(prompt, {modelTier:"default"});
+    const n = (v, d) => { v = Math.round(+v); return v > 0 && v < 50 ? v : d; };
+    ed.ai = (Array.isArray(r) ? r : []).slice(0,3).map(a => ({name:String(a.name||"").slice(0,40), sets:n(a.sets,3), lo:n(a.lo,8), hi:n(a.hi,12), why:String(a.why||"")})).filter(a => a.name);
+    if (!ed.ai.length) ed.aiErr = "AI 没给出可用的建议，再试一次或手动选。";
+  } catch (err) { ed.aiErr = sampleErr(err).replace("估算", "推荐"); }
+  ed.aiBusy = false; render();
+}
+async function saveEdit(reset){
+  const ed = S.ed;
+  if (ed.rec && !reset) return saveRecordEdit();
+  const name = String(ed.name || "").trim(), sets = Math.round(+ed.sets), lo = Math.round(+ed.lo), hi = Math.round(+ed.hi);
+  if (!reset && (!name || !(sets >= 1 && sets <= 8) || !(lo >= 1) || !(hi >= lo))) { toast("请填好动作名、组数（1–8）和次数范围"); return; }
+  const meta = exMeta(name);
+  const val = {name, sets, lo, hi, inc: meta?.inc ?? (hi <= 8 ? 2.5 : 1), rest: meta?.rest || (hi <= 8 ? "2–3 分钟" : "1–2 分钟")};
+  const today = todayStr(), hadLong = !!(S.profile.exEdits || {})[ed.orig];
+  S.ed = null;
+  try {
+    await updateDay(ed.date, day => { day.exEdits = {...(day.exEdits || {})}; if (reset || ed.scope === "always") delete day.exEdits[ed.orig]; else day.exEdits[ed.orig] = clone(val); });
+    if (reset && hadLong) await updateProfile(p => { p.exEdits = {...(p.exEdits || {})}; delete p.exEdits[ed.orig]; (p.adjustLog = p.adjustLog || []).push({date:today, text:`「${ed.orig}」恢复默认`}); });
+    if (!reset && ed.scope === "always") await updateProfile(p => { p.exEdits = {...(p.exEdits || {}), [ed.orig]: clone(val)}; (p.adjustLog = p.adjustLog || []).push({date:today, text:`「${ed.orig}」长期换成 ${name} ${sets}×${lo}–${hi}`}); });
+    toast(reset ? "已恢复默认" : ed.scope === "always" ? "已长期调整" : "只换今天");
+  } catch {}
+}
+
+// 改已保存的训练记录里的某个动作：只改名字和计划快照，填过的组一个不删
+async function saveRecordEdit(){
+  const ed = S.ed;
+  const name = String(ed.name || "").trim(), sets = Math.round(+ed.sets), lo = Math.round(+ed.lo), hi = Math.round(+ed.hi);
+  if (!name || !(sets >= 1 && sets <= 8) || !(lo >= 1) || !(hi >= lo)) { toast("请填好动作名、组数（1–8）和范围"); return; }
+  const meta = exMeta(name), date = ed.date, i = ed.i, today = todayStr();
+  const base = savedPlan(S.days[date]?.workout || {})[i] || {};
+  const orig = base.orig || ed.orig;
+  S.ed = null;
+  let saved = null;
+  try {
+    await updateDay(date, day => {
+      const w = day.workout; if (!w?.done || !w.exercises?.[i]) return;
+      const pl = savedPlan(w);
+      pl[i] = {...pl[i], name, sets, lo, hi, inc: meta?.inc ?? pl[i].inc, rest: meta?.rest || pl[i].rest, orig, why:"记录后手动改过"};
+      w.plan = pl;
+      const ex = w.exercises[i]; ex.name = name;
+      while (ex.sets.length < sets) ex.sets.push({w:"", r:""});
+      if (ex.sets.length > sets && ex.sets.slice(sets).every(x => x.w === "" && x.r === "")) ex.sets.length = sets;
+      saved = clone(w);
+    });
+    if (saved) backupWorkout(date, saved);
+    Object.keys(S.drafts).filter(k => k.startsWith(date)).forEach(k => delete S.drafts[k]); persistDrafts();
+    if (ed.scope === "always" && orig) await updateProfile(p => { p.exEdits = {...(p.exEdits || {}), [orig]: {name, sets, lo, hi, inc: meta?.inc ?? (hi <= 8 ? 2.5 : 1), rest: meta?.rest || "1–2 分钟"}}; (p.adjustLog = p.adjustLog || []).push({date:today, text:`「${orig}」长期换成 ${name} ${sets}×${lo}–${hi}`}); });
+    render(); toast(ed.scope === "always" ? "已改这次记录，以后也按新动作" : "已改这次记录");
+  } catch {}
+}
+function macroBars(t, m){
+  const row = (k, l, cur, tgt, unit) => { const pct = tgt ? Math.min(100, cur/tgt*100) : 0; return `<div class="macro"><span>${l}</span><div class="bar"><i class="${cur>tgt*1.05?"over":""}" style="width:${pct}%"></i></div><span class="num">${Math.round(cur)} / ${tgt}${unit}</span></div>`; };
+  return `${row("kcal","热量",m.kcal,t.kcal," kcal")}${row("p","蛋白",m.protein,t.protein," g")}${row("c","碳水",m.carbs,t.carbs," g")}${row("f","脂肪",m.fat,t.fat," g")}
+  <p class="small muted">${m.n ? `已记 ${m.n} 餐，其中 ${m.est} 餐有估算。` : "还没记录饮食。"}</p>`;
+}
+
+/* ---- 饮食 ---- */
+const MF = [["kcal","热量"],["protein","蛋白 g"],["carbs","碳水 g"],["fat","脂肪 g"]];
+const aiOK = () => !!(S.sample || (S.cloud && S.comments));
+function mealMode(){ const m = S.mealMode || lsGet("bj-mmode", "ai"); return m === "ai" && !aiOK() ? "manual" : m; }
+function viewFood(){
+  const date = S.date, t = dayTargets(date), m = dayMacros(date), meals = S.days[date]?.meals || [];
+  const hour = new Date().getHours(), mode = mealMode();
+  const defType = hour < 10 ? "早餐" : hour < 14 ? "午餐" : hour < 17 ? "加餐" : "晚餐";
+  const isFuture = date > todayStr();
+  return dateBar() + `<div class="stack">
+  <section class="card"><div class="row between"><h2>营养目标${isFuture?" · 预览":date<todayStr()?" · 历史日期":""}</h2><span class="small muted">${STAGE[t.st]}</span></div>${macroBars(t, m)}
+    <p class="small muted">蛋白分 3–4 顿，每顿 30–50 g。含糖饮料不喝。</p></section>
+  <section class="card"><h2>记一餐</h2>
+    <div class="row">${MEAL_TYPES.map(x => `<label class="checks" style="display:inline-flex"><input type="radio" name="mtype" value="${x}" ${x===(S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defType)?"checked":""}><span>${x}</span></label>`).join("")}</div>
+    <label>照片（可选，可加多张，比如吃之前和吃完各一张）${(S.pendingPhotos || []).length < 4 ? `<input id="m-photo" type="file" accept="image/*" multiple>` : `<span class="small muted">最多 4 张</span>`}</label>
+    ${(S.pendingPhotos || []).length ? `<div class="previews">${S.pendingPhotos.map((f, i) => `<figure style="margin:0;position:relative;flex:1 1 0;max-width:48%"><img class="preview" src="${f.url}" alt="第 ${i+1} 张照片" style="max-width:100%"><button class="chip" data-act="unpick" data-v="${i}" style="position:absolute;top:4px;right:4px;padding:0 8px" aria-label="去掉这张">×</button></figure>`).join("")}</div>` : ""}
+    <label>吃了什么<textarea id="m-text" placeholder="例如：米饭一碗、鸡胸肉约 150 g、西兰花、一个鸡蛋">${esc(lsGet("bj-mtext",""))}</textarea></label>
+    <div class="row"><span class="small muted">营养</span>
+      <button class="chip ${mode==="ai"?"on":""}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>AI 估算</button>
+      <button class="chip ${mode==="manual"?"on":""}" data-act="mmode" data-v="manual">自己填</button></div>
+    ${mode === "manual" ? `<div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
+      ${MF.map(([k,l]) => `<label>${l}<input id="mf-${k}" data-mf="${k}" type="number" inputmode="decimal" value="${esc(S.mfill?.[k] ?? "")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}</div>` : ""}
+    <button class="btn primary block" data-act="add-meal" data-v="${mode}">${mode === "ai" ? "保存并 AI 估算" : "保存"}</button>
+    <p class="small muted">${mode === "ai" ? "文字、饭菜照片、营养成分表照片都可以，AI 会自己判断怎么算。吃完后也可以在下面这餐里补一张剩下的照片，对比着重新估算。有照片时一般 1 分钟左右出结果，这里会自动更新。" : "直接填你知道的数值（可以只填热量和蛋白），不经过 AI。都不填就只记下这餐。"}</p>
+    ${S.assets ? "" : `<p class="small muted">照片会压缩成小图存进你的记录。</p>`}
+  </section>
+  <section class="card"><h2>今天吃了</h2>
+    ${meals.length ? `<div class="stack">${meals.map(mealCard).join("")}</div>` : `<p class="muted">还没有记录。拍一张照片或写一句话就行，吃完就记最省事。</p>`}
+  </section></div>`;
+}
+function mealCard(m){
+  const e = m.est || {}, busy = S.busy["meal-"+m.id];
+  const pend = m.visionReq?.status === "pending" && Date.now() - Date.parse(m.visionReq.at || 0) < 10*60e3; // 10 分钟还没回来就允许再点一次
+  const fb = m.thumb ? `this.onerror=null;this.src=this.dataset.fb` : `this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'照片不可用'}))`;
+  const img = m.photo ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(m.thumb||"")}" alt="${esc(m.type)}照片" onerror="${fb}">` : (S.files[m.id]?.url ? `<img class="ph" src="${S.files[m.id].url}" alt="">` : m.thumb ? `<img class="ph" src="${esc(m.thumb)}" alt="">` : `<div class="ph">无照片</div>`);
+  const confirm = S.confirmDel === m.id;
+  return `<div class="meal">${img}<div class="body">
+    <div class="row between"><select data-mtype-of="${m.id}" aria-label="改餐次" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(x)}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
+    ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}
+    ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">← 左边是吃之前</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${p.id ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(p.thumb||"")}" alt="${esc(MORE_TAG[p.tag] || "照片")}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb">` : `<img src="${esc(p.thumb)}" alt="">`}${MORE_TAG[p.tag] ? `<span>${esc(MORE_TAG[p.tag])}</span>` : ""}<button class="link small" data-act="del-more" data-v="${m.id}|${i}">${S.confirmDel === m.id + "|" + i ? "确认删" : "删"}</button></figure>` : "").join("")}</div>` : ""}
+    ${S.busy["more-"+m.id] ? `<p class="small muted">照片上传中…</p>` : ""}
+    ${moreOf(m).length && e.kcal != null && (e.photos || 1) < photoCount(m) ? `<p class="tip small">加了新照片，点「AI 重新估算」会把几张一起看；有吃完剩下的照片就按差值算。</p>` : ""}
+    ${e.items?.length ? `<p class="small muted">${e.items.map(x => esc(x.name + (x.amount?" "+x.amount:""))).join("、")}</p>` : ""}
+    <div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
+      ${[["kcal","热量"],["protein","蛋白"],["carbs","碳水"],["fat","脂肪"]].map(([k,l]) => `<label>${l}<input id="me-${m.id}-${k}" data-meal="${m.id}" data-k="${k}" type="number" inputmode="decimal" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
+    </div>
+    ${e.calc ? `<p class="small muted">${e.by==="label"?"成分表换算":"依据"}：${esc(e.calc)}</p>` : ""}
+    ${e.by === "claude" && e.ocr ? `<p class="tip small">${e.label ? "已在本地识别照片里的营养成分表，按表换算。" : "已在本地读取照片里的文字，没发现营养成分表，按文字描述估算。"}</p>` : ""}
+    ${e.by === "claude" && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">这次估算没能看到照片，只按文字算${e.imgErr ? `（原因：${esc(e.imgErr)}）` : ""}。包装上有营养成分表的话，可以把每 100 g 的数值写进文字里再重新估算。</p>` : ""}
+    ${m.photoErr && !m.photo ? `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr))}${S.files[m.id]?.blob && S.assets && m.photoErr !== "decode" ? ` <button class="chip" data-act="retry-photo" data-v="${m.id}">重传照片</button>` : ""}</p>` : ""}
+    ${m.visionReq?.status === "pending" ? `<p class="tip small">AI 正在${m.photo ? "看照片" : ""}估算…（${esc(new Date(m.visionReq.at || m.askedAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}))} 发出${/^can:/.test(m.visionReq.channel || "") ? "；这个 App 里叫不醒 Claude，排队等整点检查，最迟一小时" : m.visionReq.channel && !/^sent/.test(m.visionReq.channel) ? "，排队中，最迟一小时内完成" : "，一般 1 分钟左右"}），完成后这里自动更新。${e.provisional ? "上面的数是先在这里算的临时结果" : ""}</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">AI 看过${photoCount(m) > 1 ? ` ${photoCount(m)} 张照片` : m.photo ? "照片" : "描述"}后估算的。数字不对可以直接改。</p>` : e.by === "manual" ? `<p class="small muted">自己填的数值。</p>` : ""}
+    ${e.tip ? `<p class="tip">${esc(e.tip)}${e.confidence?` <span class="muted">（把握：${esc(e.confidence)}）</span>`:""}</p>` : ""}
+    ${S.label?.id === m.id ? labelForm(m) : ""}
+    <div class="row">
+      ${aiOK() ? `<button class="chip ${e.kcal==null?"on":""}" data-act="ai-meal" data-v="${m.id}" ${busy || pend ?"disabled":""}>${busy || pend ? "AI 估算中…" : e.kcal!=null ? "AI 重新估算" : "AI 估算"}</button>` : ""}
+      ${photoCount(m) < 4 ? `<label class="chip">+ 照片<input type="file" accept="image/*" data-more="${m.id}" data-tag="其他"></label>` : ""}
+      <button class="chip ${confirm?"bad":""}" data-act="del-meal" data-v="${m.id}">${confirm?"确认删除":"删除"}</button>
+    </div></div></div>`;
+}
+function shrink(img, max, q){
+  const k = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement("canvas"); c.width = Math.round(img.width*k); c.height = Math.round(img.height*k);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+const isHeic = f => /hei[cf]/i.test(f.type || "") || /\.hei[cf]$/i.test(f.name || "");
+function loadHeic(){
+  if (window.heic2any) return Promise.resolve(window.heic2any);
+  return new Promise((res, rej) => {
+    const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js";
+    sc.onload = () => window.heic2any ? res(window.heic2any) : rej(new Error("no heic2any")); sc.onerror = () => rej(new Error("heic lib load failed"));
+    document.head.appendChild(sc);
+  });
+}
+async function compress2(file, tried){
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const big = shrink(img, 1600, 0.85);
+    const blob = await new Promise(res => big.toBlob(b => res(b), "image/jpeg", 0.85));
+    let thumb = null; try { thumb = shrink(img, 480, 0.6).toDataURL("image/jpeg", 0.6); } catch {}
+    URL.revokeObjectURL(url);
+    return blob ? {blob, thumb, ok:true} : {blob:file, thumb, ok:false};
+  } catch {
+    if (!tried && isHeic(file)) {
+      try { toast("正在把 HEIC 照片转成 JPG…", 8000); const conv = await (await loadHeic())({blob:file, toType:"image/jpeg", quality:0.85}); const b = Array.isArray(conv) ? conv[0] : conv; return await compress2(b, true); } catch (e) { console.warn("heic convert failed", e); }
+    }
+    return {blob:file, thumb:null, ok:false};
+  }
+}
+async function compress(file){
+  try {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = Math.round(img.width*k); c.height = Math.round(img.height*k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    return await new Promise(res => c.toBlob(b => res(b || file), "image/jpeg", 0.85));
+  } catch { return file; }
+}
+const PHOTO_ERR = c => ({
+  decode: "这张照片读不了（HEIC 自动转换没成功，可能网络连不上转换库）。请换网络重试，或用截图/JPEG 再传；文字已保存。",
+  no_assets: "当前窗口没有照片存储权限（请在 Claude 里用你自己的账号打开本页），文字已保存。",
+  too_large: "照片太大存不下，请换一张小一点的。", unsupported_type: "照片格式不支持，请换 JPG/PNG。",
+  quota_or_state: "照片存储空间不可用。", rate_limited: "上传太频繁，稍后点“重传照片”。", store_unavailable: "存储暂时不可用，稍后点“重传照片”。"
+}[c] || `照片没存上（错误码 ${c}），文字已保存，稍后可点“重传照片”。`);
+// 上传一张照片：返回 {id} 或 {thumb}（没有资产权限/上传失败时留小图）
+async function uploadOne(file){
+  const r = await compress2(file);
+  if (S.assets && r.ok) {
+    for (let k = 0; k < 2; k++) { try { return {id:(await S.assets.upload(r.blob, {type:"image/jpeg"})).id, blob:r.blob}; } catch (e) { if (k || !["store_unavailable","upstream_error","rate_limited"].includes(e?.code)) { console.warn("upload failed", e); break; } await new Promise(res => setTimeout(res, 1500)); } }
+  }
+  return r.thumb ? {thumb:r.thumb, blob:r.blob} : null;
+}
+async function addMorePhoto(date, id, file, tag){
+  S.busy["more-"+id] = true; render();
+  try {
+    const r = await uploadOne(file);
+    if (!r) { toast("这张照片读不了，请换 JPG/PNG 或截图再试", 6000); return; }
+    const p = {...(r.id ? {id:r.id} : {thumb:r.thumb}), tag, at:new Date().toISOString()};
+    await updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x) x.more = [...(Array.isArray(x.more) ? x.more : []), p]; });
+    const m = S.days[date]?.meals?.find(x => x.id === id);
+    toast(m?.est?.kcal != null ? "照片已加上。点「AI 重新估算」会对比着重算" : "照片已加上", 6000);
+  } catch (e) { console.warn("add photo failed", e); }
+  finally { delete S.busy["more-"+id]; render(); }
+}
+async function addMeal(mode, btn){
+  const text = ($("#m-text")?.value || "").trim();
+  const type = document.querySelector('input[name="mtype"]:checked')?.value || "加餐";
+  const picked = S.pendingPhotos || [], file = picked[0]?.file || null;
+  if (!text && !file) { toast("拍张照片或写一句吃了什么"); return; }
+  const now = new Date();
+  const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
+  // 平台只认点击当下发出的请求：用提前备好的锚点，在任何 await 之前就发出去，之后再压缩、上传照片
+  let early = null, anchor = S.mealAnchor || null;
+  const wantSend = mode === "ai" && S.cloud && S.comments && !(S.sample && (!file || S.imgOK === true));
+  const photoDesc = file ? "照片正在上传（以记录里的 photo 为准）" : "没有照片";
+  if (wantSend && anchor && S.canSend === "available") early = sendNow(anchor, S.date, m.id, type, photoDesc, text);
+  if (mode === "ai" && S.comments && !anchor) { try { anchor = await S.comments.anchorFor(btn); } catch (e) { console.warn("anchor failed", e); } }
+  if (wantSend && !early) early = notifyClaude(anchor, S.date, m.id, type, photoDesc, text);
+  let blob = null;
+  if (file) {
+    const r = await compress2(file);
+    blob = r.blob; m.thumb = r.thumb || null;
+    if (!r.ok) m.photoErr = "decode";
+    S.files[m.id] = {blob, url:URL.createObjectURL(blob)};
+  }
+  if (blob && !S.assets) { if (!m.thumb) m.photoErr = "no_assets"; }
+  else if (blob && m.photoErr !== "decode") {
+    const up = () => S.assets.upload(blob, {type:"image/jpeg"});
+    try { m.photo = (await up()).id; }
+    catch (e) {
+      if (e?.code === "store_unavailable" || e?.code === "upstream_error" || e?.code === "rate_limited") { try { await new Promise(r => setTimeout(r, 1500)); m.photo = (await up()).id; } catch (e2) { e = e2; } }
+      if (!m.photo) { console.warn("upload failed", e); m.photoErr = e?.code || "unknown"; }
+    }
+  } else if (blob && m.photoErr === "decode" && S.assets && /^image\/(jpeg|png|webp|gif)$/.test(blob.type)) {
+    try { m.photo = (await S.assets.upload(blob, {type:blob.type})).id; delete m.photoErr; } catch (e) { m.photoErr = e?.code || "unknown"; }
+  }
+  if (m.photo) { delete m.photoErr; delete m.thumb; }
+  else if (m.photoErr) toast(PHOTO_ERR(m.photoErr), 6000);
+  const extra = picked.slice(1);
+  if (extra.length) {
+    m.more = [];
+    for (const f of extra) { const r = await uploadOne(f.file).catch(() => null); if (r) m.more.push({...(r.id ? {id:r.id} : {thumb:r.thumb}), tag:"其他", at:new Date().toISOString()}); }
+    if (!m.more.length) delete m.more;
+  }
+  picked.forEach(f => URL.revokeObjectURL(f.url)); S.pendingPhotos = null;
+  if (mode === "manual") {
+    const f = S.mfill || {}, v = k => f[k] === "" || f[k] == null || isNaN(+f[k]) ? null : (k === "kcal" ? Math.round(+f[k]) : Math.round(+f[k]*10)/10);
+    if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
+  }
+  S.mtype = null; lsSet("bj-mtext", "");
+  const date = S.date;
+  try { await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }); } catch { return; }
+  if (mode === "manual") { S.mfill = {}; render(); toast("已记下"); return; }
+  aiEstimate(date, m.id, anchor, early);
+}
+/* 一个按钮走到底：页面能直接用 Claude 看图就当场算；看不了图（或没有照片但页面里调不了 Claude）就把这餐发给 Claude 看，结果写回后页面自动更新 */
+async function aiEstimate(date, id, anchor, early){
+  const m = S.days[date]?.meals?.find(x => x.id === id); if (!m) return;
+  // 即时通知发不出（如 iPhone App 里 canSendToClaude 为 off）时，先在页面里给个临时估算（成分表照片走本地 OCR），排队的看图结果回来后再覆盖
+  const quick = photoCount(m) > 0 && !!S.sample && !!S.canSend && S.canSend !== "available";
+  if (early) { if (quick) estimateMeal(date, id, true, true); return sendToAI(date, m, anchor, early); }
+  const photo = photoCount(m) > 0;
+  if (S.sample && (!photo || S.imgOK === true)) return estimateMeal(date, id, true);
+  if (S.cloud && S.comments) { if (quick) estimateMeal(date, id, true, true); return sendToAI(date, m, anchor); }
+  if (S.sample) return estimateMeal(date, id, true); // 没有评论通道：退回本地读字 + 文字估算
+  toast(S.aiProv === "openrouter" ? "先到「我的 → AI 服务」填 OpenRouter 密钥，或选「自己填」" : "当前窗口用不了 AI，请选「自己填」");
+}
+function reqText(date, id, type, photoDesc, mtext){
+  return `【AI 估算请求】用户 ${S.uid || "?"}，日期 ${date}，餐 id ${id}（${type}），${photoDesc}，文字：${(mtext || "（没写）").slice(0, 300)}。请估算并写回这一餐。`;
+}
+/* 同步发出（不能放在 await 之后） */
+function sendNow(anchor, date, id, type, photoDesc, mtext){
+  let p;
+  try { p = S.comments.sendToClaude({anchor, text:reqText(date, id, type, photoDesc, mtext)}); }
+  catch (e) { return Promise.resolve("err:" + (e?.code || "unknown")); }
+  return Promise.race([p.then(() => "sent:fast"), new Promise(res => setTimeout(() => res("timeout"), 60000))])
+    .catch(e => "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120));
+}
+function notifyClaude(anchor, date, id, type, photoDesc, mtext){
+  return (async () => {
+    try {
+      if (!anchor) return "no_anchor";
+      const can = await S.comments.canSendToClaude();
+      if (can !== "available") return "can:" + can;
+      const text = reqText(date, id, type, photoDesc, mtext);
+      return await Promise.race([S.comments.sendToClaude({anchor, text}).then(() => "sent"), new Promise(res => setTimeout(() => res("timeout"), 60000))]);
+    } catch (e) { return "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120); }
+  })();
+}
+async function sendToAI(date, m, anchor, early){
+  const at = new Date().toISOString(), id = m.id;
+  const send = early || notifyClaude(anchor, date, id, m.type, (m.photo ? `照片 ${m.photo}` : "没有照片") + (moreOf(m).length ? `，另有 ${moreOf(m).length} 张（${moreOf(m).map(p => MORE_TAG[p.tag] || "照片").join("、")}，见队列里的 photos）` : ""), m.text);
+  try { await updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x) { x.askedAt = at; x.visionReq = {status:"pending", at}; delete x.askErr; } }); }
+  catch { return; }
+  enqueueVision(date, id);
+  toast(m.photo ? "已记下，AI 正在看照片" : "已记下，AI 正在估算", 5000);
+  watchPending();
+  const r = await send;
+  updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x && x.visionReq) x.visionReq.channel = r; }, {quiet:true, silent:true}).then(() => render()).catch(()=>{});
+}
+/* 有等待中的 AI 估算时，每 8 秒读一次那天的记录，写回了就刷新页面 */
+function watchPending(){
+  if (watchPending.t || !S.cloud) return;
+  const started = Date.now();
+  const tick = async () => {
+    const dates = Object.keys(S.days).filter(d => (S.days[d].meals || []).some(m => m.visionReq?.status === "pending"));
+    if (!dates.length || Date.now() - started > 2*3600e3) { watchPending.t = null; return; }
+    if (!document.hidden) for (const d of dates) {
+      try {
+        for (const m of (S.days[d].meals || []).filter(x => x.visionReq?.status === "pending")) await pullVision(d, m);
+        const cur = await S.store.get("days/" + d);
+        if (cur && JSON.stringify(cur.meals) !== JSON.stringify(S.days[d].meals)) {
+          const busyEl = document.activeElement?.matches?.("input,textarea,select");
+          S.days[d] = migrateDay(cur);
+          if (!busyEl) render();
+          const done = (cur.meals || []).filter(m => m.visionReq?.status === "done" && m.est?.by === "claude-vision" && m.visionReq.doneAt && Date.now() - Date.parse(m.visionReq.doneAt) < 60000);
+          if (done.length) toast(`AI 估算好了：${done.map(m => `${m.type} ${m.est.kcal} kcal，蛋白 ${Math.round(m.est.protein)} g`).join("；")}`, 7000);
+        }
+      } catch {}
+    }
+    watchPending.t = setTimeout(tick, 8000);
+  };
+  watchPending.t = setTimeout(tick, 8000);
+}
+// 取这餐的照片：本次会话的原图 → 同源读取 → 用 <img> 画到 canvas 再导出
+async function loadPhoto(m){
+  if (S.files[m.id]?.blob) return S.files[m.id].blob;
+  if (!m.photo) { if (m.thumb) { try { return await (await fetch(m.thumb)).blob(); } catch {} } return null; }
+  try { const r = await fetch("/_blob/" + m.photo); if (r.ok) { const b = await r.blob(); if (b.size && /^image\//.test(b.type)) return b; } } catch {}
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = "/_blob/" + m.photo; });
+    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext("2d").drawImage(img, 0, 0);
+    return await new Promise(res => c.toBlob(b => res(b), "image/jpeg", 0.9));
+  } catch { return null; }
+}
+async function loadMore(m, i){
+  const p = m.more?.[i]; if (!p) return null;
+  if (S.files[m.id + "#" + i]?.blob) return S.files[m.id + "#" + i].blob;
+  if (p.id) { try { const r = await fetch("/_blob/" + p.id); if (r.ok) { const b = await r.blob(); if (b.size && /^image\//.test(b.type)) return b; } } catch {} }
+  if (p.thumb) { try { return await (await fetch(p.thumb)).blob(); } catch {} }
+  return null;
+}
+/* 本地文字识别（OCR）：平台不给图片权限时，在浏览器里读出照片上的文字（营养成分表），再交给 Claude */
+let ocrLib = null;
+function loadOCR(){
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (ocrLib) return ocrLib;
+  ocrLib = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = new URL("ocr/tesseract.min.js", location.href).href; sc.onload = () => window.Tesseract ? res(window.Tesseract) : rej(new Error("ocr lib missing")); sc.onerror = () => rej(new Error("ocr lib load failed")); document.head.appendChild(sc); }).catch(e => { ocrLib = null; throw e; });
+  return ocrLib;
+}
+async function ocrImage(blob){
+  const T = await loadOCR(), base = new URL("ocr/", location.href).href;
+  // 语言包以 .wasm 名字发布（平台只服务固定类型），在 worker 里把请求地址改过去
+  const wrap = `const F=self.fetch.bind(self);self.fetch=(u,o)=>F(String(u).replace(/\\.traineddata\\.gz$/,".traineddata.gz.wasm"),o);importScripts(${JSON.stringify(base + "worker.min.js")});`;
+  if (!S.ocrWorker) S.ocrWorker = T.createWorker(["chi_sim","eng"], 1, {workerPath:URL.createObjectURL(new Blob([wrap], {type:"text/javascript"})), workerBlobURL:false, corePath:base, langPath:base, gzip:true}).catch(e => { S.ocrWorker = null; throw e; });
+  const w = await S.ocrWorker;
+  const bin = await binarize(blob);
+  const out = [];
+  for (const psm of ["6", "11"]) { // 6：整块文字；11：零散文字。两种结果都给 Claude 互相校对
+    await w.setParameters({tessedit_pageseg_mode:psm});
+    const {data} = await w.recognize(bin);
+    out.push(String(data?.text || "").replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim());
+  }
+  return out.filter(Boolean).join("\n---\n").slice(0, 3000);
+}
+// 识别前处理：取每个像素 RGB 的最小值（彩色字变深），再按 Otsu 阈值二值化
+async function binarize(blob){
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0, c.width, c.height);
+    const d = g.getImageData(0, 0, c.width, c.height), px = d.data, n = px.length/4, hist = new Array(256).fill(0), v = new Uint8Array(n);
+    for (let i = 0; i < n; i++) { const m = Math.min(px[i*4], px[i*4+1], px[i*4+2]); v[i] = m; hist[m]++; }
+    let sum = 0; for (let t = 0; t < 256; t++) sum += t*hist[t];
+    let sB = 0, wB = 0, best = 0, th = 128;
+    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break; sB += t*hist[t]; const mB = sB/wB, mF = (sum-sB)/wF, between = wB*wF*(mB-mF)**2; if (between > best) { best = between; th = t; } }
+    for (let i = 0; i < n; i++) { const o = v[i] > th ? 255 : 0; px[i*4] = px[i*4+1] = px[i*4+2] = o; px[i*4+3] = 255; }
+    g.putImageData(d, 0, 0);
+    return await new Promise(res => c.toBlob(b => res(b || blob), "image/png"));
+  } catch { return blob; } finally { URL.revokeObjectURL(url); }
+}
+const withTimeout = (p, ms, code) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({code}), ms))]);
+async function estimateMeal(date, id, manual, prov){
+  const day = S.days[date]; const m = day?.meals?.find(x => x.id === id);
+  if (!m || !S.sample) return;
+  const t = targets();
+  S.busy["meal-"+id] = true; render();
+  const img = await loadPhoto(m);
+  const extras = [];
+  for (let i = 0; i < (m.more || []).length && extras.length < 3; i++) { const b = await loadMore(m, i).catch(() => null); if (b) extras.push({b, tag:m.more[i].tag}); }
+  const imgs = [img, ...extras.map(x => x.b)].filter(Boolean);
+  const multi = imgs.length > 1, left = extras.some(x => x.tag === "剩下");
+  const imgList = () => [...(img ? [left ? "吃之前（端上来时）" : "第一张"] : []), ...extras.map(x => x.tag === "剩下" ? "吃完剩下的" : "后加的照片")].map((t, i) => `图${i+1}：${t}`).join("；");
+  let ocrText = "", ocrErr = null, ocrRan = false;
+  const needOCR = () => (img || imgs[0]) && !ocrRan && !ocrErr;
+  const doOCR = async () => {
+    toast("正在本地读取照片上的文字…", 20000);
+    try { const t = await withTimeout(ocrImage(img || imgs[0]), 90000, "ocr_timeout"); ocrRan = true; if (/能量|能重|蛋白|脂肪|碳水|kJ|kcal|NRV|营养/i.test(t)) ocrText = t; } catch (e) { console.warn("ocr failed", e); ocrErr = String(e?.code || e?.message || "ocr_failed"); }
+  };
+  const prompt = withImg => `你是运动营养师，帮一位正在执行“${STAGE[t.st]}”阶段的健身者估算一餐的营养。
+餐次：${m.type}
+他的文字描述：${m.text || "（没写）"}
+${withImg ? `${multi || !img ? `附了 ${imgs.length} 张照片，按顺序是：${imgList()}。${left && !img ? "没有吃之前的照片：按他的文字描述估端上来的量，再减去照片里剩下的，calc 里写出两边各多少。" : left ? "有吃之前和吃完剩下的照片时，先估端上来的总量，再估剩下的量，这一餐的营养按“端上来 − 剩下”算，calc 里写出两边各多少。" : "照片按添加顺序排列。先判断它们的关系：如果是同一份食物吃之前和吃完剩下的（盘里变少、剩饭剩菜），先估端上来的总量再估剩下的，这一餐按“端上来 − 剩下”算，calc 写出两边各多少，cmp 设为 true；如果是同一餐的不同角度或不同的菜，合起来估算，不要重复计算同一份食物，cmp 设为 false。"}
+` : ""}附图是这一餐的照片。先判断照片里有没有包装上的“营养成分表”：
+- 如果有，必须逐项读出表上的数字（能量、蛋白质、脂肪、碳水化合物），注意基准是“每100g”“每100mL”还是“每份”；能量单位是 kJ 时按 1 kcal = 4.184 kJ 换算。再按他实际吃的量（文字里写的重量或份数；没写就按包装净含量）换算成这一餐的总量。有成分表时以成分表为准，不要按常见食物估。
+- 如果没有成分表，结合照片判断份量；文字和照片冲突时以文字里的重量为准。` : ocrText ? `你看不到照片，但页面在本地用文字识别（OCR）读出了照片上的文字，可能有错字、错位：
+"""
+${ocrText}
+"""
+- 如果里面有营养成分表（能量/蛋白质/脂肪/碳水化合物等），按表上的数值换算：注意基准是每100g、每100mL还是每份；kJ 按 1 kcal = 4.184 kJ 换算；再按他实际吃的量（文字里的重量或份数，没写就按识别到的净含量）算这一餐总量，label 设为 true，calc 写出换算过程。识别结果明显不合理时（比如数字缺失）在 calc 里说明，并按常见同类食物补全。
+- 如果没有成分表，忽略这些文字，按他的文字描述估算，份量没写时按中国常见一人份。` : `这次没有照片，只按文字估算，份量没写时按中国常见一人份。${/成分表|营养表/.test(m.text||"") ? "他提到了营养成分表，但你看不到图片：请在 calc 里说明“没看到成分表图片”；如果文字里写了成分表数值，就按这些数值换算。" : ""}`}
+他的每日目标：热量 ${t.kcal} kcal，蛋白 ${t.protein} g，碳水 ${t.carbs} g，脂肪 ${t.fat} g。原则：每顿蛋白 30–50 g，默认不吃添加糖，含糖饮料禁。
+只回复一个 JSON 对象，格式：
+{"items":[{"name":"米饭","amount":"约200g"}],"label":false,"calc":"一句话写出依据；用了成分表就写换算过程，例如：成分表每100g 370kJ(88kcal)、蛋白2.8g…，×2.2 = …","kcal":650,"protein":40,"carbs":70,"fat":20,"confidence":"中","tip":"一句中文建议，针对这餐怎么更贴合目标","cmp":false}
+label 表示是否按照片里的营养成分表计算；cmp 表示是否按吃之前和吃完剩下的照片对比算。kcal 为整数，蛋白、碳水、脂肪保留 1 位小数，confidence 只能是 低/中/高。`;
+  const ask = async withImg => {
+    const opts = {modelTier:"quick", cache:false};
+    if (withImg) opts.images = imgs.slice(0, 4);
+    return S.sample.json(prompt(withImg), opts);
+  };
+  // 窗口声明支持图片就发；没声明的只试一次，失败后本次打开期间不再发图
+  const tryImg = imgs.length > 0 && S.imgOK !== false;
+  let photoUsed = tryImg, r, imgErr = null;
+  if (!tryImg && needOCR()) await doOCR();
+  // 临时估算只在照片是营养成分表时做：饭菜照片只按文字算会偏差很大，不如等看图的结果
+  const skipProv = () => prov && !ocrText;
+  if (!tryImg && skipProv()) { delete S.busy["meal-"+id]; render(); return; }
+  const hard = c => ["cancelled","not_granted","sampling_disabled","rate_limited","session_expired","refused"].includes(c);
+  try {
+    try { r = await ask(tryImg); if (tryImg) S.imgOK = true; }
+    catch (e) {
+      if (tryImg && !hard(e?.code)) { console.warn("sample with image failed", e); imgErr = String(e?.code || "unknown") + (e?.message ? "：" + String(e.message).slice(0,120) : ""); photoUsed = false; S.imgOK = false; if (needOCR()) await doOCR(); if (skipProv()) return; r = await ask(false); }
+      else throw e;
+    }
+    const n1 = v => Math.max(0, Math.round((+v || 0)*10)/10);
+    const est = {items:Array.isArray(r.items) ? r.items.slice(0,12).map(x => ({name:String(x.name||""), amount:String(x.amount||"")})) : [],
+      kcal:Math.max(0, Math.round(+r.kcal || 0)), protein:n1(r.protein), carbs:n1(r.carbs), fat:n1(r.fat),
+      confidence:String(r.confidence||""), tip:String(r.tip||""), calc:String(r.calc||""), label:!!r.label, photoUsed, hadPhoto:!!m.photo || !!S.files[id], ...(photoUsed && imgs.length ? {photos:imgs.length, cmp:left || !!r.cmp} : {}), imgErr, ocr:!!ocrText, ocrRan, ocrErr, ocrText:ocrText.slice(0, 600), by:"claude", via:S.sample?.provider === "openrouter" ? "openrouter:" + S.sample.model : "claude", at:new Date().toISOString()};
+    if (prov) est.provisional = true;
+    try { await updateDay(date, d => { const x = d.meals.find(mm => mm.id === id); if (x && !(prov && x.est?.by === "claude-vision")) x.est = clone(est); }); } catch { return; }
+    if (imgs.length && !photoUsed && ocrText) toast(est.label ? "已在本地读出营养成分表并按表换算" : "照片里的文字不像营养成分表，按文字描述估算", 6000);
+    else if (imgs.length && !photoUsed && ocrRan) toast("照片里没找到营养成分表，这次先按文字估算", 7000);
+    else if (imgs.length && !photoUsed && prov) toast("先按文字给了临时估算，看照片的结果排队中", 6000);
+    else if (imgs.length && !photoUsed) toast(`照片没能发给 Claude（${imgErr || (S.imgOK === false ? "本次打开期间已失败过一次，刷新页面再试" : "未知")}），这次按文字估算`, 7000);
+  } catch (e) { console.warn("estimate failed", e); toast(sampleErr(e)); }
+  finally { delete S.busy["meal-"+id]; render(); }
+}
+/* 按营养成分表手动换算：不依赖 AI */
+function guessAmount(text){ const mm = String(text||"").match(/(\d+(?:\.\d+)?)\s*(g|克|ml|mL|毫升)/i); return mm ? mm[1] : ""; }
+function labelForm(m){
+  const L = S.label;
+  const res = labelCalc(L);
+  return `<div class="tip stack" style="gap:8px">
+    <div class="row between"><b class="small">按营养成分表算</b><button class="link" data-act="label-close">收起</button></div>
+    <div class="row"><span class="small muted">表上的基准</span>
+      <button class="chip ${L.base==="100"?"on":""}" data-act="label-base" data-v="100">每 100 g/mL</button>
+      <button class="chip ${L.base==="serv"?"on":""}" data-act="label-base" data-v="serv">每份</button></div>
+    <div class="grid2">
+      <label>能量<input id="lb-e" data-lb="e" type="number" inputmode="decimal" value="${esc(L.e)}" placeholder="370"></label>
+      <label>单位<select id="lb-u" data-lb="u"><option value="kJ" ${L.u==="kJ"?"selected":""}>kJ（千焦）</option><option value="kcal" ${L.u==="kcal"?"selected":""}>kcal（千卡）</option></select></label>
+      <label>蛋白质 g<input id="lb-p" data-lb="p" type="number" inputmode="decimal" value="${esc(L.p)}" placeholder="2.8"></label>
+      <label>脂肪 g<input id="lb-f" data-lb="f" type="number" inputmode="decimal" value="${esc(L.f)}" placeholder="3.1"></label>
+      <label>碳水 g<input id="lb-c" data-lb="c" type="number" inputmode="decimal" value="${esc(L.c)}" placeholder="12.2"></label>
+      <label>${L.base==="100"?"吃了多少 g/mL":"吃了几份"}<input id="lb-amt" data-lb="amt" type="number" inputmode="decimal" value="${esc(L.amt)}" placeholder="${L.base==="100"?"220":"1"}"></label>
+    </div>
+    <p class="small" id="lb-res">${res ? `= ${res.kcal} kcal，蛋白 ${res.protein} g，脂肪 ${res.fat} g，碳水 ${res.carbs} g` : "填好能量和吃了多少就能算。"}</p>
+    <button class="btn primary" data-act="label-save" data-v="${m.id}">用这个结果</button>
+  </div>`;
+}
+function labelCalc(L){
+  const e = numOr(L.e), amt = numOr(L.amt);
+  if (e == null || amt == null || amt <= 0) return null;
+  const k = L.base === "100" ? amt/100 : amt;
+  const kcal100 = L.u === "kJ" ? e/4.184 : e;
+  const r1 = v => Math.round((numOr(v,0))*k*10)/10;
+  return {kcal:Math.round(kcal100*k), protein:r1(L.p), fat:r1(L.f), carbs:r1(L.c), k, kcal100};
+}
+function sampleErr(e){
+  const c = e?.code;
+  if (HOSTED && (c === "not_granted" || c === "sampling_disabled")) return "服务器还没开通 AI，可以手动填写。";
+  if (HOSTED && c === "session_expired") return "登录过期了，请重新登录。";
+  if (c === "not_granted" || c === "sampling_disabled") { return "没有允许这个页面使用 Claude，可以手动填写。"; }
+  if (c === "rate_limited") return "请求太频繁或额度用完，稍后再试。";
+  if (c === "image_rejected") return "这张照片无法识别，换一张试试。";
+  if (c === "invalid_json") return (HOSTED ? "AI" : "Claude") + " 的回答格式不对，再点一次试试。";
+  if (c === "cancelled") return "已停止。";
+  if (c === "session_expired") return "登录过期了，请重新登录 Claude。";
+  if (c === "or_key") return "OpenRouter 密钥不对或已失效，到「我的 → AI 服务」重新填。";
+  if (c === "or_credit") return "OpenRouter 账户余额不足，充值后再试。";
+  if (c === "network") return "连不上 OpenRouter，检查网络后再试。";
+  if (c) return `估算失败（${c}），稍后再试。`;
+  return "估算失败，稍后再试。";
+}
+
+/* ---- 记录 ---- */
+function viewLog(){
+  const t = todayStr(), cs = checkins().filter(d => diffDays(t, d.date) < 42);
+  const a7 = avgWeight(t), p7 = avgWeight(addDays(t,-7));
+  const rate = a7 && p7 ? (a7-p7)/p7*100 : null;
+  const days = Object.values(S.days).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,45);
+  const w7 = Object.values(S.days).filter(d => diffDays(t, d.date) < 7 && d.workout?.done).length;
+  return `<div class="stack"><div class="hero"><span class="eyebrow">记录</span><h1>最近六周</h1></div>
+  <section class="card"><div class="kpis">
+    <div class="kpi"><span class="v">${a7?a7.toFixed(1):"–"}</span><span class="k">7 日均重 kg</span></div>
+    <div class="kpi"><span class="v" style="color:${rate==null?"inherit":rateColor(rate)}">${rate==null?"–":(rate>0?"+":"")+rate.toFixed(2)+"%"}</span><span class="k">比上周</span></div>
+    <div class="kpi"><span class="v">${w7}/${S.profile.trainDays.length}</span><span class="k">7 天训练</span></div>
+    <div class="kpi"><span class="v">${weekIndex(t)+1}</span><span class="k">计划第几周</span></div>
+  </div>${chart(cs)}${(() => { const b = avgBf(t), pb = avgBf(addDays(t,-7)); return b != null ? `<p class="small muted">体脂秤最近 14 天平均 ${b.toFixed(1)}%${pb != null ? `，一周前 ${pb.toFixed(1)}%` : ""}。单次读数波动大，看这个平均就好。</p>` : ""; })()}</section>
+  ${balanceCard()}
+  ${liftCard()}
+  <section class="card"><h2>每日明细</h2>${days.length ? `<div>${days.map(dayRow).join("")}</div>` : `<p class="muted">打卡、训练、饮食记录都会出现在这里。</p>`}</section></div>`;
+}
+/* ---- 动作进步曲线（只读已有 workout 记录，不写数据） ---- */
+function liftSeries(){
+  const by = {};
+  Object.values(S.days).filter(d => d.workout?.done && !d.workout.deload).sort((a,b)=>a.date.localeCompare(b.date)).forEach(d => {
+    (d.workout.exercises || []).forEach(e => {
+      let best = null;
+      (e.sets || []).forEach(st => { const w = numOr(st.w), r = numOr(st.r); if (w == null || r == null || r <= 0) return;
+        const sc = w > 0 ? w*(1 + r/30) : r; if (!best || sc > best.sc) best = {w, r, sc}; });
+      if (best && e.name) (by[e.name] = by[e.name] || []).push({date:d.date, ...best});
+    });
+  });
+  return by;
+}
+function liftCard(){
+  const by = liftSeries(), names = Object.keys(by).sort((a,b) => by[b].length - by[a].length);
+  if (!names.length) return `<section class="card"><h2>力量进步</h2><p class="small muted">练完一次并保存后，这里会按动作画出每次的最佳组。</p></section>`;
+  const sel = names.includes(S.liftSel) ? S.liftSel : (names.includes(lsGet("bj-lift","")) ? lsGet("bj-lift","") : names[0]);
+  const pts = by[sel].slice(-20), bw = pts.every(p => p.w === 0);
+  const first = pts[0], last = pts[pts.length-1];
+  const tm = isTimed(sel), fmt = p => tm ? `${p.w > 0 ? p.w+"kg " : ""}${p.r} 秒` : p.w > 0 ? `${p.w}kg×${p.r}` : `自重×${p.r}`;
+  let delta = "";
+  if (pts.length >= 2) { const d = bw ? last.r - first.r : Math.round((last.sc - first.sc)/first.sc*100);
+    delta = bw ? `比第一次 ${d>=0?"+":""}${d} ${tm?"秒":"次"}` : `估算力量比第一次 ${d>=0?"+":""}${d}%`; }
+  return `<section class="card"><div class="row between"><h2>力量进步</h2>
+    <select id="lift-sel" aria-label="选择动作" style="max-width:60%">${names.map(n => `<option value="${esc(n)}" ${n===sel?"selected":""}>${esc(n)}（${by[n].length}）</option>`).join("")}</select></div>
+    ${liftChart(pts, bw)}
+    <p class="small">最近一次最佳组 <b>${fmt(last)}</b>${pts.length>=2?`，第一次 ${fmt(first)}，${delta}。`:"。再练一次就能看到变化。"}</p>
+    <p class="small muted">${bw ? "自重动作按次数画。" : "每次取最佳的一组，按重量和次数折算成估算最大重量（Epley 公式）来画，所以同重量多做一次也算进步。"}减载周不计入。</p></section>`;
+}
+function liftChart(pts, bw){
+  if (pts.length < 2) return "";
+  const W = 320, H = 120, P = 30, vs = pts.map(p => bw ? p.r : p.sc);
+  let lo = Math.min(...vs), hi = Math.max(...vs); if (hi - lo < 1) { lo -= 1; hi += 1; } const pad = (hi-lo)*0.15; lo -= pad; hi += pad;
+  const x = i => P + i/(pts.length-1)*(W-P-8), y = v => 8 + (hi - v)/(hi-lo)*(H-28);
+  const line = vs.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const lab = v => bw ? Math.round(v) : Math.round(v);
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="动作进步趋势">
+    <g stroke="var(--line)" stroke-width="1">${[lo,(lo+hi)/2,hi].map(v => `<line x1="${P}" x2="${W-8}" y1="${y(v)}" y2="${y(v)}"/>`).join("")}</g>
+    <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">${[lo,(lo+hi)/2,hi].map(v => `<text x="2" y="${y(v)+3}">${lab(v)}</text>`).join("")}
+    <text x="${P}" y="${H-4}">${pts[0].date.slice(5)}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${pts[pts.length-1].date.slice(5)}</text></g>
+    <polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+    ${vs.map((v,i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="var(--accent)"><title>${pts[i].date} ${pts[i].w>0?pts[i].w+"kg":"自重"}×${pts[i].r}</title></circle>`).join("")}
+  </svg>`;
+}
+/* ---- 热量收支（只读：吃进的估算热量 − 当天消耗估算 TDEE） ---- */
+const STAGE_F = {cut:0.775, bulk:1.075, maintain:1};
+function dayTdee(date){
+  const s = S.days[date]?.targets;
+  if (s && numOr(s.tdee) != null) return +s.tdee;
+  // 旧快照没有 tdee：按当时的目标热量和阶段倒推（不含已采纳调整）
+  if (s && numOr(s.kcal) != null) return Math.round((+s.kcal - (+S.profile.kcalAdjust || 0)) / (STAGE_F[s.st] || 1));
+  return targets().tdee;
+}
+function balanceSeries(span=14){
+  const t = todayStr(), out = [];
+  for (let i = span-1; i >= 0; i--) {
+    const date = addDays(t, -i), m = dayMacros(date);
+    if (!m.est) { out.push({date, none:true}); continue; }
+    const tdee = dayTdee(date);
+    // 估算过的餐少于 3 顿，多半没记全：画出来但不算进平均
+    out.push({date, kcal:m.kcal, tdee, bal:m.kcal - tdee, partial: m.est < 3 && date !== t, today: date === t});
+  }
+  return out;
+}
+function balanceCard(){
+  const ser = balanceSeries(14), t = todayStr(), tg = targets(), st = tg.st;
+  const last7 = ser.slice(-7).filter(d => !d.none && !d.partial && !d.today);
+  const planBal = Math.round((tg.kcal - tg.tdee)/10)*10;
+  const range = st === "cut" ? "每天少吃 400–500 kcal" : st === "bulk" ? "每天多吃 150–250 kcal" : "收支在 ±100 kcal 内";
+  if (!ser.some(d => !d.none)) return `<section class="card"><h2>热量收支</h2><p class="small muted">记了饮食并估算后，这里会算每天吃进去的热量比消耗多还是少。</p></section>`;
+  const avg = last7.length ? Math.round(mean(last7.map(d => d.bal))) : null;
+  const perWk = avg != null ? avg*7/7700 : null;
+  const a7 = avgWeight(t), p7 = avgWeight(addDays(t,-7)), actWk = a7 && p7 ? a7 - p7 : null;
+  const sg = v => (v > 0 ? "+" : "") + v;
+  let read = "";
+  if (avg != null) {
+    read = `最近 7 天里记全的 ${last7.length} 天，平均每天${avg >= 0 ? "多吃" : "少吃"} <b>${Math.abs(avg)} kcal</b>，按这个算每周体重约 ${sg(perWk.toFixed(2))} kg`;
+    read += actWk != null ? `；体重 7 日均值实际 ${sg(actWk.toFixed(2))} kg。` : "。";
+    if (actWk != null && last7.length >= 4 && Math.abs(actWk - perWk) > 0.3) read += ` 两者差得多，常见原因是有些吃的没记、份量估少了，或者消耗估算不准；多记几周就能看出你真实的消耗。`;
+  } else read = `最近 7 天还没有记全三顿的日子，记全后才算平均（只记了一两顿的日子会显得缺口很大）。`;
+  return `<section class="card"><h2>热量收支</h2>
+    <div class="kpis">
+      <div class="kpi"><span class="v" style="color:${avg==null?"inherit":balColor(avg, st)}">${avg==null?"–":sg(avg)}</span><span class="k">7 日平均 kcal</span></div>
+      <div class="kpi"><span class="v">${sg(planBal)}</span><span class="k">计划每天</span></div>
+      <div class="kpi"><span class="v">${tg.tdee}</span><span class="k">估算消耗</span></div>
+      <div class="kpi"><span class="v">${last7.length}/7</span><span class="k">记全天数</span></div>
+    </div>
+    ${balanceChart(ser, planBal)}
+    <p class="small">${read}</p>
+    <p class="small muted">收支 = 当天各餐估算热量 − 估算消耗（TDEE，按身高体重年龄和步数算，误差约 10%）。现在的阶段是${STAGE[st]}，目标是${range}。浅色柱是只记了一两顿的日子，不算进平均；今天还没过完，也不算。</p></section>`;
+}
+function balColor(v, st){ const ok = st === "cut" ? v <= -300 && v >= -600 : st === "bulk" ? v >= 100 && v <= 300 : Math.abs(v) <= 150; return ok ? "var(--good)" : "var(--warn)"; }
+function balanceChart(ser, planBal){
+  const W = 320, H = 130, P = 34, vals = ser.filter(d => !d.none).map(d => d.bal).concat([planBal, 0]);
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max(80, (hi-lo)*0.12); lo -= pad; hi += pad;
+  const n = ser.length, bw = (W-P-8)/n, x = i => P + i*bw, y = v => 8 + (hi - v)/(hi-lo)*(H-28);
+  const bars = ser.map((d,i) => { if (d.none) return "";
+    const y0 = y(0), y1 = y(d.bal), top = Math.min(y0,y1), h = Math.max(1, Math.abs(y1-y0));
+    const col = d.bal >= 0 ? "var(--warn)" : "var(--accent)";
+    return `<rect x="${(x(i)+bw*0.18).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${col}" opacity="${d.partial||d.today?0.35:1}"><title>${d.date} 吃 ${d.kcal} − 消耗 ${d.tdee} = ${d.bal>0?"+":""}${d.bal} kcal${d.partial?"（没记全）":d.today?"（今天）":""}</title></rect>`; }).join("");
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="近两周每日热量收支">
+    <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">
+      <text x="2" y="${y(0)+3}">0</text>${hi-pad > 60 ? `<text x="2" y="${y(hi-pad)+3}">+${Math.round(hi-pad)}</text>` : ""}${lo+pad < -60 ? `<text x="2" y="${y(lo+pad)+3}">${Math.round(lo+pad)}</text>` : ""}
+      <text x="${P}" y="${H-4}">${ser[0].date.slice(5)}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${ser[n-1].date.slice(5)}</text></g>
+    <line x1="${P}" x2="${W-8}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-width="1"/>
+    ${planBal !== 0 ? `<line x1="${P}" x2="${W-8}" y1="${y(planBal)}" y2="${y(planBal)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>` : ""}
+    ${bars}
+  </svg><p class="small muted">柱子向上是吃得比消耗多（盈余），向下是少（缺口）。${planBal !== 0 ? "虚线是计划的收支。" : ""}</p>`;
+}
+function balanceText(){
+  const full = balanceSeries(14).filter(d => !d.none && !d.partial && !d.today);
+  if (!full.length) return "最近 14 天没有记全三顿的日子";
+  return `最近 14 天记全的 ${full.length} 天，平均每天 ${Math.round(mean(full.map(d => d.bal)))} kcal（吃进 − 估算TDEE，负数是缺口）`;
+}
+function rateColor(r){ const st = stageOf(S.profile); if (st === "cut") return r <= -0.5 && r >= -1 ? "var(--good)" : "var(--warn)"; if (st === "bulk") return r > 0 && r < 0.3 ? "var(--good)" : "var(--warn)"; return Math.abs(r) < 0.8 ? "var(--good)" : "var(--warn)"; }
+function chart(cs){
+  if (cs.length < 2) return `<p class="small muted">每天早上记体重，攒到两天以上这里会画出趋势线。</p>`;
+  const W = 320, H = 120, P = 26, t = todayStr(), start = addDays(t, -41);
+  const ws = cs.map(d => +d.checkin.weight), lo = Math.floor(Math.min(...ws)-0.5), hi = Math.ceil(Math.max(...ws)+0.5);
+  const x = d => P + (diffDays(d, start)/41)*(W-P-8), y = v => 8 + (hi - v)/(hi-lo)*(H-28);
+  const pts = cs.map(d => `${x(d.date).toFixed(1)},${y(+d.checkin.weight).toFixed(1)}`).join(" ");
+  const avg = cs.map(d => { const a = avgWeight(d.date); return a ? `${x(d.date).toFixed(1)},${y(a).toFixed(1)}` : null; }).filter(Boolean).join(" ");
+  const last = cs[cs.length-1];
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="近六周体重趋势">
+    <g stroke="var(--line)" stroke-width="1">${[lo, (lo+hi)/2, hi].map(v => `<line x1="${P}" x2="${W-8}" y1="${y(v)}" y2="${y(v)}"/>`).join("")}</g>
+    <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">${[lo, (lo+hi)/2, hi].map(v => `<text x="2" y="${y(v)+3}">${v}</text>`).join("")}
+    <text x="${P}" y="${H-4}">${start.slice(5)}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${t.slice(5)}</text></g>
+    <polyline points="${pts}" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/>
+    ${cs.map(d => `<circle cx="${x(d.date)}" cy="${y(+d.checkin.weight)}" r="2" fill="var(--muted)"/>`).join("")}
+    ${avg ? `<polyline points="${avg}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>` : ""}
+    <circle cx="${x(last.date)}" cy="${y(+last.checkin.weight)}" r="3.5" fill="var(--accent)"/>
+  </svg><p class="small muted">虚线是每日体重，绿线是 7 日均值。</p>`;
+}
+function dayRow(d){
+  const m = dayMacros(d.date), w = d.workout;
+  const tags = [];
+  if (w?.done) tags.push(`<span class="chip on">${PROGRAM[w.key]?.label||"训练"}${w.feel?" · "+FEEL[w.feel]:""}</span>`);
+  if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${w.pain==="pain"?"疼痛":"不适"}</span>`);
+  if (m.n) tags.push(`<span class="chip">${m.n} 餐${m.est?` · ${m.kcal} kcal · 蛋白 ${m.protein} g`:""}</span>`);
+  if (d.checkin?.sleep) tags.push(`<span class="chip">睡 ${d.checkin.sleep} h</span>`);
+  return `<button class="day" data-act="goto" data-v="${d.date}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
+    <div class="stack" style="gap:4px;min-width:0"><b class="small">${fmtDate(d.date)}</b><div class="row">${tags.join("")||`<span class="small muted">只有打卡</span>`}</div></div>
+    <span class="num" style="font-size:20px">${d.checkin?.weight ?? ""}</span></button>`;
+}
+
+/* ---- 反馈 ---- */
+function insights(){
+  const out = [], p = S.profile, t = targets(), today = todayStr(), st = t.st;
+  const a7 = avgWeight(today), p7 = avgWeight(addDays(today,-7)), p14 = avgWeight(addDays(today,-14));
+  if (a7 && p7) {
+    const r = (a7-p7)/p7*100, rPrev = p14 ? (p7-p14)/p14*100 : null;
+    const txt = `7 日均重 ${a7.toFixed(1)} kg，比上周 ${r>0?"+":""}${r.toFixed(2)}%。`;
+    if (st === "cut") {
+      if (r > -0.5 && (rPrev == null || rPrev > -0.5)) out.push({lv:"warn", title:"减脂速度偏慢", text: txt + (rPrev==null?"再观察一周更准。":"连续两周都不到 0.5%。") + "纲领建议每日少吃 100–150 kcal（从碳水或脂肪里扣），或日均多走 2000 步。", action: rPrev!=null ? {kind:"kcal", delta:-120} : null});
+      else if (r < -1) out.push({lv:"warn", title:"掉得太快", text: txt + "超过每周 1%，容易掉肌肉。如果力量也在下滑，每日加回 100–150 kcal。", action:{kind:"kcal", delta:120}});
+      else out.push({lv:"good", title:"减脂节奏正好", text: txt + "在每周 0.5–1% 的目标区间里，保持现在的吃法。"});
+    } else if (st === "bulk") {
+      if (r > 0.3) out.push({lv:"warn", title:"增重偏快", text: txt + "折算每月超过 1%，多出来的多半是脂肪。建议每日减 100 kcal。", action:{kind:"kcal", delta:-100}});
+      else if (r <= 0) out.push({lv:"info", title:"体重没涨", text: txt + "精益增肌期每月涨 0.5–1% 即可。连续两周没涨可以每日加 100 kcal。", action: rPrev!=null && rPrev<=0 ? {kind:"kcal", delta:100} : null});
+      else out.push({lv:"good", title:"增肌节奏正好", text: txt});
+    } else {
+      out.push({lv: Math.abs(a7-p7) > 0.8 ? "warn" : "good", title: Math.abs(a7-p7) > 0.8 ? "体重波动偏大" : "体重稳定", text: txt + "维持期波动在 ±1 kg 内都正常。"});
+    }
+  } else out.push({lv:"info", title:"体重数据还不够", text:"每天早上打卡体重，攒满两周就能按纲领自动校准热量。"});
+  // 训练出勤
+  const done7 = Object.values(S.days).filter(d => diffDays(today, d.date) < 7 && d.workout?.done);
+  const plannedN = (p.trainDays||[]).length;
+  if (diffDays(today, p.startDate) >= 6) out.push(done7.length >= plannedN ? {lv:"good", title:"训练全勤", text:`过去 7 天练了 ${done7.length} 次。`} : {lv:"warn", title:"训练次数不够", text:`过去 7 天练了 ${done7.length} 次，计划 ${plannedN} 次。漏掉的不用补，下次接着按顺序练下一天。`});
+  // 疼痛
+  const pains = Object.values(S.days).filter(d => diffDays(today, d.date) < 14 && d.workout?.pain === "pain");
+  if (pains.length) out.push({lv:"bad", title:"最近有疼痛记录", text:`14 天内 ${pains.length} 次训练记录了明显疼痛（${pains.map(d => esc(d.workout.painArea||"未写部位")).join("；")}）。去“我的”里勾上对应伤病部位，计划会自动换动作；持续疼痛请看医生。`});
+  // 疲劳
+  const recent = Object.values(S.days).filter(d => d.workout?.done && d.workout.feel).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,3);
+  if (recent.length === 3 && recent.every(d => +d.workout.feel >= 4) && !isDeload(today)) out.push({lv:"warn", title:"连续 3 次都很吃力", text:"可以提前减载一周：重量降到约 60%，组数减半。", action:{kind:"deload"}});
+  // 停滞
+  const stalls = [];
+  const lastW = Object.values(S.days).filter(d => d.workout?.done).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
+  const names = [...new Set(lastW.flatMap(d => (d.workout.exercises||[]).map(e => e.name)))];
+  names.forEach(n => { const h = history(n, addDays(today,1), 3); if (h.length === 3 && h.every(x => x.w === h[0].w) && h[0].r <= h[2].r) stalls.push(n); });
+  if (stalls.length) out.push({lv:"warn", title:"有动作卡住了", text:`${stalls.join("、")} 连续 3 次没进步。先看睡眠和热量是否够，再考虑换变体。`});
+  // 睡眠
+  const sl = Object.values(S.days).filter(d => diffDays(today, d.date) < 7 && numOr(d.checkin?.sleep) != null).map(d => +d.checkin.sleep);
+  if (sl.length >= 3) { const a = mean(sl); out.push(a < 7 ? {lv:"warn", title:"睡眠不够", text:`近 7 天平均 ${a.toFixed(1)} 小时。减脂期睡不够最容易掉肌肉，先把睡眠补到 7 小时以上。`} : {lv:"good", title:"睡眠达标", text:`近 7 天平均 ${a.toFixed(1)} 小时。`}); }
+  // 蛋白
+  const pd = Object.values(S.days).filter(d => diffDays(today, d.date) < 7 && d.date < today).map(d => dayMacros(d.date)).filter(m => m.n && m.est === m.n);
+  if (pd.length >= 3) { const a = mean(pd.map(m => m.protein)); out.push(a < t.protein*0.9 ? {lv:"warn", title:"蛋白质吃少了", text:`完整记录的 ${pd.length} 天平均 ${Math.round(a)} g，目标 ${t.protein} g。每顿加一份肉蛋奶，或用蛋白粉补。`} : {lv:"good", title:"蛋白质达标", text:`完整记录的 ${pd.length} 天平均 ${Math.round(a)} g。`}); }
+  return out;
+}
+function viewFeedback(){
+  const ins = insights(), p = S.profile, ai = S.ai;
+  return `<div class="stack"><div class="hero"><span class="eyebrow">反馈</span><h1>按纲领自动检查</h1><p class="muted small">根据你的打卡、训练和饮食记录，每次打开都会重新算。</p></div>
+  <section class="card">${ins.map(x => `<div class="ins ${x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${x.text}</p>${actionBtn(x.action, "rule")}</div></div>`).join("")}</section>
+  <section class="card"><div class="row between"><h2>让 ${HOSTED ? "AI" : "Claude"} 看看</h2>${ai?.running?`<button class="chip" data-act="ai-stop">停止</button>`:""}</div>
+    <p class="small muted">写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），${HOSTED ? "AI" : "Claude"} 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。${HOSTED ? "" : "会用你自己的 Claude 额度，第一次会弹窗请你允许。"}</p>
+    <label>我的反馈（可选）<textarea id="fb-text" rows="3" placeholder="例如：深蹲到第三组膝盖有点酸；引体一个都拉不起来；这周睡得不好，训练很吃力" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
+    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${ai?.running ? "分析中…" : "提交反馈并分析"}</button>` : (S.aiProv === "openrouter" ? `<p class="tip">先到「我的 → AI 服务」填上 OpenRouter 密钥，就能用 AI 分析。</p>` : `<p class="tip">当前窗口用不了 Claude。可以在项目对话里说“看一下我这两周的记录”，我会直接读取这些数据给你反馈。</p>`)}
+    ${ai?.running ? `<p class="small muted">${ai.stream ? "正在写…" : "正在思考，通常需要半分钟到一分钟。"}</p>` : ""}
+    ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
+  </section>
+  ${S.feedback.slice(0,5).map(fbCard).join("")}
+  ${(p.adjustLog||[]).length ? `<section class="card"><h3>已采纳的调整</h3><ul class="clean small">${p.adjustLog.slice(-8).reverse().map(a => `<li>${a.date.slice(5)} ${esc(a.text)}</li>`).join("")}</ul></section>` : ""}
+  </div>`;
+}
+function actionBtn(a, src, fid, idx){
+  if (!a) return "";
+  const applied = fid && (S.feedback.find(f => f.id === fid)?.applied || []).includes(idx);
+  const label = a.kind === "kcal" ? `采纳：每日 ${a.delta>0?"+":""}${a.delta} kcal` : a.kind === "deload" ? "采纳：本周开始减载" : a.kind === "swap" ? `采纳：${a.from} 换成 ${a.to}` : a.kind === "edit" ? `采纳：${a.to && a.to !== a.from ? `${a.from} 换成 ${a.to}` : a.from} 改为 ${a.sets}×${a.lo}–${a.hi}` : null;
+  if (!label) return "";
+  return `<div><button class="chip ${applied?"":"on"}" data-act="apply" data-v='${esc(JSON.stringify({a, fid:fid||null, idx:idx??null}))}' ${applied?"disabled":""}>${applied ? "已采纳" : label}</button></div>`;
+}
+function fbCard(f){
+  return `<section class="card"><div class="row between"><span class="eyebrow">${HOSTED ? "AI" : "Claude"} 反馈 · ${esc((f.createdAt||"").slice(0,10))}</span></div>
+    ${f.userText ? `<p class="small muted">你的反馈：${esc(f.userText)}</p>` : ""}
+    <p>${esc(f.summary)}</p>
+    ${f.good?.length ? `<div><b class="small">做得好</b><ul class="clean small">${f.good.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${f.issues?.length ? `<div><b class="small">要注意</b><ul class="clean small">${f.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+    ${f.adjustments?.length ? `<div class="stack" style="gap:8px"><b class="small">建议调整</b>${f.adjustments.map((a,i) => `<div class="ins info"><span class="s"></span><div class="b"><p class="small">${esc(a.text)}</p>${actionBtn(a, "ai", f.id, i)}</div></div>`).join("")}</div>` : ""}
+  </section>`;
+}
+function dataDigest(){
+  const today = todayStr(), p = S.profile, t = targets();
+  const lines = [];
+  for (let i = 13; i >= 0; i--) {
+    const date = addDays(today, -i), d = S.days[date]; if (!d) continue;
+    const c = d.checkin || {}, w = d.workout, m = dayMacros(date);
+    let s = `${date}：`;
+    if (c.weight) s += `体重${c.weight} `; if (c.steps) s += `步数${c.steps} `; if (c.sleep) s += `睡眠${c.sleep}h `; if (c.bf) s += `体脂${c.bf}% `; if (c.waist) s += `腰围${c.waist} `;
+    if (w?.done) s += `| 训练 ${PROGRAM[w.key]?.title} 感受:${FEEL[w.feel]||"未填"} 疼痛:${w.pain==="pain"?"明显("+(w.painArea||"")+")":w.pain==="mild"?"轻微("+(w.painArea||"")+")":"无"} ` + (w.exercises||[]).map(e => `${e.name} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("；") + (w.note?` 备注:${w.note}`:"");
+    if (m.n) s += ` | 饮食${m.n}餐` + (m.est ? ` 估算${m.kcal}kcal 蛋白${m.protein}g 碳水${m.carbs}g 脂肪${m.fat}g` : "") + "：" + d.meals.map(x => `${x.type}:${(x.text||"").slice(0,40)}`).join("；");
+    lines.push(s);
+  }
+  const plan = planFor(today);
+  return `个人资料：${p.sex==="f"?"女":"男"} ${p.age}岁 ${p.height}cm 当前7日均重${t.w?.toFixed?.(1)}kg 体脂${t.bf??"未知"}%${t.bfAvg?"(体脂秤14日均)":""} 训练经验:${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]} 阶段:${STAGE[t.st]} 地点:${p.equipment==="home"?"在家":"健身房"} 训练日:${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("")} 时段:${SLOT[p.slot]} 伤病:${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"} ${p.injNote?"("+p.injNote+")":""} 补剂:${(p.supps||[]).join(",")||"无"}
+当前目标：${t.kcal} kcal（含已采纳调整 ${p.kcalAdjust||0}），蛋白${t.protein}g 碳水${t.carbs}g 脂肪${t.fat}g；TDEE约${t.tdee}。计划第${weekIndex(today)+1}周。
+热量收支：${balanceText()}
+今天计划：${plan.key ? plan.title + "：" + plan.ex.map(e=>e.name).join("、") : "休息"}
+当前课表动作名（可用于 swap/edit 的 from）：${[...new Set(ORDER.flatMap(k => PROGRAM[k].ex.map(e => e.name)))].join("、")}
+当前实际执行（from 原动作名 → 现在的动作 组数×次数）：
+${ORDER.map(k => PROGRAM[k].title + "：" + PROGRAM[k].ex.map(resolveEx).map(e => `${e.orig}${e.name!==e.orig?" → "+e.name:""} ${e.sets}×${e.lo}–${e.hi}`).join("；")).join("\n")}
+最近 14 天记录：
+${lines.join("\n") || "（还没有记录）"}`;
+}
+async function runAI(){
+  if (!S.sample) return;
+  const userText = String($("#fb-text")?.value ?? lsGet("bj-fbtext","")).trim().slice(0, 1000);
+  const ctl = new AbortController();
+  S.ai = {running:true, ctl}; render();
+  const prompt = `你是一位严谨的力量训练和营养教练。下面是学员的纲领和最近 14 天记录。请按纲领给出反馈，并提出不超过 4 条具体调整。不要编造记录里没有的数据；数据不足就直说。
+${userText ? "学员这次写的反馈（最优先回应，summary 先回答它；涉及疼痛就换成无痛的替代动作或降低负荷，并提醒疼痛加重要就医；不要因为一次反馈大改整个计划）：\n「" + userText + "」\n" : ""}
+${GUIDE_TEXT}
+
+${dataDigest()}
+
+只回复一个 JSON 对象：
+{"summary":"两三句中文总评","good":["做得好的点"],"issues":["需要注意的问题"],"adjustments":[{"kind":"kcal","delta":-120,"text":"原因和做法"},{"kind":"swap","from":"课表里的原动作名","to":"新动作名","text":"原因"},{"kind":"edit","from":"课表里的原动作名","to":"新动作名或留空表示不换动作","sets":3,"lo":8,"hi":12,"text":"原因"},{"kind":"deload","text":"原因"},{"kind":"note","text":"其他建议，例如睡眠、步数、饮食结构"}]}
+kind 只能是 kcal / swap / edit / deload / note。kcal 的 delta 在 -250 到 250 之间；swap 和 edit 的 from 必须是上面列出的原动作名之一；edit 用来改组数和次数范围（sets 1–6，lo≤hi，次数 1–30），可同时换动作；换的新动作要适合学员的场地和伤病。每项 text 用中文，一两句话。`;
+  try {
+    const r = await S.sample.json(prompt, {signal:ctl.signal, onText:() => { if (!S.ai.stream) { S.ai.stream = true; render(); } }});
+    const f = {id:uid(), createdAt:new Date().toISOString(), userText, summary:String(r.summary||""), good:(r.good||[]).map(String).slice(0,6), issues:(r.issues||[]).map(String).slice(0,6),
+      adjustments:(r.adjustments||[]).slice(0,4).map(a => ({kind:String(a.kind||"note"), delta: a.kind==="kcal" ? Math.max(-250, Math.min(250, Math.round(+a.delta||0))) : undefined, from:a.from?String(a.from):undefined, to:a.to?String(a.to).trim():undefined, ...(a.kind === "edit" ? {sets:Math.round(+a.sets), lo:Math.round(+a.lo), hi:Math.round(+a.hi)} : {}), text:String(a.text||"")}))
+        .map(a => { const k = Object.keys(a).filter(x => a[x] === undefined); k.forEach(x => delete a[x]); return a; })
+        .filter(a => !["swap","edit"].includes(a.kind) || (a.from && ORDER.some(k => PROGRAM[k].ex.some(e => e.name === a.from))))
+        .filter(a => a.kind !== "swap" || a.to)
+        .map(a => a.kind === "edit" && !(a.sets >= 1 && a.sets <= 6 && a.lo >= 1 && a.hi >= a.lo && a.hi <= 30) ? {kind:"note", text:a.text} : a), applied:[]};
+    S.feedback.unshift(f); S.ai = null; lsSet("bj-fbtext", ""); render();
+    await write("feedback/" + f.id, JSON.parse(JSON.stringify(f)));
+  } catch (e) { S.ai = {error: e?.code === "cancelled" ? null : sampleErr(e).replace("估算","分析")}; render(); }
+}
+async function applyAction(payload){
+  const {a, fid, idx} = payload, date = todayStr();
+  if (fid) { const f = S.feedback.find(x => x.id === fid); if (f) { f.applied = [...(f.applied||[]), idx]; mutate("feedback/" + fid, cur => ({...(cur || JSON.parse(JSON.stringify(f))), applied:[...new Set([...((cur||{}).applied||[]), idx])]})).catch(()=>{}); } }
+  try {
+    await updateProfile(p => {
+      p.adjustLog = p.adjustLog || [];
+      if (a.kind === "kcal") { p.kcalAdjust = (+p.kcalAdjust||0) + a.delta; p.adjustLog.push({date, text:`每日热量 ${a.delta>0?"+":""}${a.delta} kcal`}); }
+      else if (a.kind === "deload") { p.deloadFrom = date; p.adjustLog.push({date, text:"开始减载周"}); }
+      else if (a.kind === "swap") { p.swaps = {...(p.swaps||{}), [a.from]:a.to}; if ((p.exEdits||{})[a.from]) p.exEdits = {...p.exEdits, [a.from]:{...p.exEdits[a.from], name:a.to}}; p.adjustLog.push({date, text:`${a.from} 换成 ${a.to}`}); }
+      else if (a.kind === "edit") {
+        const cur = (p.exEdits||{})[a.from], name = a.to || cur?.name || a.from, meta = exMeta(name);
+        const val = {...(cur||{}), name, sets:a.sets, lo:a.lo, hi:a.hi, inc: cur && name === cur.name ? cur.inc : (meta?.inc ?? (a.hi <= 8 ? 2.5 : 1)), rest: cur && name === cur.name ? cur.rest : (meta?.rest || (a.hi <= 8 ? "2–3 分钟" : "1–2 分钟"))};
+        p.exEdits = {...(p.exEdits||{}), [a.from]:val}; p.adjustLog.push({date, text:`「${a.from}」长期换成 ${name} ${a.sets}×${a.lo}–${a.hi}（根据反馈）`});
+      }
+    });
+    toast("已采纳，计划已更新");
+  } catch {}
+}
+
+/* ---- 我的 ---- */
+function viewHostedAccount(){
+  const u = S.hostUser || {}, pw = S.pwEdit;
+  return `<section class="card"><div class="row between"><h2>账号</h2>${pw ? "" : `<div class="row"><button class="btn" data-act="pw-edit">改密码</button><button class="btn" data-act="logout">退出登录</button></div>`}</div>
+    ${u.mustChange && !pw ? `<div class="banner">这个账号还在用初始密码，请先改一个只有你知道的密码。</div>` : ""}
+    ${pw ? `<div class="stack" style="gap:6px">
+      <label>原密码<input id="pw-old" type="password" autocomplete="current-password"></label>
+      <label>新密码（至少 8 位，不能和用户名一样）<input id="pw-new" type="password" autocomplete="new-password"></label>
+      <label>再输一次新密码<input id="pw-new2" type="password" autocomplete="new-password"></label>
+      ${pw.msg ? `<p class="small" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
+      <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${pw.busy ? "保存中…" : "保存"}</button><button class="btn" data-act="pw-cancel">取消</button></div></div>`
+    : `<div class="grid2 small"><span class="muted">用户名</span><span>${esc(u.username || "")}</span><span class="muted">注册时间</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
+    <p class="small muted">每个人的记录只存在自己账号下，别人看不到。</p></section>`;
+}
+function viewAccount(){
+  if (HOSTED) return viewHostedAccount();
+  const a = S.account || {}, ed = S.accEdit;
+  return `<section class="card"><div class="row between"><h2>账号</h2>${S.cloud && !ed ? `<button class="btn" data-act="acc-edit">${a.username ? "改用户名" : "设用户名"}</button>` : ""}</div>
+    ${ed ? `<div class="stack" style="gap:6px"><label>用户名<input id="acc-name" maxlength="32" autocomplete="off" value="${esc(a.username || "")}" placeholder="字母、数字或下划线"></label>
+      <div class="row"><button class="btn primary" data-act="acc-save">保存</button><button class="btn" data-act="acc-cancel">取消</button></div></div>`
+    : `<div class="grid2 small"><span class="muted">用户名</span><span>${a.username ? esc(a.username) : "未设置"}</span>
+      <span class="muted">登录方式</span><span>${S.cloud ? "Claude 账号（已登录）" : S.noId ? "没认出 Claude 账号" : "未登录，数据只在这台设备"}</span></div>`}
+    <p class="small muted">登录由 Claude 账号负责：每个人的记录存在自己账号的私人空间里，别人（包括页面主人）都看不到。用户名只用来显示。</p></section>`;
+}
+function viewAI(){
+  if (HOSTED) return "";
+  const c = aiCfg(), ed = S.aiEdit;
+  const cur = c.prov === "claude" ? "你自己的 Claude 账号" : c.key ? `OpenRouter · ${esc(c.model)}` : "OpenRouter（还没填密钥，AI 功能暂时关闭）";
+  return `<section class="card"><div class="row between"><h2>AI 服务</h2>${ed ? "" : `<button class="btn" data-act="ai-cfg">设置</button>`}</div>
+    ${ed ? `<div class="stack" style="gap:6px">
+      <div class="row"><button class="chip ${ed.prov==="openrouter"?"on":""}" data-act="ai-prov" data-v="openrouter">OpenRouter</button><button class="chip ${ed.prov==="claude"?"on":""}" data-act="ai-prov" data-v="claude">我的 Claude 账号</button></div>
+      ${ed.prov === "openrouter" ? `<label>OpenRouter API 密钥<input id="or-key" type="password" autocomplete="off" value="${esc(ed.key)}" placeholder="sk-or-..."></label>
+      <label>模型（要支持看图）<input id="or-model" autocomplete="off" value="${esc(ed.model)}" placeholder="${OR_DEFAULT_MODEL}"></label>
+      <p class="small muted">密钥在 openrouter.ai 的 Keys 页面创建，费用记在你自己的 OpenRouter 账户。密钥只存在这台设备的浏览器里，不会上传；换设备要重新填。</p>` : `<p class="small muted">用你自己的 Claude 账号，费用算在你的 Claude 订阅里。</p>`}
+      ${ed.msg ? `<p class="small" style="color:${ed.ok?"var(--good)":"var(--bad)"}">${esc(ed.msg)}</p>` : ""}
+      <div class="row"><button class="btn primary" data-act="ai-save" ${ed.busy?"disabled":""}>${ed.busy ? "测试中…" : "保存并测试"}</button><button class="btn" data-act="ai-cancel">取消</button>${ed.prov==="openrouter" && c.key ? `<button class="btn" data-act="ai-clear">清除密钥</button>` : ""}</div></div>`
+    : `<p class="small">现在用：${cur}</p>`}</section>`;
+}
+function viewMe(){
+  const p = S.profile, t = targets();
+  return `<div class="stack"><div class="hero"><span class="eyebrow">我的</span><h1>${STAGE[t.st]}阶段 · 每日 ${t.kcal} kcal</h1></div>
+  <section class="card"><h2>每日目标</h2>
+    <div class="kpis"><div class="kpi"><span class="v">${t.kcal}</span><span class="k">热量 kcal</span></div><div class="kpi"><span class="v">${t.protein}</span><span class="k">蛋白 g</span></div><div class="kpi"><span class="v">${t.carbs}</span><span class="k">碳水 g</span></div><div class="kpi"><span class="v">${t.fat}</span><span class="k">脂肪 g</span></div></div>
+    <p class="small muted">算法：BMR 用 ${t.formula} 算得 ${t.bmr} kcal，乘活动系数 ${t.af} 得 TDEE ${t.tdee} kcal，${t.st==="cut"?"减脂取 ×0.775":t.st==="bulk"?"增肌取 ×1.075":"维持取 ×1"}${p.kcalAdjust?`，再加已采纳的调整 ${p.kcalAdjust>0?"+":""}${p.kcalAdjust} kcal`:""}。体重用 ${avgWeight(todayStr())?"最近 7 日均值":"建档体重"} ${t.w.toFixed(1)} kg${t.bf!=null?`，体脂用${t.bfAvg?"体脂秤最近 14 日均值":"资料里填的"} ${t.bf}%`:""}。</p>
+  </section>
+  <section class="card"><div class="row between"><h2>我的资料</h2><button class="btn" data-act="edit">修改</button></div>
+    <div class="grid2 small">
+      <span class="muted">身体</span><span>${p.sex==="f"?"女":"男"} · ${p.age} 岁 · ${p.height} cm · ${p.weight} kg${p.bf!=null?` · 体脂 ${p.bf}%`:""}</span>
+      <span class="muted">训练日</span><span>${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("、")} · ${SLOT[p.slot]} · ${p.equipment==="home"?"在家":"健身房"}</span>
+      <span class="muted">伤病</span><span>${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"}${p.injNote?`（${esc(p.injNote)}）`:""}</span>
+      <span class="muted">开始日期</span><span>${p.startDate} · 第 ${weekIndex(todayStr())+1} 周</span>
+      <span class="muted">减载</span><span>${isDeload(todayStr()) ? "本周减载中" : `每 ${p.deloadEvery||9} 周减载一周`}</span>
+    </div>
+    ${Object.keys(p.exEdits||{}).length ? `<p class="small">课表长期调整：${Object.entries(p.exEdits).map(([a,b]) => `${esc(a)} → ${esc(b.name)} ${b.sets}×${b.lo}–${b.hi}`).join("；")} <button class="link" data-act="clear-exedits">全部恢复默认</button></p>` : ""}
+    ${Object.keys(p.swaps||{}).length ? `<p class="small">已换动作：${Object.entries(p.swaps).map(([a,b]) => `${esc(a)} → ${esc(b)}`).join("；")} <button class="link" data-act="clear-swaps">恢复原动作</button></p>` : ""}
+    <div class="row">${isDeload(todayStr())==="manual" ? `<button class="btn" data-act="stop-deload">结束减载</button>` : `<button class="btn" data-act="start-deload">从今天开始减载一周</button>`}
+    ${p.kcalAdjust ? `<button class="btn" data-act="reset-kcal">热量调整归零</button>` : ""}</div>
+  </section>
+  ${(S.profileHistory||[]).length ? `<section class="card"><h3>资料变更记录</h3><p class="small muted">每次改资料前都会存一份旧资料。以往的训练和饮食记录不受影响，照当时的计划和目标显示。</p>
+    <ul class="clean small">${S.profileHistory.slice(0,10).map(h => `<li><span class="num">${esc((h.savedAt||"").slice(0,10))}</span> ${h.changes?.length ? h.changes.map(esc).join("；") : "未改动"}</li>`).join("")}</ul></section>` : ""}
+  ${viewAccount()}
+  ${viewAI()}
+  <section class="card"><h3>依据</h3><p class="small">所有训练和饮食规则来自《薄肌训练与饮食纲领》。纲领改了之后，这里的规则需要同步更新。</p><a class="link" href="${GUIDE_URL}" target="_blank" rel="noopener">打开纲领 ›</a>
+  <p class="small muted">${S.cloud ? "数据保存在这个页面的云端存储里，换设备打开也在。" : "数据目前只存在这台设备的浏览器里。"}</p></section></div>`;
+}
+
+/* ============ 事件 ============ */
+document.addEventListener("click", async ev => {
+  const b = ev.target.closest("[data-act]"); if (!b) return;
+  const act = b.dataset.act, v = b.dataset.v;
+  if (act !== "del-meal" && act !== "del-more") S.confirmDel = null;
+  if (act !== "ex-del") S.exDel = null;
+  switch (act) {
+    case "tab": S.ed = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
+    case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
+    case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
+    case "edit": S.editing = true; render(); window.scrollTo(0,0); break;
+    case "cancel-edit": S.editing = false; render(); break;
+    case "slot": updateDay(S.date, d => { d.slot = v; }).catch(()=>{}); break;
+    case "cu-add": { const c = CORE.find(x => x[0] === v); updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = [...(d.custom.ex || []), c ? {name:c[0], sets:c[1], lo:c[2], hi:c[3]} : {name:"", sets:3, lo:10, hi:15}]; if (!d.override) d.override = "custom"; }).catch(()=>{}); break; }
+    case "pw-edit": S.pwEdit = {}; render(); break;
+    case "pw-cancel": S.pwEdit = null; render(); break;
+    case "pw-save": {
+      const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
+      if (n !== n2) { S.pwEdit = {msg:"两次输入的新密码不一样"}; render(); break; }
+      S.pwEdit = {busy:true}; render();
+      try { await window.claude.changePassword(o, n); S.pwEdit = null; if (S.hostUser) S.hostUser.mustChange = false; toast("密码已更新，其他设备需要重新登录"); }
+      catch (e) { S.pwEdit = {msg:e?.message || "没改成，稍后再试"}; }
+      render(); break;
+    }
+    case "logout": try { await window.claude.logout(); } catch {} location.href = "/login.html"; break;
+    case "acc-edit": S.accEdit = true; render(); break;
+    case "acc-cancel": S.accEdit = false; render(); break;
+    case "acc-save": {
+      const name = ($("#acc-name")?.value || "").trim();
+      if (!/^[A-Za-z0-9_.-]{3,32}$/.test(name)) { toast("用户名用 3–32 个字母、数字、下划线、点或减号"); break; }
+      try { const prev = await S.store.get("meta/account"); const a = {...(prev || {}), username:name, updatedAt:new Date().toISOString(), ...(prev?.createdAt ? {} : {createdAt:new Date().toISOString()})}; await S.store.set("meta/account", a); S.account = a; S.accEdit = false; toast("用户名已保存"); } catch { toast("保存失败，稍后再试"); }
+      render(); break;
+    }
+    case "ai-cfg": { const c = aiCfg(); S.aiEdit = {prov:c.prov, key:c.key, model:c.model}; render(); break; }
+    case "ai-cancel": S.aiEdit = null; render(); break;
+    case "ai-prov": if (S.aiEdit) { S.aiEdit.key = $("#or-key")?.value ?? S.aiEdit.key; S.aiEdit.model = $("#or-model")?.value ?? S.aiEdit.model; S.aiEdit.prov = v; S.aiEdit.msg = null; render(); } break;
+    case "ai-clear": { const c = lsGet("bj-ai", {}) || {}; delete c.key; lsSet("bj-ai", c); applyAI(); S.aiEdit = null; toast("已清除这台设备上的密钥"); render(); break; }
+    case "ai-save": {
+      const ed = S.aiEdit; if (!ed) break;
+      if (ed.prov === "openrouter") { ed.key = ($("#or-key")?.value || "").trim(); ed.model = ($("#or-model")?.value || "").trim() || OR_DEFAULT_MODEL; }
+      if (ed.prov === "openrouter" && !ed.key) { ed.msg = "先填 OpenRouter 密钥"; ed.ok = false; render(); break; }
+      if (ed.prov === "claude" && !S.claudeSample) { ed.msg = "这个窗口用不了 Claude 账号的 AI，换 OpenRouter 或在 Claude 里打开。"; ed.ok = false; render(); break; }
+      ed.busy = true; ed.msg = null; render();
+      let ok = true, msg = "已保存。";
+      if (ed.prov === "openrouter") {
+        try { const r = await mkOpenRouter(ed.key, ed.model)("只回复两个字：可以"); msg = "连接成功，AI 功能已开。" + (r.text ? "" : "（模型回了空白，换个模型试试）"); }
+        catch (e) { ok = false; msg = sampleErr(e) + (e?.message ? "（" + String(e.message).slice(0, 100) + "）" : ""); }
+      }
+      if (ok) { lsSet("bj-ai", {prov:ed.prov, key:ed.prov === "openrouter" ? ed.key : (lsGet("bj-ai", {})?.key || ""), model:ed.model}); applyAI(); }
+      if (S.cloud) S.store.set("meta/aiDiag", {prov:ed.prov, model:ed.model, ok, msg:msg.slice(0, 200), at:new Date().toISOString()}).catch(() => {});
+      S.aiEdit = ok ? null : {...ed, busy:false, msg, ok}; if (ok) toast(msg, 5000);
+      render(); break;
+    }
+    case "ex-add": {
+      const c = CORE.find(x => x[0] === v), name = c ? c[0] : ($("#ex-new")?.value || "").trim();
+      if (!name) { toast("先写动作名"); break; }
+      const e = c ? {name:c[0], sets:c[1], lo:c[2], hi:c[3]} : {name, sets:3, lo:10, hi:15};
+      try { await updateDay(S.date, d => { d.extra = d.extra || {ex:[]}; d.extra.ex = [...(d.extra.ex || []), e]; }); toast(`已加上${name}`); } catch {}
+      break;
+    }
+    case "ex-del": {
+      const date = S.date, i = +v, key = date + "|" + i;
+      if (S.exDel !== key) { S.exDel = key; render(); break; }
+      S.exDel = null;
+      const plan = planFor(date), e = plan.ex[i]; if (!e?.extra) break;
+      const day = S.days[date] || {}, nExtra = (day.extra?.ex || []).length, base = plan.ex.length - nExtra;
+      const dr = getDraft(date, plan);
+      try {
+        if (i >= base) await updateDay(date, d => { const ex = d.extra?.ex || []; if (ex[i - base]?.name === e.orig || (!ex[i - base]?.name && e.orig === "未命名动作")) ex.splice(i - base, 1); });
+        else await updateDay(date, d => { const w = d.workout; if (w?.plan?.[i]?.extra && w.plan[i].name === e.name) { w.plan.splice(i, 1); if (w.exercises?.[i]?.name === e.name) w.exercises.splice(i, 1); } });
+        if (dr.exercises[i]?.name === e.name) { dr.exercises.splice(i, 1); persistDrafts(); }
+        render(); toast("已删除");
+      } catch {}
+      break;
+    }
+    case "cu-del": updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = (d.custom.ex || []).filter((_, i) => i !== +v); }).catch(()=>{}); break;
+    case "ask-claude": {
+      const m = S.days[S.date]?.meals?.find(x => x.id === v); if (!m?.photo) break;
+      const at = new Date().toISOString(), date = S.date;
+      // 先在按钮还在页面上时取锚点并发出通知（写库会重绘页面，按钮会被替换掉）
+      let send = Promise.resolve("no_comments");
+      if (S.comments) send = (async () => {
+        try {
+          const anchor = await S.comments.anchorFor(b);
+          const can = await S.comments.canSendToClaude();
+          if (can !== "available") return "can:" + can;
+          const text = `【看图估算请求】用户 ${S.uid || "?"}，日期 ${date}，餐 id ${m.id}（${m.type}），照片 ${m.photo}。请看图估算并写回这一餐。`;
+          return await Promise.race([S.comments.sendToClaude({anchor, text}).then(() => "sent"), new Promise(res => setTimeout(() => res("timeout"), 60000))]);
+        } catch (e) { return "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120); }
+      })();
+      try { await updateDay(date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.askedAt = at; x.visionReq = {status:"pending", at}; delete x.askErr; } }); }
+      catch { break; }
+      enqueueVision(date, v);
+      toast("已发出，Claude 看过照片后会写回这一餐", 6000);
+      send.then(r => updateDay(date, d => { const x = d.meals.find(y => y.id === v); if (x && x.visionReq) x.visionReq.channel = r; }, {quiet:true, silent:true}).catch(()=>{}));
+      break;
+    }
+    case "retry-photo": {
+      const m = S.days[S.date]?.meals?.find(x => x.id === v), f = S.files[v]?.blob; if (!m || !f || !S.assets) break;
+      try { const id = (await S.assets.upload(f, {type:"image/jpeg"})).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
+      catch (e) { toast(PHOTO_ERR(e?.code || "unknown"), 6000); }
+      break;
+    }
+    case "override": S.ed = null; updateDay(S.date, d => { d.override = v || null; }).catch(()=>{}); break;
+    case "feel": case "pain": { const plan = planFor(S.date); const d = getDraft(S.date, plan); d[act] = act === "feel" ? +v : v; persistDrafts(); syncDraft(S.date, plan.key); render(); break; }
+    case "save-workout": {
+      const plan = planFor(S.date), d = getDraft(S.date, plan);
+      const any = d.exercises.some(e => e.sets.some(s => s.r !== ""));
+      if (!any) { toast("至少填一组的次数再保存"); return; }
+      clearTimeout(syncDraft.t);
+      const date = S.date;
+      const w = JSON.parse(JSON.stringify({...clone(d), key:plan.key, slot:plan.slot, deload:!!plan.deload, done:true, savedAt:new Date().toISOString(),
+        plan:plan.ex.map(e => ({name:e.name, sets:e.sets, lo:e.lo, hi:e.hi, rest:e.rest, inc:e.inc, orig:e.orig, why:e.why, ...(e.extra ? {extra:true} : {})}))}));
+      try {
+        await updateDay(date, day => { day.workout = {...(day.workout || {}), ...clone(w)}; delete day.override; delete day.workoutDraft; delete day.extra; });
+        backupWorkout(date, w);
+        delete S.drafts[draftKey(date, plan.key)]; persistDrafts(); render();
+        toast("训练已保存");
+      } catch {}
+      break;
+    }
+    case "save-checkin": {
+      const g = id => { const x = $(id)?.value; return x === "" ? null : +x; };
+      const c = {};
+      [["weight","#c-weight"],["steps","#c-steps"],["sleep","#c-sleep"],["bf","#c-bf"],["waist","#c-waist"]].forEach(([k,id]) => { if ($(id)) c[k] = g(id); });
+      if (Object.values(c).every(x => x == null)) { toast("先填一项再保存"); return; }
+      try { await updateDay(S.date, day => { day.checkin = {...(day.checkin || {}), ...c}; }); toast("打卡已保存"); } catch {}
+      break;
+    }
+    case "add-meal": addMeal(v === "manual" ? "manual" : "ai", b); break;
+    case "mmode": S.mealMode = v; lsSet("bj-mmode", v); { const keep = $("#m-text")?.value; render(); if (keep != null && $("#m-text")) $("#m-text").value = keep; } break;
+    case "ai-meal": {
+      let anchor = null; if (S.comments) { try { anchor = await S.comments.anchorFor(b); } catch {} }
+      aiEstimate(S.date, v, anchor); break;
+    }
+    case "est-meal": estimateMeal(S.date, v, true); break;
+    case "unpick": { const f = (S.pendingPhotos || [])[+v]; if (f) { URL.revokeObjectURL(f.url); S.pendingPhotos.splice(+v, 1); } const keep = $("#m-text")?.value; render(); if (keep != null && $("#m-text")) $("#m-text").value = keep; break; }
+    case "del-more": {
+      if (S.confirmDel !== v) { S.confirmDel = v; render(); return; }
+      S.confirmDel = null;
+      const [mid, si] = v.split("|"), i = +si, p = S.days[S.date]?.meals?.find(x => x.id === mid)?.more?.[i];
+      if (!p) break;
+      try { await updateDay(S.date, d => { const x = d.meals.find(y => y.id === mid); const q = x?.more?.[i]; if (q && (q.id || null) === (p.id || null) && q.at === p.at) x.more.splice(i, 1); });
+        if (p.id && S.assets) S.assets.delete(p.id).catch(()=>{}); toast("照片已删"); } catch {}
+      break;
+    }
+    case "del-meal": {
+      if (S.confirmDel !== v) { S.confirmDel = v; render(); return; }
+      S.confirmDel = null;
+      const m = (S.days[S.date]?.meals || []).find(x => x.id === v);
+      try { await updateDay(S.date, day => { day.meals = day.meals.filter(x => x.id !== v); }); if (m?.photo && S.assets) S.assets.delete(m.photo).catch(()=>{}); if (S.assets) moreOf(m).forEach(p => p.id && S.assets.delete(p.id).catch(()=>{})); toast("已删除"); } catch {}
+      break;
+    }
+    case "ai-run": runAI(); break;
+    case "ai-stop": S.ai?.ctl?.abort(); break;
+    case "apply": applyAction(JSON.parse(v)); break;
+    case "start-deload": { const t = todayStr(); updateProfile(p => { p.deloadFrom = t; }).then(()=>toast("本周减载")).catch(()=>{}); break; }
+    case "stop-deload": updateProfile(p => { p.deloadFrom = null; }).catch(()=>{}); break;
+    case "reset-kcal": { const t = todayStr(); updateProfile(p => { p.kcalAdjust = 0; (p.adjustLog = p.adjustLog||[]).push({date:t, text:"热量调整归零"}); }).catch(()=>{}); break; }
+    case "save-lib": {
+      const inp = document.getElementById("lib-" + v); const url = (inp?.value || "").trim();
+      if (url && !/^https:\/\/\S+$/.test(url)) { toast("请粘贴以 https:// 开头的链接"); return; }
+      S.library = S.library || {links:{}}; S.library.links = {...(S.library.links||{})};
+      if (url) S.library.links[v] = url; else delete S.library.links[v];
+      render();
+      try { S.library = await mutate("app/library", cur => { const l = cur || {links:{}}; l.links = {...(l.links||{})}; if (url) l.links[v] = url; else delete l.links[v]; return l; }); render(); toast(url ? "已收藏" : "已取消收藏"); } catch (e) { saveErr(e); }
+      break;
+    }
+    case "label-open": { const m = (S.days[S.date]?.meals||[]).find(x => x.id === v); S.label = {id:v, base:"100", u:"kJ", e:"", p:"", f:"", c:"", amt:guessAmount(m?.text)}; render(); break; }
+    case "label-close": S.label = null; render(); break;
+    case "label-base": S.label.base = v; render(); break;
+    case "label-save": {
+      const res = labelCalc(S.label); if (!res) { toast("先填能量和吃了多少"); return; }
+      const L = S.label, per = L.base === "100" ? "每100g" : "每份";
+      const patch = {kcal:res.kcal, protein:res.protein, fat:res.fat, carbs:res.carbs, by:"label", label:true, confidence:"高", tip:"",
+        calc:`${per} ${L.e}${L.u}${L.u==="kJ"?`（${Math.round(res.kcal100)} kcal）`:""}、蛋白 ${L.p||0}g、脂肪 ${L.f||0}g、碳水 ${L.c||0}g，× ${Math.round(res.k*100)/100}`, at:new Date().toISOString()};
+      S.label = null;
+      try { await updateDay(S.date, d => { const m = d.meals.find(x => x.id === v); if (m) { m.est = {...(m.est||{}), ...patch}; delete m.est.photoUsed; } }); toast("已按成分表更新"); } catch {}
+      break;
+    }
+    case "ed-open": openEditor(+v); render(); break;
+    case "ed-cancel": S.ed = null; render(); break;
+    case "ed-pick": { const m = exMeta(v); Object.assign(S.ed, {name:v}, m ? {lo:m.lo, hi:m.hi} : {}); render(); break; }
+    case "ed-ai": aiSuggest(); break;
+    case "ed-ai-pick": { const a = S.ed.ai[+v]; Object.assign(S.ed, {name:a.name, sets:a.sets, lo:a.lo, hi:a.hi}); render(); break; }
+    case "ed-scope": S.ed.scope = v; render(); break;
+    case "ed-save": saveEdit(false); break;
+    case "ed-reset": saveEdit(true); break;
+    case "clear-exedits": { const t = todayStr(); updateProfile(p => { (p.adjustLog = p.adjustLog||[]).push({date:t, text:"课表长期调整全部恢复默认"}); p.exEdits = {}; }).catch(()=>{}); break; }
+    case "clear-swaps": updateProfile(p => { p.swaps = {}; }).catch(()=>{}); break;
+  }
+});
+function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
+// 边填边存：停手 2 秒后把草稿存到服务器，换设备或页面被关掉也不会丢
+function syncDraft(date, key){
+  clearTimeout(syncDraft.t);
+  syncDraft.t = setTimeout(() => {
+    const d = S.drafts[draftKey(date, key)]; if (!d) return;
+    if (S.days[date]?.workout?.done && S.days[date].workout.key === key) return;
+    updateDay(date, x => { x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
+  }, 2000);
+}
+document.addEventListener("input", ev => {
+  const el = ev.target;
+  if (el.dataset.ed && S.ed) { S.ed[el.dataset.ed] = el.value; return; }
+  if (el.dataset.lb && S.label) { S.label[el.dataset.lb] = el.value; const r = labelCalc(S.label), o = $("#lb-res"); if (o) o.textContent = r ? `= ${r.kcal} kcal，蛋白 ${r.protein} g，脂肪 ${r.fat} g，碳水 ${r.carbs} g` : "填好能量和吃了多少就能算。"; return; }
+  if (el.dataset.set) {
+    const [i,j,k] = el.dataset.set.split(".");
+    const pl = planFor(S.date), d = getDraft(S.date, pl); d.exercises[+i].sets[+j][k] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
+  } else if (el.dataset.f) {
+    const pl = planFor(S.date), d = getDraft(S.date, pl); d[el.dataset.f] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
+  } else if (el.id === "m-text") lsSet("bj-mtext", el.value);
+  else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
+  else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }
+});
+document.addEventListener("change", async ev => {
+  const el = ev.target;
+  if (el.id === "lift-sel") { S.liftSel = el.value; lsSet("bj-lift", el.value); render(); return; }
+  if (el.name === "mtype") { S.mtype = el.value; return; }
+  if (el.dataset.mtypeOf) {
+    const id = el.dataset.mtypeOf, v = el.value;
+    updateDay(S.date, d => { const m = d.meals.find(x => x.id === id); if (m) m.type = v; }).then(() => toast(`已改成${v}`)).catch(()=>{});
+    return;
+  }
+  if (el.dataset.more && el.files?.[0]) { addMorePhoto(S.date, el.dataset.more, el.files[0], el.dataset.tag || "其他"); return; }
+  if (el.id === "m-photo" && el.files?.[0]) {
+    const have = S.pendingPhotos || [];
+    S.pendingPhotos = [...have, ...[...el.files].slice(0, 4 - have.length).map(file => ({file, url:URL.createObjectURL(file)}))];
+    if (have.length + el.files.length > 4) toast("一餐最多 4 张照片");
+    const keep = $("#m-text")?.value; render(); if (keep != null && $("#m-text")) $("#m-text").value = keep;
+  } else if (el.dataset.cu) {
+    const [i, f] = el.dataset.cu.split("."), val = el.value;
+    updateDay(S.date, d => { const e = d.custom?.ex?.[+i]; if (e) e[f] = f === "name" ? val.trim() : (val === "" ? "" : +val); }).catch(()=>{});
+  } else if (el.dataset.meal) {
+    const id = el.dataset.meal, k = el.dataset.k, val = el.value === "" ? null : Math.round(+el.value);
+    updateDay(S.date, d => { const m = d.meals.find(x => x.id === id); if (m) m.est = {...(m.est||{}), [k]: val, ...(m.est?.by ? {} : {by:"manual"})}; }).catch(()=>{});
+  }
+});
+document.addEventListener("toggle", ev => {
+  const el = ev.target; if (!el.dataset?.cue) return;
+  S.openCues = S.openCues || new Set();
+  el.open ? S.openCues.add(el.dataset.cue) : S.openCues.delete(el.dataset.cue);
+}, true);
+document.addEventListener("submit", ev => { if (ev.target.id === "setup") { ev.preventDefault(); submitSetup(ev.target); } });
+
+/* ============ 启动 ============ */
+(async function boot(){
+  const use = n => (window.claude?.use ? window.claude.use(n).catch(() => null) : Promise.resolve(null));
+  const [db, assets, sample, comments, user] = await Promise.all([use("db"), use("assets"), use("sample"), use("comments"), use("user")]);
+  S.comments = comments;
+  setTimeout(prefetchSend, 0);
+  const me = user ? await user.me().catch(() => null) : null;
+  S.hostUser = HOSTED ? me : null;
+  S.uid = me?.id || null; S.owner = !!(me?.isOwner || me?.canEdit); // 主人或编辑者（admin）才能读旧的共享根路径
+  S.cloud = !!(db && S.uid); S.raw = S.cloud ? db : null; S.assets = assets; S.sample = sample;
+  S.noId = !!db && !S.uid;
+  S.store = S.cloud ? mkCloud(db, `data/users/${S.uid}/app`) : mkLocal();
+  if (S.cloud && S.owner) { try { const c = await migrateLegacy(db, S.store); if (c && Object.keys(c).length) setTimeout(() => toast("已把你之前的记录搬进个人空间（原记录保留）", 6000), 800); } catch (e) { console.warn("migrate", e); S.loadError = true; } }
+  let lim = null;
+  if (sample) { lim = await sample.limits().catch(e => ({err:String(e?.code||e)})); S.imgOK = lim?.images ? true : (lim && !lim.err ? false : null); }
+  S.claudeSample = sample; S.claudeImgOK = S.imgOK; S.claudeComments = comments;
+  applyAI();
+  // 诊断：记下这次打开时平台给的能力，方便排查看图估算
+  let canSend = null; if (comments) canSend = await Promise.race([comments.canSendToClaude().catch(e => "err:"+(e?.code||e)), new Promise(r => setTimeout(() => r("timeout"), 5000))]);
+  if (S.cloud) { try { S.store.set("meta/diag", {canSend,at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!sample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!assets, comments:!!comments, owner:S.owner}).catch(()=>{}); } catch {} }
+  await loadAll();
+  if (S.cloud) { try { S.account = await S.store.get("meta/account"); } catch {} }
+  S.ready = true; render();
+  rescueDrafts();
+  watchPending();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) watchPending(); });
+})();
+// 找回这台设备上填了但没点保存的训练
+function rescueDrafts(){
+  if (!S.profile) return;
+  const found = [];
+  for (const [k, d] of Object.entries(S.drafts || {})) {
+    if (!d?.exercises?.some(e => e.sets?.some(t => t.r !== "" || t.w !== ""))) continue;
+    const date = k.split("|")[0];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;
+    found.push(date);
+    updateDay(date, x => { if (!x.workout?.done && !x.workoutDraft) x.workoutDraft = {...clone(d), key:d.key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
+  }
+  if (found.length) toast(`找到 ${[...new Set(found)].map(d => fmtDate(d).split(" ")[0]).join("、")} 填了但没保存的训练，打开那天点“完成训练，保存”即可`, 8000);
+}
+</script>

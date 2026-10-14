@@ -1,0 +1,11 @@
+{
+  "name": "bojin-rike",
+  "version": "1.0.0",
+  "private": true,
+  "description": "薄肌日课 · 独立部署版",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "build": "node build.js",
+    "start": "node --disable-warning=ExperimentalWarning server.js"
+  }
+}

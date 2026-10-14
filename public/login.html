@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>登录 · 薄肌日课</title>
+<style>
+:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--bad:#A83A3A;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--bad:#E77B7B;color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:15px;line-height:1.55}
+main{max-width:380px;margin:0 auto;padding:56px 16px}
+h1{font-size:24px;margin:0 0 4px}
+p{margin:0 0 20px;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
+.tabs{display:flex;gap:8px}
+.tabs button{flex:1;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
+.tabs button.on{border-color:var(--accent);font-weight:700}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input{font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+button.primary:disabled{opacity:.6}
+.err{color:var(--bad);font-size:14px;min-height:1.2em;margin:0}
+.hint{font-size:12px;color:var(--muted);margin:0}
+</style>
+</head>
+<body>
+<main>
+  <h1>薄肌日课</h1>
+  <p>每天的训练、饮食和体重，一个地方记下来。</p>
+  <form class="card" id="f" autocomplete="on">
+    <div class="tabs" id="tabs"><button type="button" data-m="login" class="on">登录</button><button type="button" data-m="register">注册</button></div>
+    <label>用户名<input id="u" name="username" autocomplete="username" required minlength="3" maxlength="32" autocapitalize="off" spellcheck="false"></label>
+    <label>密码<input id="p" name="password" type="password" autocomplete="current-password" required minlength="8"></label>
+    <label id="p2w" hidden>再输一次密码<input id="p2" type="password" autocomplete="new-password"></label>
+    <label id="iw" hidden>邀请码<input id="i" autocomplete="off"></label>
+    <p class="err" id="err" role="alert"></p>
+    <button class="primary" id="go" type="submit">登录</button>
+    <p class="hint" id="hint" hidden>用户名可用字母、数字、下划线、点或减号，3–32 位；密码至少 8 位。</p>
+  </form>
+</main>
+<script>
+(async function(){
+  const $ = s => document.querySelector(s);
+  let mode = "login", cfg = {allowSignup:true, invite:false};
+  try { const r = await fetch("/api/me", {credentials:"same-origin"}); if (r.ok) { location.replace("/"); return; } } catch {}
+  try { cfg = await (await fetch("/api/config")).json(); } catch {}
+  if (!cfg.allowSignup) $("#tabs").hidden = true;
+  const setMode = m => {
+    mode = m; document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+    const reg = m === "register";
+    $("#p2w").hidden = !reg; $("#iw").hidden = !(reg && cfg.invite); $("#hint").hidden = !reg;
+    $("#p").autocomplete = reg ? "new-password" : "current-password"; $("#go").textContent = reg ? "注册并登录" : "登录"; $("#err").textContent = "";
+  };
+  $("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setMode(b.dataset.m); });
+  $("#f").addEventListener("submit", async e => {
+    e.preventDefault(); $("#err").textContent = "";
+    const body = {username:$("#u").value.trim(), password:$("#p").value};
+    if (mode === "register") { if ($("#p").value !== $("#p2").value) { $("#err").textContent = "两次输入的密码不一样"; return; } body.invite = $("#i").value.trim(); }
+    $("#go").disabled = true;
+    try {
+      const r = await fetch(mode === "register" ? "/api/register" : "/api/login", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json","X-Bojin":"1"}, body:JSON.stringify(body)});
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { $("#err").textContent = j.message || "没成功，稍后再试"; return; }
+      location.replace("/");
+    } catch { $("#err").textContent = "连不上服务器"; }
+    finally { $("#go").disabled = false; }
+  });
+})();
+</script>
+</body>
+</html>
