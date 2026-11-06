@@ -1,5 +1,7 @@
 # GitHub auto-deployment
 
+当前部署与运维的统一入口：[部署与运维总手册](DEPLOYMENT-HANDBOOK.zh-CN.md)，包含另一 Agent 的交接整合、已验证部署证据及需要核对的冲突。此前的未部署/未合并状态属于历史记录，以总手册的证据日期为准。
+
 Repository: https://github.com/hendrixAIDev/Lean-Ritual. Production: https://leanritual.app.
 The recovered source is the uploaded release with SHA-256
 `cf7ab52e6309bf04913b4033932b11397f1cff2446704ab7646de6ad4c8c7c51`.

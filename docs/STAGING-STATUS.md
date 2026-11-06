@@ -1,5 +1,7 @@
 # Live acceptance — November 5, 2026 (America/Los_Angeles)
 
+当前部署与运维的统一入口：[部署与运维总手册](DEPLOYMENT-HANDBOOK.zh-CN.md)，包含另一 Agent 的交接整合、已验证部署证据及需要核对的冲突。此前的未部署/未合并状态属于历史记录，以总手册的证据日期为准。
+
 ## Source and connectivity
 
 The new environment reports observations-current, enforced unrestricted HTTP.
