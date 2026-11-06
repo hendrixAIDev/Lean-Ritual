@@ -48,6 +48,14 @@ test('HTTP integration: invitation-only verified accounts, private data/photos a
  assert.deepEqual(Buffer.from(lines.find(x=>x.kind==='photo').dataBase64,'base64'),fs.readFileSync(path.join(dir,'blobs',blob.id)));
  const otherLines=(await (await request('/api/account/export',null,cb)).text()).trim().split('\n').map(JSON.parse);
  assert.equal(otherLines.filter(x=>x.kind==='document'||x.kind==='photo').length,0);
+ // A photo whose file vanished from disk, or a malformed URL, must not take the service down.
+ const lost=await (await fetch(base+'/api/assets',{method:'POST',headers:{cookie:cb,'X-Bojin':'1','Content-Type':'image/png'},body:await require('sharp')({create:{width:2,height:2,channels:3,background:'blue'}}).png().toBuffer()})).json();
+ fs.rmSync(path.join(dir,'blobs',lost.id));
+ assert.equal((await request(lost.url,null,cb)).status,404);
+ assert.equal((await fetch(base+'/%E0%A4%A')).status,400);
+ await new Promise(r=>setTimeout(r,100));
+ assert.equal(child.exitCode,null,errors);
+ const health=await request('/api/health');assert.equal(health.status,200);assert.equal((await health.json()).ok,true);
  assert.equal((await request('/api/auth/delete-user',{},ca)).status,400);
  assert.equal((await request('/api/auth/delete-user',{password:'incorrect password'},ca)).status,400);
  assert.equal((await request('/api/auth/sign-out',{},ca)).status,200);

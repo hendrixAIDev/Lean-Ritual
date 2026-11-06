@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const { pipeline } = require("node:stream");
 
 const ROOT = __dirname;
 // The deployment bundle records only a public Git revision, never configuration.
@@ -38,6 +39,7 @@ process.once("exit", releaseDataAccess);
 fs.mkdirSync(path.join(CFG.dataDir, "blobs"), { recursive: true });
 const db = new DatabaseSync(path.join(CFG.dataDir, "bojin.db"));
 db.exec(`
+  PRAGMA busy_timeout = 5000;
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, created TEXT NOT NULL, mustChange INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, uid TEXT NOT NULL, expires INTEGER NOT NULL);
@@ -95,9 +97,25 @@ function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] o
 const aiProxy = require("./lib/ai").createAIProxy(db, CFG);
 
 /* ---------- 静态文件 ---------- */
+// A missing/unreadable file must never crash the process: an unhandled stream
+// "error" event would take the whole service down for every user.
+// Headers are only sent once the file is open, so a missing file becomes a 404.
+function streamFile(file, res, headers){
+  const stream = fs.createReadStream(file);
+  stream.once("error", error => {
+    if (res.headersSent) return;                      // pipeline below handles mid-stream errors
+    console.error("file stream failed", error.code || "error");
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }); res.end();
+  });
+  stream.once("open", () => {
+    res.writeHead(200, headers);
+    pipeline(stream, res, error => { if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") console.error("file stream failed", error.code || "error"); });
+  });
+}
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 function serveStatic(req, res, user){
-  let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
+  let p;
+  try { p = decodeURIComponent(new URL(req.url, "http://x").pathname); } catch { throw httpErr(400, "bad_path"); }
   if (p === "/") { if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); } p = "/index.html"; }
   if (p === "/index.html" && !user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
   const f = path.join(CFG.publicDir, path.normalize(p).replace(/^([/\\])+/, ""));
@@ -105,9 +123,8 @@ function serveStatic(req, res, user){
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
+    streamFile(f, res, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
       "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=86400" });
-    fs.createReadStream(f).pipe(res);
   });
 }
 
@@ -121,7 +138,11 @@ async function handle(req, res){
   // 改数据的请求必须带自定义头，挡掉跨站表单提交（CSRF）
   if (m !== "GET" && m !== "HEAD" && req.headers["x-bojin"] !== "1") throw httpErr(403, "csrf", "请求来源不对");
 
-  if (p === "/api/health") return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
+  if (p === "/api/health") {
+    // Prove the database answers, not just that the process accepts connections.
+    db.prepare("SELECT 1").get();
+    return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
+  }
   if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: !!CFG.orKey });
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
@@ -188,8 +209,7 @@ async function handle(req, res){
     if (user) accountData.ensureActive(user.id);
     const b = user && db.prepare("SELECT uid, type, size FROM blobs WHERE id = ?").get(bm[1]);
     if (!b || b.uid !== user.id) { res.writeHead(404); return res.end(); }
-    res.writeHead(200, { "Content-Type": b.type, "Content-Length": b.size, "Cache-Control": "private, no-store" });
-    return fs.createReadStream(path.join(CFG.dataDir, "blobs", bm[1])).pipe(res);
+    return streamFile(path.join(CFG.dataDir, "blobs", bm[1]), res, { "Content-Type": b.type, "Content-Length": b.size, "Cache-Control": "private, no-store" });
   }
   if (m !== "GET" && m !== "HEAD") throw httpErr(405, "method");
   return serveStatic(req, res, user);
@@ -236,9 +256,9 @@ async function cli(args){
     onDeleteCompleted: user => { authentication.purgeDeletedArtifacts(user.id); accountData.completeDeletion(user.id); },
     sendEmail: createMailer(process.env, {dataDir: CFG.dataDir, baseURL: CFG.authBaseURL})});
   // Retry interrupted deletion cleanup only after auth confirms the account is gone.
-  const retryDeletes = () => { for (const {uid} of accountData.pending()) {
+  const retryDeletes = () => { try { for (const {uid} of accountData.pending()) {
     if (!authentication.isUserPresent(uid)) { try {authentication.purgeDeletedArtifacts(uid);accountData.completeDeletion(uid);} catch {console.error("Account deletion cleanup needs attention");} }
-  }};
+  }} catch { console.error("Account deletion retry check failed; will retry"); } };
   retryDeletes();setInterval(retryDeletes,60000).unref();
   const args = process.argv.slice(2);
   if (args.length) { try { if (await cli(args)) process.exit(0); } catch (e) { console.error(e.message); process.exit(1); } console.error("不认识的命令：" + args[0]); process.exit(1); }
@@ -248,9 +268,27 @@ async function cli(args){
       if (!res.headersSent) send(res, status, { error: e.code || "server_error", message: status >= 500 && !e.code ? "服务器出错" : e.message });
       else res.destroy();
     });
-  }).listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${CFG.port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
-  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => {
-    server.close(() => { authentication.close(); db.close(); process.exit(0); });
-    setTimeout(() => process.exit(1), 5000).unref();
   });
+  // Caddy keeps upstream connections alive for up to 2 minutes. Node's 5 s default
+  // lets Node close a socket Caddy is about to reuse, which surfaces as a random 502.
+  server.keepAliveTimeout = 125000;
+  server.headersTimeout = 126000;
+  server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${CFG.port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
+  let stopping = false;
+  const shutdown = code => {
+    if (stopping) return; stopping = true;
+    server.close(() => { try { authentication.close(); db.close(); } finally { process.exit(code); } });
+    server.closeIdleConnections();
+    setTimeout(() => process.exit(code || 1), 5000).unref();
+  };
+  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => shutdown(0));
+  // After an unexpected error the process state is unknown. Stop taking requests,
+  // close the databases cleanly and exit non-zero so systemd/Docker restart it.
+  // The "exit" handler above releases the data lease, so backups keep working.
+  const fatal = kind => error => {
+    console.error(kind, error && error.stack ? error.stack : String(error));
+    shutdown(1);
+  };
+  process.on("uncaughtException", fatal("Uncaught exception; restarting:"));
+  process.on("unhandledRejection", fatal("Unhandled promise rejection; restarting:"));
 })().catch(e => { console.error("Startup failed:", e.message); process.exitCode = 1; });

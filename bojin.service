@@ -1,14 +1,21 @@
 [Unit]
 Description=Bojin Rike
-After=network.target
+Wants=network-online.target
+After=network-online.target
+# Never give up restarting: the default limit stops the unit after 5 fast failures.
+StartLimitIntervalSec=0
 
 [Service]
 User=bojin
 WorkingDirectory=/opt/bojin
 EnvironmentFile=/opt/bojin/.env
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server.js
-Restart=on-failure
-RestartSec=3
+# Restart after crashes, OOM kills and clean-but-unexpected exits alike.
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+# On a small host, prefer the kernel's OOM killer picking something else.
+OOMScoreAdjust=-500
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

@@ -1,0 +1,8 @@
+[Unit]
+Description=Lean Ritual health watchdog (restarts a hung app, sends alerts)
+After=bojin.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/bojin-watchdog
+UMask=0077
