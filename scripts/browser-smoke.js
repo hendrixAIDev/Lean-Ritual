@@ -29,6 +29,20 @@ const http=require('node:http');
   await page.locator('[data-act="mmode"][data-v="manual"]').click();
   await page.locator('#m-text').fill('Browser smoke test meal');await page.locator('#mf-kcal').fill('300');await page.locator('[data-act="add-meal"]').click();
   await page.getByText('Browser smoke test meal',{exact:true}).waitFor();await page.reload();await page.getByText('Browser smoke test meal',{exact:true}).waitFor();
+  // A failed profile read must not look like a new account or allow overwrites.
+  await page.route('**/api/doc?*', route => {
+    const documentPath = new URL(route.request().url()).searchParams.get('path');
+    return documentPath?.endsWith('/app/profile') ? route.abort() : route.continue();
+  });
+  await page.reload();
+  await page.getByRole('button',{name:'重新加载',exact:true}).waitFor();
+  assert.equal(await page.locator('#setup').count(),0);
+  assert.equal(await page.locator('#tabs').isVisible(),false);
+  await page.unroute('**/api/doc?*');
+  await page.getByRole('button',{name:'重新加载',exact:true}).click();
+  await page.getByText('Browser smoke test meal',{exact:true}).waitFor();
+  assert.equal(await page.locator('#setup').count(),0);
+  console.log('PASS: failed profile read blocks setup; retry restores existing profile and meal');
   console.log('PASS: signup, verification, login, profile and manual meal persistence');
   // Load OCR entirely from our origin and recognize a generated nutrition label.
   const ocr=await page.evaluate(async()=>{const canvas=document.createElement('canvas');canvas.width=900;canvas.height=200;const c=canvas.getContext('2d');c.fillStyle='white';c.fillRect(0,0,900,200);c.fillStyle='black';c.font='48px sans-serif';c.fillText('ENERGY 300 kcal',30,100);const blob=await new Promise(r=>canvas.toBlob(r));return Promise.race([ocrImage(blob),new Promise((_,reject)=>setTimeout(()=>reject(new Error("OCR timeout")),45000))]);});

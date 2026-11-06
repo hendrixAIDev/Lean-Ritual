@@ -49,3 +49,24 @@ draft status and unconfirmed provider/backup details. It is not yet deployed.
 
 GitHub auto-deploy setup and activation are documented in GITHUB-DEPLOYMENT.md.
 No remote host, DNS, firewall, backup timer or data was changed during these checks.
+
+## Continuation — November 5, 2026 (Pacific)
+
+The current production anonymous checker passes all 13 checks, including corrected
+hosting/email disclosure. Public health and these anonymous checks do not verify
+an authenticated user's data loading. A reported loading failure remains under
+investigation; no server or affected-session access is available in this environment.
+
+Local mobile Chromium passes invitation signup, file-email verification, profile
+and manual-record persistence, OCR, mock AI, password change, export and deletion.
+A new injected profile-read failure test verifies that the UI blocks onboarding
+and that reloading after recovery restores the existing profile and meal. This is
+a safety/recovery fix, not evidence that the production failure's cause is resolved.
+
+Remaining user-owned inputs: AI provider/model and spending limit; offsite backup
+location and retention decisions; representative mainland/device testers. Server
+access is still needed to inspect actual backup units, runtime/helper differences
+and the reported data-read failure. Actual SMTP/reset delivery and real-host
+restore acceptance must be recorded before beta. Rotate any credential posted in
+chat through the provider's secure credential controls; never put replacements in
+this repository or issue comments.
