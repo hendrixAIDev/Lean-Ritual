@@ -127,9 +127,9 @@ details.how[open] > *:not(summary){margin-top:6px}
 
 <script>
 /* ============ 纲领数据 ============ */
-// 独立部署版（window.claude.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
-const HOSTED = !!window.claude?.hosted;
-const GUIDE_URL = HOSTED ? "/guide.html" : "https://claude.ai/code/artifact/202e9d14-97d7-4406-a180-3b8f1642c637";
+// 独立部署版（window.ritual.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
+const HOSTED = true;
+const GUIDE_URL = "/guide.html";
 const ORDER = ["push","pull","legs"];
 function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
 const PROGRAM = {
@@ -279,23 +279,15 @@ const numOr = (v, d=null) => (v === "" || v == null || isNaN(+v)) ? d : +v;
 const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 function toast(msg, ms=2200){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(()=> t.hidden = true, ms); }
-const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+let storageUser = null;
+const lsGet = (k, d) => { if (!storageUser) return d; try { const v = localStorage.getItem(`bj-user:${storageUser}:${k}`); return v ? JSON.parse(v) : d; } catch { return d; } };
+const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`bj-user:${storageUser}:${k}`, JSON.stringify(v)); } catch {} };
 
 /* ============ 存储 ============ */
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
   drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null };
 
-function mkLocal(){
-  const K = "bj-store"; const load = () => lsGet(K, {});
-  return {
-    async get(p){ return clone(load()[p] ?? null); },
-    async set(p, d){ const mem = load(); mem[p] = clone(d); lsSet(K, mem); },
-    async del(p){ const mem = load(); delete mem[p]; lsSet(K, mem); },
-    async list(col){ const mem = load(); return Object.keys(mem).filter(k => k.startsWith(col+"/") && k.split("/").length === col.split("/").length+1).map(k => ({id:k.split("/").pop(), data:clone(mem[k])})); }
-  };
-}
 function mkCloud(db, prefix){
   const P = x => prefix ? prefix + "/" + x : x;
   return {
@@ -305,104 +297,18 @@ function mkCloud(db, prefix){
     async list(col, opt={}){ let q = db.collection(P(col)); if (opt.order) q = q.orderBy(opt.order, "desc"); if (opt.limit) q = q.limit(opt.limit); const s = await q.get(); return s.docs.map(d => ({id:d.id, data:clone(d.data())})); }
   };
 }
-/* ---- 每人一份数据：data/users/<id>/app/... ----
-   v27 之前所有数据存在共享根路径（app/profile、days/…）。主人第一次打开新版时，把根路径的记录复制到自己的个人空间；
-   根路径的旧记录原样保留，不删除。之后每次主人打开，再补齐个人空间里缺的文档（例如旧页面后来写进根路径的某天）。 */
-const LEGACY_DOCS = ["app/profile", "app/library"], LEGACY_COLS = ["days", "feedback", "profileHistory", "workoutLog"];
-async function migrateLegacy(db, store){
-  const raw = mkCloud(db, ""), counts = {};
-  if (!(await raw.get("app/profile"))) return null;
-  for (const p of LEGACY_DOCS) { const d = await raw.get(p); if (d && !(await store.get(p))) { await store.set(p, d); counts[p] = 1; } }
-  for (const c of LEGACY_COLS) {
-    const [src, dst] = await Promise.all([raw.list(c), store.list(c)]);
-    const have = new Set(dst.map(x => x.id)); let n = 0;
-    for (const x of src) if (!have.has(x.id)) { await store.set(c + "/" + x.id, x.data); n++; }
-    if (n) counts[c] = n;
-  }
-  const mark = await store.get("meta/migration");
-  if (!mark) await store.set("meta/migration", {from:"legacy-root", at:new Date().toISOString(), counts});
-  else if (Object.keys(counts).length) await store.set("meta/migration", {...mark, lastCatchUp:new Date().toISOString(), catchUp:counts});
-  return counts;
-}
-/* 看图估算队列：vq/<用户 id>/req/<餐 id>。主人和编辑者（Claude 用主人的额度处理）能读所有人的队列，其他人只能读写自己的。 */
-/* ============ AI 服务：Claude 账号 或 OpenRouter ============ */
-// 主人（jaychang2016）默认用自己的 Claude 账号；其他人默认用自己的 OpenRouter 密钥。密钥只存在这台设备的浏览器里，不进云端、不进页面。
-const OR_DEFAULT_MODEL = "google/gemini-2.5-flash";
-const aiCfg = () => { const c = lsGet("bj-ai", {}) || {}; if (HOSTED) return {prov:"claude", key:"", model:""}; return {prov:c.prov === "claude" || c.prov === "openrouter" ? c.prov : (S.owner ? "claude" : "openrouter"), key:String(c.key || ""), model:String(c.model || "").trim() || OR_DEFAULT_MODEL}; };
-const blobToDataURL = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
-async function shrinkImg(blob, max=1280){
-  try {
-    const bmp = await createImageBitmap(blob); const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
-    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    return await new Promise(r => c.toBlob(b => r(b || blob), "image/jpeg", 0.85));
-  } catch { return blob; }
-}
-function parseJSONText(t){
-  t = String(t || "").replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
-  try { return JSON.parse(t); } catch {}
-  const i = t.search(/[\[{]/), j = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
-  if (i >= 0 && j > i) { try { return JSON.parse(t.slice(i, j+1)); } catch {} }
-  throw {code:"invalid_json", message:"回答不是 JSON"};
-}
-// 和平台 sample 一样的用法：ask(input, opts) -> {text}；ask.json(input, opts) -> 解析好的 JSON
-function mkOpenRouter(key, model){
-  const ask = async (input, opts={}) => {
-    const turns = typeof input === "string" ? [{role:"user", content:input}] : input.map(t => ({role:t.role, content:String(t.content ?? "")}));
-    const imgs = [];
-    for (const b of (opts.images || [])) { if (b) imgs.push(await blobToDataURL(await shrinkImg(b))); }
-    if (imgs.length) { const last = turns[turns.length-1]; last.content = [{type:"text", text:last.content}, ...imgs.map(u => ({type:"image_url", image_url:{url:u}}))]; }
-    let r;
-    try {
-      r = await fetch("https://openrouter.ai/api/v1/chat/completions", {method:"POST", signal:opts.signal,
-        headers:{"Authorization":"Bearer " + key, "Content-Type":"application/json", "X-Title":"Bojin Rike"},
-        body:JSON.stringify({model, messages:turns})});
-    } catch (e) { if (e?.name === "AbortError") throw {code:"cancelled"}; throw {code:"network", message:"连不上 OpenRouter：" + String(e?.message || e).slice(0, 120)}; }
-    let j = null; try { j = await r.json(); } catch {}
-    if (!r.ok || j?.error) {
-      const s = r.status, msg = String(j?.error?.message || r.statusText || "").slice(0, 160);
-      throw {code: s === 401 ? "or_key" : s === 402 ? "or_credit" : s === 429 ? "rate_limited" : (s === 400 && imgs.length) ? "image_rejected" : "or_" + s, message:msg};
-    }
-    const text = String(j?.choices?.[0]?.message?.content ?? "");
-    if (opts.onText) { try { opts.onText({text, delta:text}); } catch {} }
-    return {text, truncated: j?.choices?.[0]?.finish_reason === "length"};
-  };
-  ask.json = async (input, opts) => parseJSONText((await ask(input, opts)).text);
-  ask.limits = async () => ({images:{max:4, mediaTypes:["image/jpeg","image/png","image/webp"]}});
-  ask.provider = "openrouter"; ask.model = model;
-  return ask;
-}
-// 按当前设置挑 AI：claude = 平台 sample（花自己的 Claude 订阅，看图请求可走排队）；openrouter = 自己的密钥，直接看图，不走排队
+// All AI requests use the authenticated backend; no browser API keys or subscriptions.
 function applyAI(){
-  const c = aiCfg(); S.aiProv = c.prov;
-  if (c.prov === "openrouter") {
-    S.sample = c.key ? mkOpenRouter(c.key, c.model) : null; S.imgOK = c.key ? true : false; S.comments = null;
-  } else { S.sample = S.claudeSample; S.imgOK = S.claudeImgOK; S.comments = S.claudeComments; }
+  S.aiProv = "server";
+  S.sample = S.serverSample;
+  S.imgOK = S.serverImgOK;
+  S.comments = null;
 }
-function vqPath(id){ return `vq/${S.uid}/req/${id}`; }
 // 一餐的多张照片：photo 是第一张（旧字段不变），more 是后加的 [{id 资产id|null, thumb?, tag:"剩下"|"其他", at}]
 const MORE_TAG = {"剩下":"吃完剩下的", "其他":""};
 const moreOf = m => Array.isArray(m?.more) ? m.more.filter(p => p && (p.id || p.thumb)) : [];
 const hasLeft = m => moreOf(m).some(p => p.tag === "剩下");
 const photoCount = m => (m.photo || m.thumb ? 1 : 0) + moreOf(m).length;
-async function enqueueVision(date, id){
-  if (!S.raw || !S.uid || S.aiProv === "openrouter") return;
-  const m = S.days[date]?.meals?.find(x => x.id === id); if (!m) return;
-  const at = m.visionReq?.at || new Date().toISOString();
-  try {
-    await S.raw.doc(`vq/${S.uid}`).set({uid:S.uid, last:at});
-    await S.raw.doc(vqPath(id)).set({uid:S.uid, date, mealId:id, type:m.type || "", text:(m.text || "").slice(0, 500), photo:m.photo || null, thumb:m.photo ? null : (m.thumb || null), photos:moreOf(m).map(p => ({id:p.id || null, thumb:p.id ? null : (p.thumb || null), tag:p.tag || "其他"})), status:"pending", at});
-  } catch (e) { console.warn("enqueue failed", e); }
-}
-async function pullVision(date, m){
-  if (!S.raw || !S.uid) return false;
-  let r; try { const s = await S.raw.doc(vqPath(m.id)).get(); r = s.exists ? s.data() : null; } catch { return false; }
-  if (!r || r.status !== "done" || !r.est) return false;
-  await updateDay(date, d => { const x = d.meals.find(y => y.id === m.id); if (!x || x.visionReq?.status === "done") return;
-    if (x.est) x.prevEst = clone(x.est); x.est = clone(r.est); x.visionReq = {...(x.visionReq || {}), status:"done", doneAt:r.doneAt || new Date().toISOString()}; }, {quiet:true, silent:true});
-  S.raw.doc(vqPath(m.id)).update({status:"applied", appliedAt:new Date().toISOString(), thumb:null}).catch(() => {});
-  return true;
-}
 const queues = {};
 function write(path, data){
   const p = (queues[path] || Promise.resolve()).catch(()=>{}).then(() => S.store.set(path, data));
@@ -650,19 +556,11 @@ function render(){
   tabs.innerHTML = `<div class="in">${TABS.map(([k,l]) => `<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k}">${ICON[k]}<span>${l}</span></button>`).join("")}</div>`;
   const v = {today:viewToday, food:viewFood, log:viewLog, fb:viewFeedback, me:viewMe}[S.tab] || viewToday;
   app.innerHTML = banner() + v();
-  prefetchSend();
-}
-/* 平台只认点击当下发出的「发给 Claude」；锚点和可用性要提前备好，点击时不能再有任何等待 */
-function prefetchSend(){
-  if (!S.comments || !S.cloud) return;
-  const b = document.querySelector('[data-act="add-meal"][data-v="ai"]'); if (!b) return;
-  S.comments.anchorFor(b).then(a => { S.mealAnchor = a; }).catch(() => {});
-  if (!prefetchSend.t || Date.now() - prefetchSend.t > 30000) { prefetchSend.t = Date.now(); S.comments.canSendToClaude().then(c => { S.canSend = c; }).catch(() => {}); }
 }
 function banner(){
   if (S.loadError) return `<div class="banner" style="margin-bottom:10px">读取云端数据时出错了，刷新页面再试一次。</div>`;
-  if (S.noId) return `<div class="banner" style="margin-bottom:10px">没认出你的 Claude 账号，记录先只存在这台设备上。登录 Claude 后再打开这个页面，就会存到你自己的个人空间。</div>`;
-  if (!S.cloud) return `<div class="banner" style="margin-bottom:10px">现在连不上云端存储，记录只保存在这台设备的浏览器里。在 Claude 里打开这个页面即可同步。</div>`;
+  if (S.noId) return `<div class="banner" style="margin-bottom:10px">登录已过期，请重新登录。</div>`;
+  if (!S.cloud) return `<div class="banner" style="margin-bottom:10px">连不上服务器，请检查网络后刷新。</div>`;
   return "";
 }
 function dateBar(){
@@ -1058,10 +956,10 @@ function mealCard(m){
       ${[["kcal","热量"],["protein","蛋白"],["carbs","碳水"],["fat","脂肪"]].map(([k,l]) => `<label>${l}<input id="me-${m.id}-${k}" data-meal="${m.id}" data-k="${k}" type="number" inputmode="decimal" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
     </div>
     ${e.calc ? `<p class="small muted">${e.by==="label"?"成分表换算":"依据"}：${esc(e.calc)}</p>` : ""}
-    ${e.by === "claude" && e.ocr ? `<p class="tip small">${e.label ? "已在本地识别照片里的营养成分表，按表换算。" : "已在本地读取照片里的文字，没发现营养成分表，按文字描述估算。"}</p>` : ""}
-    ${e.by === "claude" && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">这次估算没能看到照片，只按文字算${e.imgErr ? `（原因：${esc(e.imgErr)}）` : ""}。包装上有营养成分表的话，可以把每 100 g 的数值写进文字里再重新估算。</p>` : ""}
+    ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${e.label ? "已在本地识别照片里的营养成分表，按表换算。" : "已在本地读取照片里的文字，没发现营养成分表，按文字描述估算。"}</p>` : ""}
+    ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">这次估算没能看到照片，只按文字算${e.imgErr ? `（原因：${esc(e.imgErr)}）` : ""}。包装上有营养成分表的话，可以把每 100 g 的数值写进文字里再重新估算。</p>` : ""}
     ${m.photoErr && !m.photo ? `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr))}${S.files[m.id]?.blob && S.assets && m.photoErr !== "decode" ? ` <button class="chip" data-act="retry-photo" data-v="${m.id}">重传照片</button>` : ""}</p>` : ""}
-    ${m.visionReq?.status === "pending" ? `<p class="tip small">AI 正在${m.photo ? "看照片" : ""}估算…（${esc(new Date(m.visionReq.at || m.askedAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}))} 发出${/^can:/.test(m.visionReq.channel || "") ? "；这个 App 里叫不醒 Claude，排队等整点检查，最迟一小时" : m.visionReq.channel && !/^sent/.test(m.visionReq.channel) ? "，排队中，最迟一小时内完成" : "，一般 1 分钟左右"}），完成后这里自动更新。${e.provisional ? "上面的数是先在这里算的临时结果" : ""}</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">AI 看过${photoCount(m) > 1 ? ` ${photoCount(m)} 张照片` : m.photo ? "照片" : "描述"}后估算的。数字不对可以直接改。</p>` : e.by === "manual" ? `<p class="small muted">自己填的数值。</p>` : ""}
+    ${m.visionReq?.status === "pending" ? `<p class="tip small">这是旧版尚未完成的估算请求，不会自动继续。请点「AI 重新估算」或手动填写。</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">AI 看过${photoCount(m) > 1 ? ` ${photoCount(m)} 张照片` : m.photo ? "照片" : "描述"}后估算的。数字不对可以直接改。</p>` : e.by === "manual" ? `<p class="small muted">自己填的数值。</p>` : ""}
     ${e.tip ? `<p class="tip">${esc(e.tip)}${e.confidence?` <span class="muted">（把握：${esc(e.confidence)}）</span>`:""}</p>` : ""}
     ${S.label?.id === m.id ? labelForm(m) : ""}
     <div class="row">
@@ -1114,8 +1012,9 @@ async function compress(file){
 }
 const PHOTO_ERR = c => ({
   decode: "这张照片读不了（HEIC 自动转换没成功，可能网络连不上转换库）。请换网络重试，或用截图/JPEG 再传；文字已保存。",
-  no_assets: "当前窗口没有照片存储权限（请在 Claude 里用你自己的账号打开本页），文字已保存。",
+  no_assets: "暂时无法保存照片，请检查网络并重新登录，文字已保存。",
   too_large: "照片太大存不下，请换一张小一点的。", unsupported_type: "照片格式不支持，请换 JPG/PNG。",
+  bad_type: "照片无法解码，请换 JPG/PNG 或截图重试。", storage_quota: "照片存储空间已达上限，请删除不需要的照片或联系管理员。",
   quota_or_state: "照片存储空间不可用。", rate_limited: "上传太频繁，稍后点“重传照片”。", store_unavailable: "存储暂时不可用，稍后点“重传照片”。"
 }[c] || `照片没存上（错误码 ${c}），文字已保存，稍后可点“重传照片”。`);
 // 上传一张照片：返回 {id} 或 {thumb}（没有资产权限/上传失败时留小图）
@@ -1145,13 +1044,7 @@ async function addMeal(mode, btn){
   if (!text && !file) { toast("拍张照片或写一句吃了什么"); return; }
   const now = new Date();
   const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
-  // 平台只认点击当下发出的请求：用提前备好的锚点，在任何 await 之前就发出去，之后再压缩、上传照片
-  let early = null, anchor = S.mealAnchor || null;
-  const wantSend = mode === "ai" && S.cloud && S.comments && !(S.sample && (!file || S.imgOK === true));
-  const photoDesc = file ? "照片正在上传（以记录里的 photo 为准）" : "没有照片";
-  if (wantSend && anchor && S.canSend === "available") early = sendNow(anchor, S.date, m.id, type, photoDesc, text);
-  if (mode === "ai" && S.comments && !anchor) { try { anchor = await S.comments.anchorFor(btn); } catch (e) { console.warn("anchor failed", e); } }
-  if (wantSend && !early) early = notifyClaude(anchor, S.date, m.id, type, photoDesc, text);
+  const early = null, anchor = null;
   let blob = null;
   if (file) {
     const r = await compress2(file);
@@ -1189,74 +1082,10 @@ async function addMeal(mode, btn){
   if (mode === "manual") { S.mfill = {}; render(); toast("已记下"); return; }
   aiEstimate(date, m.id, anchor, early);
 }
-/* 一个按钮走到底：页面能直接用 Claude 看图就当场算；看不了图（或没有照片但页面里调不了 Claude）就把这餐发给 Claude 看，结果写回后页面自动更新 */
-async function aiEstimate(date, id, anchor, early){
-  const m = S.days[date]?.meals?.find(x => x.id === id); if (!m) return;
-  // 即时通知发不出（如 iPhone App 里 canSendToClaude 为 off）时，先在页面里给个临时估算（成分表照片走本地 OCR），排队的看图结果回来后再覆盖
-  const quick = photoCount(m) > 0 && !!S.sample && !!S.canSend && S.canSend !== "available";
-  if (early) { if (quick) estimateMeal(date, id, true, true); return sendToAI(date, m, anchor, early); }
-  const photo = photoCount(m) > 0;
-  if (S.sample && (!photo || S.imgOK === true)) return estimateMeal(date, id, true);
-  if (S.cloud && S.comments) { if (quick) estimateMeal(date, id, true, true); return sendToAI(date, m, anchor); }
-  if (S.sample) return estimateMeal(date, id, true); // 没有评论通道：退回本地读字 + 文字估算
-  toast(S.aiProv === "openrouter" ? "先到「我的 → AI 服务」填 OpenRouter 密钥，或选「自己填」" : "当前窗口用不了 AI，请选「自己填」");
-}
-function reqText(date, id, type, photoDesc, mtext){
-  return `【AI 估算请求】用户 ${S.uid || "?"}，日期 ${date}，餐 id ${id}（${type}），${photoDesc}，文字：${(mtext || "（没写）").slice(0, 300)}。请估算并写回这一餐。`;
-}
-/* 同步发出（不能放在 await 之后） */
-function sendNow(anchor, date, id, type, photoDesc, mtext){
-  let p;
-  try { p = S.comments.sendToClaude({anchor, text:reqText(date, id, type, photoDesc, mtext)}); }
-  catch (e) { return Promise.resolve("err:" + (e?.code || "unknown")); }
-  return Promise.race([p.then(() => "sent:fast"), new Promise(res => setTimeout(() => res("timeout"), 60000))])
-    .catch(e => "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120));
-}
-function notifyClaude(anchor, date, id, type, photoDesc, mtext){
-  return (async () => {
-    try {
-      if (!anchor) return "no_anchor";
-      const can = await S.comments.canSendToClaude();
-      if (can !== "available") return "can:" + can;
-      const text = reqText(date, id, type, photoDesc, mtext);
-      return await Promise.race([S.comments.sendToClaude({anchor, text}).then(() => "sent"), new Promise(res => setTimeout(() => res("timeout"), 60000))]);
-    } catch (e) { return "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120); }
-  })();
-}
-async function sendToAI(date, m, anchor, early){
-  const at = new Date().toISOString(), id = m.id;
-  const send = early || notifyClaude(anchor, date, id, m.type, (m.photo ? `照片 ${m.photo}` : "没有照片") + (moreOf(m).length ? `，另有 ${moreOf(m).length} 张（${moreOf(m).map(p => MORE_TAG[p.tag] || "照片").join("、")}，见队列里的 photos）` : ""), m.text);
-  try { await updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x) { x.askedAt = at; x.visionReq = {status:"pending", at}; delete x.askErr; } }); }
-  catch { return; }
-  enqueueVision(date, id);
-  toast(m.photo ? "已记下，AI 正在看照片" : "已记下，AI 正在估算", 5000);
-  watchPending();
-  const r = await send;
-  updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x && x.visionReq) x.visionReq.channel = r; }, {quiet:true, silent:true}).then(() => render()).catch(()=>{});
-}
-/* 有等待中的 AI 估算时，每 8 秒读一次那天的记录，写回了就刷新页面 */
-function watchPending(){
-  if (watchPending.t || !S.cloud) return;
-  const started = Date.now();
-  const tick = async () => {
-    const dates = Object.keys(S.days).filter(d => (S.days[d].meals || []).some(m => m.visionReq?.status === "pending"));
-    if (!dates.length || Date.now() - started > 2*3600e3) { watchPending.t = null; return; }
-    if (!document.hidden) for (const d of dates) {
-      try {
-        for (const m of (S.days[d].meals || []).filter(x => x.visionReq?.status === "pending")) await pullVision(d, m);
-        const cur = await S.store.get("days/" + d);
-        if (cur && JSON.stringify(cur.meals) !== JSON.stringify(S.days[d].meals)) {
-          const busyEl = document.activeElement?.matches?.("input,textarea,select");
-          S.days[d] = migrateDay(cur);
-          if (!busyEl) render();
-          const done = (cur.meals || []).filter(m => m.visionReq?.status === "done" && m.est?.by === "claude-vision" && m.visionReq.doneAt && Date.now() - Date.parse(m.visionReq.doneAt) < 60000);
-          if (done.length) toast(`AI 估算好了：${done.map(m => `${m.type} ${m.est.kcal} kcal，蛋白 ${Math.round(m.est.protein)} g`).join("；")}`, 7000);
-        }
-      } catch {}
-    }
-    watchPending.t = setTimeout(tick, 8000);
-  };
-  watchPending.t = setTimeout(tick, 8000);
+// AI is optional: manual entry and saved records work without a provider.
+async function aiEstimate(date, id){
+  if (S.sample) return estimateMeal(date, id, true);
+  toast("服务器还没开通 AI，请选「自己填」");
 }
 // 取这餐的照片：本次会话的原图 → 同源读取 → 用 <img> 画到 canvas 再导出
 async function loadPhoto(m){
@@ -1374,13 +1203,13 @@ label 表示是否按照片里的营养成分表计算；cmp 表示是否按吃�
     const n1 = v => Math.max(0, Math.round((+v || 0)*10)/10);
     const est = {items:Array.isArray(r.items) ? r.items.slice(0,12).map(x => ({name:String(x.name||""), amount:String(x.amount||"")})) : [],
       kcal:Math.max(0, Math.round(+r.kcal || 0)), protein:n1(r.protein), carbs:n1(r.carbs), fat:n1(r.fat),
-      confidence:String(r.confidence||""), tip:String(r.tip||""), calc:String(r.calc||""), label:!!r.label, photoUsed, hadPhoto:!!m.photo || !!S.files[id], ...(photoUsed && imgs.length ? {photos:imgs.length, cmp:left || !!r.cmp} : {}), imgErr, ocr:!!ocrText, ocrRan, ocrErr, ocrText:ocrText.slice(0, 600), by:"claude", via:S.sample?.provider === "openrouter" ? "openrouter:" + S.sample.model : "claude", at:new Date().toISOString()};
+      confidence:String(r.confidence||""), tip:String(r.tip||""), calc:String(r.calc||""), label:!!r.label, photoUsed, hadPhoto:!!m.photo || !!S.files[id], ...(photoUsed && imgs.length ? {photos:imgs.length, cmp:left || !!r.cmp} : {}), imgErr, ocr:!!ocrText, ocrRan, ocrErr, ocrText:ocrText.slice(0, 600), by:"server", via:"server", at:new Date().toISOString()};
     if (prov) est.provisional = true;
-    try { await updateDay(date, d => { const x = d.meals.find(mm => mm.id === id); if (x && !(prov && x.est?.by === "claude-vision")) x.est = clone(est); }); } catch { return; }
+    try { await updateDay(date, d => { const x = d.meals.find(mm => mm.id === id); if (x && !(prov && x.est?.by === "claude-vision")) { x.est = clone(est); if (x.visionReq?.status === "pending") x.visionReq = {...x.visionReq, status:"replaced"}; } }); } catch { return; }
     if (imgs.length && !photoUsed && ocrText) toast(est.label ? "已在本地读出营养成分表并按表换算" : "照片里的文字不像营养成分表，按文字描述估算", 6000);
     else if (imgs.length && !photoUsed && ocrRan) toast("照片里没找到营养成分表，这次先按文字估算", 7000);
     else if (imgs.length && !photoUsed && prov) toast("先按文字给了临时估算，看照片的结果排队中", 6000);
-    else if (imgs.length && !photoUsed) toast(`照片没能发给 Claude（${imgErr || (S.imgOK === false ? "本次打开期间已失败过一次，刷新页面再试" : "未知")}），这次按文字估算`, 7000);
+    else if (imgs.length && !photoUsed) toast(`照片没能发给 AI（${imgErr || (S.imgOK === false ? "本次打开期间已失败过一次，刷新页面再试" : "未知")}），这次按文字估算`, 7000);
   } catch (e) { console.warn("estimate failed", e); toast(sampleErr(e)); }
   finally { delete S.busy["meal-"+id]; render(); }
 }
@@ -1418,12 +1247,12 @@ function sampleErr(e){
   const c = e?.code;
   if (HOSTED && (c === "not_granted" || c === "sampling_disabled")) return "服务器还没开通 AI，可以手动填写。";
   if (HOSTED && c === "session_expired") return "登录过期了，请重新登录。";
-  if (c === "not_granted" || c === "sampling_disabled") { return "没有允许这个页面使用 Claude，可以手动填写。"; }
+  if (c === "not_granted" || c === "sampling_disabled") { return "服务器暂时无法使用 AI，可以手动填写。"; }
   if (c === "rate_limited") return "请求太频繁或额度用完，稍后再试。";
   if (c === "image_rejected") return "这张照片无法识别，换一张试试。";
-  if (c === "invalid_json") return (HOSTED ? "AI" : "Claude") + " 的回答格式不对，再点一次试试。";
+  if (c === "invalid_json") return "AI" + " 的回答格式不对，再点一次试试。";
   if (c === "cancelled") return "已停止。";
-  if (c === "session_expired") return "登录过期了，请重新登录 Claude。";
+  if (c === "session_expired") return "登录过期了，请重新登录。";
   if (c === "or_key") return "OpenRouter 密钥不对或已失效，到「我的 → AI 服务」重新填。";
   if (c === "or_credit") return "OpenRouter 账户余额不足，充值后再试。";
   if (c === "network") return "连不上 OpenRouter，检查网络后再试。";
@@ -1641,10 +1470,10 @@ function viewFeedback(){
   const ins = insights(), p = S.profile, ai = S.ai;
   return `<div class="stack"><div class="hero"><span class="eyebrow">反馈</span><h1>按纲领自动检查</h1><p class="muted small">根据你的打卡、训练和饮食记录，每次打开都会重新算。</p></div>
   <section class="card">${ins.map(x => `<div class="ins ${x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${x.text}</p>${actionBtn(x.action, "rule")}</div></div>`).join("")}</section>
-  <section class="card"><div class="row between"><h2>让 ${HOSTED ? "AI" : "Claude"} 看看</h2>${ai?.running?`<button class="chip" data-act="ai-stop">停止</button>`:""}</div>
-    <p class="small muted">写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），${HOSTED ? "AI" : "Claude"} 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。${HOSTED ? "" : "会用你自己的 Claude 额度，第一次会弹窗请你允许。"}</p>
+  <section class="card"><div class="row between"><h2>让 AI 看看</h2>${ai?.running?`<button class="chip" data-act="ai-stop">停止</button>`:""}</div>
+    <p class="small muted">写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），AI 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。</p>
     <label>我的反馈（可选）<textarea id="fb-text" rows="3" placeholder="例如：深蹲到第三组膝盖有点酸；引体一个都拉不起来；这周睡得不好，训练很吃力" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
-    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${ai?.running ? "分析中…" : "提交反馈并分析"}</button>` : (S.aiProv === "openrouter" ? `<p class="tip">先到「我的 → AI 服务」填上 OpenRouter 密钥，就能用 AI 分析。</p>` : `<p class="tip">当前窗口用不了 Claude。可以在项目对话里说“看一下我这两周的记录”，我会直接读取这些数据给你反馈。</p>`)}
+    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${ai?.running ? "分析中…" : "提交反馈并分析"}</button>` : (S.aiProv === "openrouter" ? `<p class="tip">先到「我的 → AI 服务」填上 OpenRouter 密钥，就能用 AI 分析。</p>` : `<p class="tip">服务器还没开通 AI。你仍然可以记录训练和饮食。</p>`)}
     ${ai?.running ? `<p class="small muted">${ai.stream ? "正在写…" : "正在思考，通常需要半分钟到一分钟。"}</p>` : ""}
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
@@ -1660,7 +1489,7 @@ function actionBtn(a, src, fid, idx){
   return `<div><button class="chip ${applied?"":"on"}" data-act="apply" data-v='${esc(JSON.stringify({a, fid:fid||null, idx:idx??null}))}' ${applied?"disabled":""}>${applied ? "已采纳" : label}</button></div>`;
 }
 function fbCard(f){
-  return `<section class="card"><div class="row between"><span class="eyebrow">${HOSTED ? "AI" : "Claude"} 反馈 · ${esc((f.createdAt||"").slice(0,10))}</span></div>
+  return `<section class="card"><div class="row between"><span class="eyebrow">AI 反馈 · ${esc((f.createdAt||"").slice(0,10))}</span></div>
     ${f.userText ? `<p class="small muted">你的反馈：${esc(f.userText)}</p>` : ""}
     <p>${esc(f.summary)}</p>
     ${f.good?.length ? `<div><b class="small">做得好</b><ul class="clean small">${f.good.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
@@ -1743,37 +1572,20 @@ function viewHostedAccount(){
     ${u.mustChange && !pw ? `<div class="banner">这个账号还在用初始密码，请先改一个只有你知道的密码。</div>` : ""}
     ${pw ? `<div class="stack" style="gap:6px">
       <label>原密码<input id="pw-old" type="password" autocomplete="current-password"></label>
-      <label>新密码（至少 8 位，不能和用户名一样）<input id="pw-new" type="password" autocomplete="new-password"></label>
+      <label>新密码（至少 12 位）<input id="pw-new" type="password" autocomplete="new-password"></label>
       <label>再输一次新密码<input id="pw-new2" type="password" autocomplete="new-password"></label>
       ${pw.msg ? `<p class="small" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${pw.busy ? "保存中…" : "保存"}</button><button class="btn" data-act="pw-cancel">取消</button></div></div>`
     : `<div class="grid2 small"><span class="muted">用户名</span><span>${esc(u.username || "")}</span><span class="muted">注册时间</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
-    <p class="small muted">每个人的记录只存在自己账号下，别人看不到。</p></section>`;
+    <p class="small muted">每个人的记录只存在自己账号下，别人看不到。</p>
+    <div class="row"><a class="btn" href="/api/account/export" download>导出我的记录和照片</a><a class="btn" href="/privacy.html">隐私说明</a></div>
+    <details><summary>删除账号</summary><p class="tip warn">删除账号、记录和照片后无法恢复。请先导出需要保留的数据；备份保留规则见隐私说明。</p>
+    <label>输入密码确认<input id="delete-password" type="password" autocomplete="current-password"></label>
+    <label><input id="delete-confirm" type="checkbox">我确认删除我的账号和全部记录</label>
+    <button class="btn" data-act="delete-account">永久删除账号</button></details></section>`;
 }
-function viewAccount(){
-  if (HOSTED) return viewHostedAccount();
-  const a = S.account || {}, ed = S.accEdit;
-  return `<section class="card"><div class="row between"><h2>账号</h2>${S.cloud && !ed ? `<button class="btn" data-act="acc-edit">${a.username ? "改用户名" : "设用户名"}</button>` : ""}</div>
-    ${ed ? `<div class="stack" style="gap:6px"><label>用户名<input id="acc-name" maxlength="32" autocomplete="off" value="${esc(a.username || "")}" placeholder="字母、数字或下划线"></label>
-      <div class="row"><button class="btn primary" data-act="acc-save">保存</button><button class="btn" data-act="acc-cancel">取消</button></div></div>`
-    : `<div class="grid2 small"><span class="muted">用户名</span><span>${a.username ? esc(a.username) : "未设置"}</span>
-      <span class="muted">登录方式</span><span>${S.cloud ? "Claude 账号（已登录）" : S.noId ? "没认出 Claude 账号" : "未登录，数据只在这台设备"}</span></div>`}
-    <p class="small muted">登录由 Claude 账号负责：每个人的记录存在自己账号的私人空间里，别人（包括页面主人）都看不到。用户名只用来显示。</p></section>`;
-}
-function viewAI(){
-  if (HOSTED) return "";
-  const c = aiCfg(), ed = S.aiEdit;
-  const cur = c.prov === "claude" ? "你自己的 Claude 账号" : c.key ? `OpenRouter · ${esc(c.model)}` : "OpenRouter（还没填密钥，AI 功能暂时关闭）";
-  return `<section class="card"><div class="row between"><h2>AI 服务</h2>${ed ? "" : `<button class="btn" data-act="ai-cfg">设置</button>`}</div>
-    ${ed ? `<div class="stack" style="gap:6px">
-      <div class="row"><button class="chip ${ed.prov==="openrouter"?"on":""}" data-act="ai-prov" data-v="openrouter">OpenRouter</button><button class="chip ${ed.prov==="claude"?"on":""}" data-act="ai-prov" data-v="claude">我的 Claude 账号</button></div>
-      ${ed.prov === "openrouter" ? `<label>OpenRouter API 密钥<input id="or-key" type="password" autocomplete="off" value="${esc(ed.key)}" placeholder="sk-or-..."></label>
-      <label>模型（要支持看图）<input id="or-model" autocomplete="off" value="${esc(ed.model)}" placeholder="${OR_DEFAULT_MODEL}"></label>
-      <p class="small muted">密钥在 openrouter.ai 的 Keys 页面创建，费用记在你自己的 OpenRouter 账户。密钥只存在这台设备的浏览器里，不会上传；换设备要重新填。</p>` : `<p class="small muted">用你自己的 Claude 账号，费用算在你的 Claude 订阅里。</p>`}
-      ${ed.msg ? `<p class="small" style="color:${ed.ok?"var(--good)":"var(--bad)"}">${esc(ed.msg)}</p>` : ""}
-      <div class="row"><button class="btn primary" data-act="ai-save" ${ed.busy?"disabled":""}>${ed.busy ? "测试中…" : "保存并测试"}</button><button class="btn" data-act="ai-cancel">取消</button>${ed.prov==="openrouter" && c.key ? `<button class="btn" data-act="ai-clear">清除密钥</button>` : ""}</div></div>`
-    : `<p class="small">现在用：${cur}</p>`}</section>`;
-}
+function viewAccount(){ return viewHostedAccount(); }
+function viewAI(){ return ""; }
 function viewMe(){
   const p = S.profile, t = targets();
   return `<div class="stack"><div class="hero"><span class="eyebrow">我的</span><h1>${STAGE[t.st]}阶段 · 每日 ${t.kcal} kcal</h1></div>
@@ -1822,37 +1634,28 @@ document.addEventListener("click", async ev => {
       const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
       if (n !== n2) { S.pwEdit = {msg:"两次输入的新密码不一样"}; render(); break; }
       S.pwEdit = {busy:true}; render();
-      try { await window.claude.changePassword(o, n); S.pwEdit = null; if (S.hostUser) S.hostUser.mustChange = false; toast("密码已更新，其他设备需要重新登录"); }
+      try { await window.ritual.changePassword(o, n); S.pwEdit = null; if (S.hostUser) S.hostUser.mustChange = false; toast("密码已更新，其他设备需要重新登录"); }
       catch (e) { S.pwEdit = {msg:e?.message || "没改成，稍后再试"}; }
       render(); break;
     }
-    case "logout": try { await window.claude.logout(); } catch {} location.href = "/login.html"; break;
+    case "delete-account": {
+      const password = $("#delete-password")?.value;
+      if (!password || !$("#delete-confirm")?.checked) { toast("请填写密码并确认删除"); break; }
+      b.disabled = true;
+      try {
+        await window.ritual.deleteAccount(password);
+        try { const prefix = `bj-user:${S.uid}:`; Object.keys(localStorage).filter(k => k.startsWith(prefix)).forEach(k => localStorage.removeItem(k)); } catch {}
+        location.replace("/login.html?deleted=1");
+      } catch (e) { b.disabled=false; toast(e?.message || "删除未完成，请重试或联系管理员",6000); }
+      break;
+    }
+    case "logout": try { await window.ritual.logout(); } catch {} location.href = "/login.html"; break;
     case "acc-edit": S.accEdit = true; render(); break;
     case "acc-cancel": S.accEdit = false; render(); break;
     case "acc-save": {
       const name = ($("#acc-name")?.value || "").trim();
       if (!/^[A-Za-z0-9_.-]{3,32}$/.test(name)) { toast("用户名用 3–32 个字母、数字、下划线、点或减号"); break; }
       try { const prev = await S.store.get("meta/account"); const a = {...(prev || {}), username:name, updatedAt:new Date().toISOString(), ...(prev?.createdAt ? {} : {createdAt:new Date().toISOString()})}; await S.store.set("meta/account", a); S.account = a; S.accEdit = false; toast("用户名已保存"); } catch { toast("保存失败，稍后再试"); }
-      render(); break;
-    }
-    case "ai-cfg": { const c = aiCfg(); S.aiEdit = {prov:c.prov, key:c.key, model:c.model}; render(); break; }
-    case "ai-cancel": S.aiEdit = null; render(); break;
-    case "ai-prov": if (S.aiEdit) { S.aiEdit.key = $("#or-key")?.value ?? S.aiEdit.key; S.aiEdit.model = $("#or-model")?.value ?? S.aiEdit.model; S.aiEdit.prov = v; S.aiEdit.msg = null; render(); } break;
-    case "ai-clear": { const c = lsGet("bj-ai", {}) || {}; delete c.key; lsSet("bj-ai", c); applyAI(); S.aiEdit = null; toast("已清除这台设备上的密钥"); render(); break; }
-    case "ai-save": {
-      const ed = S.aiEdit; if (!ed) break;
-      if (ed.prov === "openrouter") { ed.key = ($("#or-key")?.value || "").trim(); ed.model = ($("#or-model")?.value || "").trim() || OR_DEFAULT_MODEL; }
-      if (ed.prov === "openrouter" && !ed.key) { ed.msg = "先填 OpenRouter 密钥"; ed.ok = false; render(); break; }
-      if (ed.prov === "claude" && !S.claudeSample) { ed.msg = "这个窗口用不了 Claude 账号的 AI，换 OpenRouter 或在 Claude 里打开。"; ed.ok = false; render(); break; }
-      ed.busy = true; ed.msg = null; render();
-      let ok = true, msg = "已保存。";
-      if (ed.prov === "openrouter") {
-        try { const r = await mkOpenRouter(ed.key, ed.model)("只回复两个字：可以"); msg = "连接成功，AI 功能已开。" + (r.text ? "" : "（模型回了空白，换个模型试试）"); }
-        catch (e) { ok = false; msg = sampleErr(e) + (e?.message ? "（" + String(e.message).slice(0, 100) + "）" : ""); }
-      }
-      if (ok) { lsSet("bj-ai", {prov:ed.prov, key:ed.prov === "openrouter" ? ed.key : (lsGet("bj-ai", {})?.key || ""), model:ed.model}); applyAI(); }
-      if (S.cloud) S.store.set("meta/aiDiag", {prov:ed.prov, model:ed.model, ok, msg:msg.slice(0, 200), at:new Date().toISOString()}).catch(() => {});
-      S.aiEdit = ok ? null : {...ed, busy:false, msg, ok}; if (ok) toast(msg, 5000);
       render(); break;
     }
     case "ex-add": {
@@ -1878,27 +1681,7 @@ document.addEventListener("click", async ev => {
       break;
     }
     case "cu-del": updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = (d.custom.ex || []).filter((_, i) => i !== +v); }).catch(()=>{}); break;
-    case "ask-claude": {
-      const m = S.days[S.date]?.meals?.find(x => x.id === v); if (!m?.photo) break;
-      const at = new Date().toISOString(), date = S.date;
-      // 先在按钮还在页面上时取锚点并发出通知（写库会重绘页面，按钮会被替换掉）
-      let send = Promise.resolve("no_comments");
-      if (S.comments) send = (async () => {
-        try {
-          const anchor = await S.comments.anchorFor(b);
-          const can = await S.comments.canSendToClaude();
-          if (can !== "available") return "can:" + can;
-          const text = `【看图估算请求】用户 ${S.uid || "?"}，日期 ${date}，餐 id ${m.id}（${m.type}），照片 ${m.photo}。请看图估算并写回这一餐。`;
-          return await Promise.race([S.comments.sendToClaude({anchor, text}).then(() => "sent"), new Promise(res => setTimeout(() => res("timeout"), 60000))]);
-        } catch (e) { return "err:" + (e?.code || "unknown") + " " + String(e?.message || "").slice(0, 120); }
-      })();
-      try { await updateDay(date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.askedAt = at; x.visionReq = {status:"pending", at}; delete x.askErr; } }); }
-      catch { break; }
-      enqueueVision(date, v);
-      toast("已发出，Claude 看过照片后会写回这一餐", 6000);
-      send.then(r => updateDay(date, d => { const x = d.meals.find(y => y.id === v); if (x && x.visionReq) x.visionReq.channel = r; }, {quiet:true, silent:true}).catch(()=>{}));
-      break;
-    }
+    case "ask-claude": await aiEstimate(S.date, v); break;
     case "retry-photo": {
       const m = S.days[S.date]?.meals?.find(x => x.id === v), f = S.files[v]?.blob; if (!m || !f || !S.assets) break;
       try { const id = (await S.assets.upload(f, {type:"image/jpeg"})).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
@@ -2049,30 +1832,32 @@ document.addEventListener("submit", ev => { if (ev.target.id === "setup") { ev.p
 
 /* ============ 启动 ============ */
 (async function boot(){
-  const use = n => (window.claude?.use ? window.claude.use(n).catch(() => null) : Promise.resolve(null));
+  const use = n => (window.ritual?.use ? window.ritual.use(n).catch(() => null) : Promise.resolve(null));
   const [db, assets, sample, comments, user] = await Promise.all([use("db"), use("assets"), use("sample"), use("comments"), use("user")]);
   S.comments = comments;
-  setTimeout(prefetchSend, 0);
   const me = user ? await user.me().catch(() => null) : null;
-  S.hostUser = HOSTED ? me : null;
+  if (!db || !me?.id) {
+    $("#app").innerHTML = '<div class="banner">暂时无法读取账号，请检查网络后刷新，或<a href="/login.html">重新登录</a>。未保存任何记录。</div>';
+    return;
+  }
+  storageUser = me.id;
+  S.tab = lsGet("bj-tab", "today");
+  S.drafts = lsGet("bj-drafts", {});
+  S.hostUser = me;
   S.uid = me?.id || null; S.owner = !!(me?.isOwner || me?.canEdit); // 主人或编辑者（admin）才能读旧的共享根路径
   S.cloud = !!(db && S.uid); S.raw = S.cloud ? db : null; S.assets = assets; S.sample = sample;
   S.noId = !!db && !S.uid;
-  S.store = S.cloud ? mkCloud(db, `data/users/${S.uid}/app`) : mkLocal();
-  if (S.cloud && S.owner) { try { const c = await migrateLegacy(db, S.store); if (c && Object.keys(c).length) setTimeout(() => toast("已把你之前的记录搬进个人空间（原记录保留）", 6000), 800); } catch (e) { console.warn("migrate", e); S.loadError = true; } }
+  S.store = mkCloud(db, `data/users/${S.uid}/app`);
   let lim = null;
   if (sample) { lim = await sample.limits().catch(e => ({err:String(e?.code||e)})); S.imgOK = lim?.images ? true : (lim && !lim.err ? false : null); }
-  S.claudeSample = sample; S.claudeImgOK = S.imgOK; S.claudeComments = comments;
+  S.serverSample = sample; S.serverImgOK = S.imgOK;
   applyAI();
   // 诊断：记下这次打开时平台给的能力，方便排查看图估算
-  let canSend = null; if (comments) canSend = await Promise.race([comments.canSendToClaude().catch(e => "err:"+(e?.code||e)), new Promise(r => setTimeout(() => r("timeout"), 5000))]);
-  if (S.cloud) { try { S.store.set("meta/diag", {canSend,at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!sample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!assets, comments:!!comments, owner:S.owner}).catch(()=>{}); } catch {} }
+  if (S.cloud) { try { S.store.set("meta/diag", {at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!sample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!assets, comments:!!comments, owner:S.owner}).catch(()=>{}); } catch {} }
   await loadAll();
   if (S.cloud) { try { S.account = await S.store.get("meta/account"); } catch {} }
   S.ready = true; render();
   rescueDrafts();
-  watchPending();
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) watchPending(); });
 })();
 // 找回这台设备上填了但没点保存的训练
 function rescueDrafts(){

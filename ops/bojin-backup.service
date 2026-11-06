@@ -1,0 +1,7 @@
+[Unit]
+Description=Lean Ritual verified offline backup and offsite copy
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/bojin-backup.env
+ExecStart=/bin/bash /usr/local/libexec/bojin-backup
+UMask=0077
