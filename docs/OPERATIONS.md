@@ -38,7 +38,7 @@ Reapply the recorded application release and environment, point DATA_DIR at the 
 
 ## Interrupted processes and leases
 
-Normal SIGTERM/SIGINT shutdown releases leases. A kill/crash can leave a file under `DATA_DIR/.access/readers/`, or an empty `.access/writer` directory. Leases deliberately do not guess whether PIDs in another container are alive. If backup refuses after a crash: stop EVERY app/admin/backup process using that data volume, check service/container state, then remove the confirmed stale lease files/directory. Never remove a lease while its process might still be writing. Restart the service and repeat the drill.
+Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SIGKILL/OOM kill can leave a file under `DATA_DIR/.access/readers/`, or a `.access/writer` directory. Leases record hostname, kernel boot ID, PID namespace and process start time; backup and app start remove a leftover only when it provably belongs to a dead process on this same kernel (or a previous boot of this host). Leases from another container/host, or in the older format without that evidence, still fail closed. If backup still refuses after a crash: stop EVERY app/admin/backup process using that data volume, check service/container state, then remove the confirmed stale lease files/directory. Never remove a lease while its process might still be writing. Restart the service and repeat the drill.
 
 ## Monitoring and account operations
 

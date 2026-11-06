@@ -3,13 +3,31 @@
 (function () {
   "use strict";
   const H = { "X-Bojin": "1" };
+  // Server restarts/deploys take a few seconds. Requests that are safe to repeat
+  // (reads, whole-document PUT, top-level PATCH merge, DELETE) wait and retry
+  // instead of failing; POSTs (photo upload, AI) are never repeated automatically.
+  const RETRY_METHODS = new Set(["GET", "HEAD", "PUT", "PATCH", "DELETE"]);
+  const RETRY_STATUS = new Set([502, 503, 504]);
+  const RETRY_DELAYS = [500, 1000, 2000, 4000, 8000];
+  const wait = (ms, signal) => new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject({ code: "cancelled" }); }, { once: true });
+  });
   async function api(method, url, body, rawType, signal) {
     let r;
-    try {
-      r = await fetch(url, { method, credentials: "same-origin", signal,
-        headers: rawType ? { ...H, "Content-Type": rawType } : body !== undefined ? { ...H, "Content-Type": "application/json" } : H,
-        body: rawType ? body : body !== undefined ? JSON.stringify(body) : undefined });
-    } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; throw { code: "network", message: "连不上服务器" }; }
+    const retry = RETRY_METHODS.has(method) && !url.startsWith("/api/auth/") && !url.startsWith("/api/ai");
+    for (let attempt = 0; ; attempt++) {
+      let failed = null;
+      try {
+        r = await fetch(url, { method, credentials: "same-origin", signal,
+          headers: rawType ? { ...H, "Content-Type": rawType } : body !== undefined ? { ...H, "Content-Type": "application/json" } : H,
+          body: rawType ? body : body !== undefined ? JSON.stringify(body) : undefined });
+      } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; failed = { code: "network", message: "连不上服务器" }; }
+      const transient = failed || RETRY_STATUS.has(r.status);
+      if (!transient || !retry || attempt >= RETRY_DELAYS.length) { if (failed) throw failed; break; }
+      if (signal && signal.aborted) throw { code: "cancelled" };
+      await wait(RETRY_DELAYS[attempt], signal);
+    }
     let j = null; try { j = await r.json(); } catch {}
     if (r.status === 401 && !url.startsWith("/api/auth/")) { location.href = "/login.html"; throw { code: "session_expired" }; }
     if (!r.ok) throw { code: (j && j.error) || "http_" + r.status, message: (j && j.message) || "" };

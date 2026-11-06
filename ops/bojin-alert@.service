@@ -1,0 +1,6 @@
+[Unit]
+Description=Lean Ritual alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/bojin-alert "%i failed on %H; check: journalctl -u %i -n 50"
