@@ -26,8 +26,8 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm test
       - run: npm run build
+      - run: npm test
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Package tested runtime
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
