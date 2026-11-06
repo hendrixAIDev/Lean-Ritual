@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 薄肌日课 · 独立部署服务器
-// 只用 Node 22 自带模块（http、crypto、node:sqlite），不需要 npm install。
+// Node + Better Auth；运行前 npm ci。
 // 功能：账号密码登录、每人私有的数据存储（与 Claude 页面版同样的路径结构）、照片存储、AI 代理（OpenRouter，密钥只在服务器上）。
 "use strict";
 const http = require("node:http");
@@ -10,22 +10,31 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = __dirname;
+// The deployment bundle records only a public Git revision, never configuration.
+let releaseRevision;
+try {
+  const value = JSON.parse(fs.readFileSync(path.join(ROOT, ".release.json"), "utf8")).revision;
+  if (/^[0-9a-f]{40}$/.test(value)) releaseRevision = value;
+} catch (error) { if (error.code !== "ENOENT") throw error; }
 const CFG = {
   port: +(process.env.PORT || 8080),
   host: process.env.HOST || "127.0.0.1",
   dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, "data")),
   publicDir: path.join(ROOT, "public"),
-  allowSignup: (process.env.ALLOW_SIGNUP ?? "1") !== "0",
-  inviteCode: process.env.INVITE_CODE || "",              // 设了就必须填邀请码才能注册
+  authBaseURL: process.env.AUTH_BASE_URL || "http://127.0.0.1:8080",
+  authSecret: process.env.AUTH_SECRET || "",
   orKey: process.env.OPENROUTER_API_KEY || "",
   orBase: process.env.OPENROUTER_BASE || "https://openrouter.ai/api/v1",
   orModel: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
-  aiDaily: +(process.env.AI_DAILY_LIMIT || 60),            // 每人每天 AI 次数上限
+  aiGlobalDaily: +(process.env.AI_GLOBAL_DAILY_LIMIT ?? 300),
+  aiMaxTokens: +(process.env.AI_MAX_OUTPUT_TOKENS ?? 2000),
+  aiDaily: +(process.env.AI_DAILY_LIMIT ?? 60),            // 每人每天 AI 次数上限
   cookieSecure: process.env.COOKIE_SECURE === "1",         // 走 HTTPS 时设为 1
-  sessionDays: +(process.env.SESSION_DAYS || 30),
   trustProxy: process.env.TRUST_PROXY === "1",             // 在 Caddy/Nginx 后面时设为 1，按 X-Forwarded-For 限流
 };
 
+const releaseDataAccess = require("./lib/data-access").shared(CFG.dataDir);
+process.once("exit", releaseDataAccess);
 fs.mkdirSync(path.join(CFG.dataDir, "blobs"), { recursive: true });
 const db = new DatabaseSync(path.join(CFG.dataDir, "bojin.db"));
 db.exec(`
@@ -38,49 +47,15 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS ai_usage (uid TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(uid, day));
 `);
 
-/* ---------- 密码与会话 ---------- */
-const scrypt = (pw, salt) => crypto.scryptSync(pw, salt, 64, { N: 16384, r: 8, p: 1 }).toString("hex");
-const hashPass = pw => { const salt = crypto.randomBytes(16).toString("hex"); return `s1$${salt}$${scrypt(pw, salt)}`; };
-const checkPass = (pw, stored) => {
-  const [v, salt, h] = String(stored).split("$"); if (v !== "s1" || !salt || !h) return false;
-  const a = Buffer.from(scrypt(pw, salt), "hex"), b = Buffer.from(h, "hex");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-};
-const sha = s => crypto.createHash("sha256").update(s).digest("hex");
-const USERNAME_RE = /^[A-Za-z0-9_.-]{3,32}$/;
+// Authentication lives in auth.sqlite; old users/sessions are retained only for
+// explicit migration, never accepted for web login.
+let authentication;
+const accountData = require("./lib/account-data").createAccountData(db, CFG.dataDir);
+const exportingUsers = new Set();
+const uploads = require("./lib/uploads").createUploads(db, CFG.dataDir, {
+  userBytes: +(process.env.PHOTO_USER_BYTES ?? 262144000), totalBytes: +(process.env.PHOTO_TOTAL_BYTES ?? 5368709120), daily: +(process.env.PHOTO_DAILY_LIMIT ?? 60)
+});
 const normName = s => String(s || "").trim().toLowerCase();
-function validPassword(pw){ pw = String(pw || ""); return pw.length >= 8 && pw.length <= 200; }
-
-function createUser(username, password, { mustChange = false } = {}){
-  const name = normName(username);
-  if (!USERNAME_RE.test(name)) throw httpErr(400, "bad_username", "用户名要 3–32 个字母、数字、下划线、点或减号");
-  if (!validPassword(password)) throw httpErr(400, "weak_password", "密码至少 8 位");
-  if (db.prepare("SELECT 1 FROM users WHERE username = ?").get(name)) throw httpErr(409, "taken", "这个用户名已被注册");
-  const id = "u_" + crypto.randomBytes(16).toString("base64url");
-  db.prepare("INSERT INTO users (id, username, pass, created, mustChange) VALUES (?, ?, ?, ?, ?)").run(id, name, hashPass(password), new Date().toISOString(), mustChange ? 1 : 0);
-  return { id, username: name };
-}
-function newSession(uid){
-  const token = crypto.randomBytes(32).toString("base64url");
-  db.prepare("INSERT INTO sessions (token, uid, expires) VALUES (?, ?, ?)").run(sha(token), uid, Date.now() + CFG.sessionDays * 864e5);
-  return token;
-}
-function sessionUser(req){
-  const tok = parseCookies(req.headers.cookie || "").bj_s; if (!tok) return null;
-  const s = db.prepare("SELECT uid, expires FROM sessions WHERE token = ?").get(sha(tok));
-  if (!s || s.expires < Date.now()) return null;
-  return db.prepare("SELECT id, username, created, mustChange FROM users WHERE id = ?").get(s.uid) || null;
-}
-const cookie = (tok, maxAge) => `bj_s=${tok}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${CFG.cookieSecure ? "; Secure" : ""}`;
-function parseCookies(h){ const o = {}; for (const p of h.split(";")) { const i = p.indexOf("="); if (i > 0) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); } return o; }
-
-/* ---------- 限流（登录防暴力破解） ---------- */
-const hits = new Map();
-function limited(key, max, windowMs){
-  const now = Date.now(), arr = (hits.get(key) || []).filter(t => now - t < windowMs);
-  arr.push(now); hits.set(key, arr); return arr.length > max;
-}
-setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.some(t => now - t < 36e5)) hits.delete(k); db.prepare("DELETE FROM sessions WHERE expires < ?").run(now); }, 6e5).unref();
 const clientIP = req => (CFG.trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress || "?";
 
 /* ---------- 工具 ---------- */
@@ -117,28 +92,7 @@ function putDoc(p, uid, data){
 function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] of Object.entries(patch || {})) { if (v && typeof v === "object" && v.__delete__ === true) delete o[k]; else o[k] = v; } return o; }
 
 /* ---------- AI 代理 ---------- */
-async function aiProxy(user, body){
-  if (!CFG.orKey) throw httpErr(503, "sampling_disabled", "服务器没有配置 AI");
-  const day = new Date().toISOString().slice(0, 10);
-  const used = db.prepare("SELECT n FROM ai_usage WHERE uid = ? AND day = ?").get(user.id, day)?.n || 0;
-  if (used >= CFG.aiDaily) throw httpErr(429, "rate_limited", "今天的 AI 次数用完了");
-  db.prepare("INSERT INTO ai_usage (uid, day, n) VALUES (?, ?, 1) ON CONFLICT(uid, day) DO UPDATE SET n = n + 1").run(user.id, day);
-  const turns = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
-  const imgs = (Array.isArray(body.images) ? body.images : []).slice(0, 4).filter(u => typeof u === "string" && /^data:image\/(jpeg|png|webp);base64,/.test(u));
-  const messages = turns.map(t => ({ role: t.role === "assistant" ? "assistant" : "user", content: String(t.content ?? "").slice(0, 60000) }));
-  if (!messages.length) throw httpErr(400, "bad_request");
-  if (imgs.length) { const last = messages[messages.length - 1]; last.content = [{ type: "text", text: last.content }, ...imgs.map(url => ({ type: "image_url", image_url: { url } }))]; }
-  const r = await fetch(CFG.orBase + "/chat/completions", {
-    method: "POST", headers: { "Authorization": "Bearer " + CFG.orKey, "Content-Type": "application/json", "X-Title": "Bojin Rike" },
-    body: JSON.stringify({ model: CFG.orModel, messages, user: user.id }), signal: AbortSignal.timeout(120000),
-  });
-  const j = await r.json().catch(() => null);
-  if (!r.ok || j?.error) {
-    console.warn("openrouter", r.status, j?.error?.message);
-    throw httpErr(r.status === 429 ? 429 : 502, r.status === 429 ? "rate_limited" : (r.status === 400 && imgs.length ? "image_rejected" : "ai_failed"), "AI 服务出错");
-  }
-  return { text: String(j?.choices?.[0]?.message?.content ?? ""), truncated: j?.choices?.[0]?.finish_reason === "length" };
-}
+const aiProxy = require("./lib/ai").createAIProxy(db, CFG);
 
 /* ---------- 静态文件 ---------- */
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
@@ -162,54 +116,40 @@ const SEC_HEADERS = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "s
 async function handle(req, res){
   for (const [k, v] of Object.entries(SEC_HEADERS)) res.setHeader(k, v);
   const url = new URL(req.url, "http://x"), p = url.pathname, m = req.method;
-  const user = sessionUser(req);
+  if (p.startsWith("/api/auth/")) return authentication.handle(req, res);
+  const user = await authentication.sessionUser(req);
   // 改数据的请求必须带自定义头，挡掉跨站表单提交（CSRF）
   if (m !== "GET" && m !== "HEAD" && req.headers["x-bojin"] !== "1") throw httpErr(403, "csrf", "请求来源不对");
 
-  if (p === "/api/health") return send(res, 200, { ok: true });
-  if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: CFG.allowSignup, invite: !!CFG.inviteCode, ai: !!CFG.orKey });
+  if (p === "/api/health") return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
+  if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: !!CFG.orKey });
 
-  if (p === "/api/register" && m === "POST") {
-    if (!CFG.allowSignup) throw httpErr(403, "signup_closed", "暂时不开放注册");
-    if (limited("reg:" + clientIP(req), 5, 36e5)) throw httpErr(429, "rate_limited", "注册太频繁，稍后再试");
-    const b = await readJSON(req, 1e4);
-    if (CFG.inviteCode && b.invite !== CFG.inviteCode) throw httpErr(403, "bad_invite", "邀请码不对");
-    const u = createUser(b.username, b.password);
-    return send(res, 200, { ok: true, user: u }, { "Set-Cookie": cookie(newSession(u.id), CFG.sessionDays * 86400) });
-  }
-  if (p === "/api/login" && m === "POST") {
-    const b = await readJSON(req, 1e4), name = normName(b.username);
-    if (limited("ip:" + clientIP(req), 20, 9e5) || limited("user:" + name, 8, 9e5)) throw httpErr(429, "rate_limited", "尝试次数太多，15 分钟后再试");
-    const row = db.prepare("SELECT id, username, pass, mustChange FROM users WHERE username = ?").get(name);
-    if (!row || !checkPass(String(b.password || ""), row.pass)) throw httpErr(401, "bad_login", "用户名或密码不对");
-    return send(res, 200, { ok: true, user: { id: row.id, username: row.username, mustChange: !!row.mustChange } }, { "Set-Cookie": cookie(newSession(row.id), CFG.sessionDays * 86400) });
-  }
-  if (p === "/api/logout" && m === "POST") {
-    const tok = parseCookies(req.headers.cookie || "").bj_s; if (tok) db.prepare("DELETE FROM sessions WHERE token = ?").run(sha(tok));
-    return send(res, 200, { ok: true }, { "Set-Cookie": cookie("", 0) });
+  if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
+    throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");
   }
 
   if (p.startsWith("/api/")) {
     if (!user) throw httpErr(401, "session_expired", "请先登录");
-    if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, created: user.created, mustChange: !!user.mustChange, ai: !!CFG.orKey, aiModel: CFG.orModel });
-    if (p === "/api/password" && m === "POST") {
-      const b = await readJSON(req, 1e4);
-      if (limited("pw:" + user.id, 8, 9e5)) throw httpErr(429, "rate_limited", "尝试次数太多，稍后再试");
-      const row = db.prepare("SELECT pass FROM users WHERE id = ?").get(user.id);
-      if (!checkPass(String(b.old || ""), row.pass)) throw httpErr(401, "bad_login", "原密码不对");
-      if (!validPassword(b.new)) throw httpErr(400, "weak_password", "新密码至少 8 位");
-      if (normName(b.new) === user.username) throw httpErr(400, "weak_password", "密码不能和用户名一样");
-      db.prepare("UPDATE users SET pass = ?, mustChange = 0 WHERE id = ?").run(hashPass(String(b.new)), user.id);
-      // 改密码后其他设备全部退出，只留当前这次
-      const tok = parseCookies(req.headers.cookie || "").bj_s;
-      db.prepare("DELETE FROM sessions WHERE uid = ? AND token != ?").run(user.id, sha(tok));
-      return send(res, 200, { ok: true });
+    accountData.ensureActive(user.id);
+    if (p === "/api/account/export" && m === "GET") {
+      if (exportingUsers.has(user.id)) throw httpErr(429, "export_busy", "已有导出正在进行");
+      exportingUsers.add(user.id);
+      try {
+        res.writeHead(200, {"Content-Type":"application/x-ndjson", "Content-Disposition":'attachment; filename="lean-ritual-export.ndjson"', "Cache-Control":"no-store"});
+        for await (const chunk of accountData.exportChunks(user)) {
+          if (res.destroyed) break;
+          if (!res.write(chunk)) await new Promise(resolve => {const done=()=>{res.off("drain",done);res.off("close",done);resolve();};res.once("drain",done);res.once("close",done);});
+        }
+        res.end();
+      } finally { exportingUsers.delete(user.id); }
+      return;
     }
+    if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: !!CFG.orKey, aiModel: CFG.orModel });
     if (p === "/api/doc") {
       const dp = ownPath(url.searchParams.get("path"), user, true);
       if (m === "GET") { const d = getDoc(dp); return send(res, 200, { exists: !!d, data: d }); }
-      if (m === "PUT") { const b = await readJSON(req); if (!b || typeof b.data !== "object" || Array.isArray(b.data)) throw httpErr(400, "bad_request"); putDoc(dp, user.id, b.data); return send(res, 200, { ok: true }); }
-      if (m === "PATCH") { const b = await readJSON(req); const old = getDoc(dp); if (!old) throw httpErr(404, "not_found"); putDoc(dp, user.id, mergeDoc(old, b.data)); return send(res, 200, { ok: true }); }
+      if (m === "PUT") { const b = await readJSON(req); accountData.ensureActive(user.id); if (!b || typeof b.data !== "object" || Array.isArray(b.data)) throw httpErr(400, "bad_request"); putDoc(dp, user.id, b.data); return send(res, 200, { ok: true }); }
+      if (m === "PATCH") { const b = await readJSON(req); accountData.ensureActive(user.id); const old = getDoc(dp); if (!old) throw httpErr(404, "not_found"); putDoc(dp, user.id, mergeDoc(old, b.data)); return send(res, 200, { ok: true }); }
       if (m === "DELETE") { db.prepare("DELETE FROM docs WHERE path = ?").run(dp); return send(res, 200, { ok: true }); }
     }
     if (p === "/api/list" && m === "GET") {
@@ -224,12 +164,13 @@ async function handle(req, res){
     if (p === "/api/assets" && m === "POST") {
       const type = String(req.headers["content-type"] || "").split(";")[0].trim();
       if (!/^image\/(jpeg|png|webp|gif|heic|heif)$/.test(type)) throw httpErr(415, "bad_type", "只能传图片");
-      const buf = await readBody(req, 15 * 1024 * 1024);
-      if (!buf.length) throw httpErr(400, "empty");
-      const id = crypto.randomBytes(16).toString("hex");
-      fs.writeFileSync(path.join(CFG.dataDir, "blobs", id), buf);
-      db.prepare("INSERT INTO blobs (id, uid, type, size, created) VALUES (?, ?, ?, ?, ?)").run(id, user.id, type, buf.length, new Date().toISOString());
-      return send(res, 200, { id, url: "/_blob/" + id, sizeBytes: buf.length, contentType: type });
+      const release = uploads.begin(user.id);
+      try {
+        const buf = await readBody(req, 15 * 1024 * 1024);
+        const normalized = await uploads.normalize(buf);
+        accountData.ensureActive(user.id);
+        return send(res, 200, uploads.save(user.id, normalized));
+      } finally { release(); }
     }
     const am = p.match(/^\/api\/assets\/([0-9a-f]{32})$/);
     if (am && m === "DELETE") {
@@ -238,32 +179,24 @@ async function handle(req, res){
       db.prepare("DELETE FROM blobs WHERE id = ?").run(am[1]); fs.rmSync(path.join(CFG.dataDir, "blobs", am[1]), { force: true });
       return send(res, 200, { ok: true });
     }
-    if (p === "/api/ai" && m === "POST") { const b = await readJSON(req, 20e6); return send(res, 200, await aiProxy(user, b)); }
+    if (p === "/api/ai" && m === "POST") { const b = await readJSON(req, 20e6); accountData.ensureActive(user.id); return send(res, 200, await aiProxy(user, b)); }
     throw httpErr(404, "not_found");
   }
 
   const bm = p.match(/^\/_blob\/([0-9a-f]{32})$/);
   if (bm) {
+    if (user) accountData.ensureActive(user.id);
     const b = user && db.prepare("SELECT uid, type, size FROM blobs WHERE id = ?").get(bm[1]);
     if (!b || b.uid !== user.id) { res.writeHead(404); return res.end(); }
-    res.writeHead(200, { "Content-Type": b.type, "Content-Length": b.size, "Cache-Control": "private, max-age=31536000, immutable" });
+    res.writeHead(200, { "Content-Type": b.type, "Content-Length": b.size, "Cache-Control": "private, no-store" });
     return fs.createReadStream(path.join(CFG.dataDir, "blobs", bm[1])).pipe(res);
   }
   if (m !== "GET" && m !== "HEAD") throw httpErr(405, "method");
   return serveStatic(req, res, user);
 }
 
-/* ---------- 命令行：建账号、导入、改密码 ---------- */
-// node server.js create-user <用户名>             （密码从标准输入读，避免留在 shell 历史里）
-// node server.js set-password <用户名>
+/* ---------- 命令行：旧数据导入 ---------- */
 // node server.js import <用户名> <导出目录>        （导入 Claude 页面版导出的记录和照片）
-async function readSecret(prompt){
-  if (!process.stdin.isTTY) { const b = fs.readFileSync(0, "utf8"); return b.split(/\r?\n/)[0]; }
-  process.stdout.write(prompt);
-  return new Promise(res => { let s = ""; process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on("data", ch => {
-    ch = String(ch); if (ch === "\r" || ch === "\n") { process.stdin.setRawMode(false); process.stdin.pause(); process.stdout.write("\n"); res(s); }
-    else if (ch === "\u0003") process.exit(1); else if (ch === "\u007f") s = s.slice(0, -1); else s += ch; }); });
-}
 function importDir(username, dir){
   const u = db.prepare("SELECT id FROM users WHERE username = ?").get(normName(username));
   if (!u) throw new Error("没有这个用户：" + username);
@@ -289,20 +222,35 @@ function importDir(username, dir){
 
 async function cli(args){
   const [cmd, a, b] = args;
-  if (cmd === "create-user") { const pw = await readSecret("设置密码："); const u = createUser(a, pw, { mustChange: process.env.MUST_CHANGE === "1" }); console.log("已创建", u.username, u.id); return true; }
-  if (cmd === "set-password") { const row = db.prepare("SELECT id FROM users WHERE username = ?").get(normName(a)); if (!row) throw new Error("没有这个用户"); const pw = await readSecret("新密码："); if (!validPassword(pw)) throw new Error("密码至少 8 位"); db.prepare("UPDATE users SET pass = ? WHERE id = ?").run(hashPass(pw), row.id); db.prepare("DELETE FROM sessions WHERE uid = ?").run(row.id); console.log("密码已更新"); return true; }
+  if (["create-user", "set-password", "invite", "revoke-invite"].includes(cmd)) throw new Error("Use scripts/auth-admin.js for invitations; use email recovery to reset passwords.");
   if (cmd === "import") { importDir(a, path.resolve(b)); return true; }
   return false;
 }
 
 (async () => {
+  const { createAuth } = require("./lib/auth");
+  const { createMailer } = require("./lib/mail");
+  authentication = await createAuth({dataDir: CFG.dataDir, baseURL: CFG.authBaseURL, secret: CFG.authSecret,
+    cookieSecure: CFG.cookieSecure, clientIP,
+    onDeleteRequested: user => accountData.requestDeletion(user),
+    onDeleteCompleted: user => { authentication.purgeDeletedArtifacts(user.id); accountData.completeDeletion(user.id); },
+    sendEmail: createMailer(process.env, {dataDir: CFG.dataDir, baseURL: CFG.authBaseURL})});
+  // Retry interrupted deletion cleanup only after auth confirms the account is gone.
+  const retryDeletes = () => { for (const {uid} of accountData.pending()) {
+    if (!authentication.isUserPresent(uid)) { try {authentication.purgeDeletedArtifacts(uid);accountData.completeDeletion(uid);} catch {console.error("Account deletion cleanup needs attention");} }
+  }};
+  retryDeletes();setInterval(retryDeletes,60000).unref();
   const args = process.argv.slice(2);
   if (args.length) { try { if (await cli(args)) process.exit(0); } catch (e) { console.error(e.message); process.exit(1); } console.error("不认识的命令：" + args[0]); process.exit(1); }
-  http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     handle(req, res).catch(e => {
-      const status = e.status || 500; if (status >= 500) console.error(e);
+      const status = e.status || 500; if (status >= 500) console.error("request failed", e.code || "server_error");
       if (!res.headersSent) send(res, status, { error: e.code || "server_error", message: status >= 500 && !e.code ? "服务器出错" : e.message });
-      else res.end();
+      else res.destroy();
     });
   }).listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${CFG.port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
-})();
+  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => {
+    server.close(() => { authentication.close(); db.close(); process.exit(0); });
+    setTimeout(() => process.exit(1), 5000).unref();
+  });
+})().catch(e => { console.error("Startup failed:", e.message); process.exitCode = 1; });

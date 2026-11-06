@@ -1,0 +1,12 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),sharp=require('sharp');const {DatabaseSync}=require('node:sqlite');const {createUploads}=require('../lib/uploads');
+function fixture(t,options){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-uploads-'));fs.mkdirSync(path.join(dir,'blobs'));const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE blobs(id TEXT,uid TEXT,type TEXT,size INTEGER,created TEXT)');t.after(()=>{db.close();fs.rmSync(dir,{recursive:true,force:true});});return{db,dir,uploads:createUploads(db,dir,options)};}
+test('uploaded bytes must decode as an image and are normalized before storage',async t=>{const {uploads}=fixture(t);await assert.rejects(uploads.normalize(Buffer.from('<script>alert(1)</script>')),e=>e.status===415);const png=await sharp({create:{width:10,height:10,channels:3,background:'red'}}).png().toBuffer();const output=await uploads.normalize(png);assert.equal((await sharp(output).metadata()).format,'webp');assert.equal((await sharp(output).metadata()).exif,undefined);});
+test('storage quotas and daily/concurrent limits reject excess work without orphan files',t=>{const {uploads,dir,db}=fixture(t,{userBytes:5,totalBytes:8,daily:2});const release=uploads.begin('one');assert.throws(()=>uploads.begin('one'),e=>e.status===429);release();uploads.begin('one')();assert.throws(()=>uploads.begin('one'),e=>e.status===429);uploads.save('one',Buffer.alloc(4));assert.throws(()=>uploads.save('one',Buffer.alloc(2)),e=>e.code==='storage_quota');uploads.save('two',Buffer.alloc(4));assert.throws(()=>uploads.save('three',Buffer.alloc(1)),e=>e.code==='storage_quota');assert.equal(fs.readdirSync(path.join(dir,'blobs')).length,2);assert.equal(db.prepare('SELECT COUNT(*) n FROM blobs').get().n,2);});
+
+test('a partial write failure removes the owned file and rolls back quota metadata',t=>{
+ const {uploads,dir,db}=fixture(t),original=fs.writeFileSync;
+ t.mock.method(fs,'writeFileSync',(target,data,...rest)=>{if(typeof target==='number'){original(target,Buffer.from('partial'));throw Object.assign(new Error('disk full'),{code:'ENOSPC'});}return original(target,data,...rest);});
+ assert.throws(()=>uploads.save('one',Buffer.from('private photo')),e=>e.code==='ENOSPC');
+ assert.equal(fs.readdirSync(path.join(dir,'blobs')).length,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM blobs').get().n,0);
+});

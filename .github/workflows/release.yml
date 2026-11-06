@@ -1,0 +1,102 @@
+name: Test and deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lean-ritual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Package tested runtime
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: python3 ops/package-release.py "$RUNNER_TEMP/lean-ritual.tar.gz" "$RELEASE_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/lean-ritual.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://leanritual.app
+    concurrency:
+      group: lean-ritual-production
+      cancel-in-progress: false
+    steps:
+      - name: Ignore obsolete runs
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest=$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$latest" == "$RELEASE_SHA" ]]; then
+            echo 'deploy=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'deploy=false' >> "$GITHUB_OUTPUT"
+            echo 'Skipping an obsolete commit; run the latest main revision.'
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          name: runtime-${{ github.sha }}
+      - name: Deploy through restricted SSH key
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'Set DEPLOY_HOST'; exit 1; }
+          test -n "$DEPLOY_KEY" && test -n "$DEPLOY_KNOWN_HOSTS"
+          key_dir=$(mktemp -d "$RUNNER_TEMP/lean-ritual-ssh.XXXXXX")
+          trap 'rm -rf "$key_dir"' EXIT
+          chmod 700 "$key_dir"
+          printf '%s\n' "$DEPLOY_KEY" > "$key_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$key_dir/known_hosts"
+          chmod 600 "$key_dir/key" "$key_dir/known_hosts"
+          ssh -T -i "$key_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "bojin-deploy@$DEPLOY_HOST" deploy < lean-ritual.tar.gz
+      - name: Verify public revision
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          curl --fail --silent --show-error --max-time 30 https://leanritual.app/api/health > health.json
+          python3 -c 'import json,os; h=json.load(open("health.json")); assert h.get("ok") is True and h.get("revision")==os.environ["RELEASE_SHA"], "Public revision does not match"'

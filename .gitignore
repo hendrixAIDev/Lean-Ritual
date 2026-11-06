@@ -4,3 +4,17 @@ node_modules/
 
 # build.js 生成
 public/index.html
+
+# Copied from locked heic2any dependency by build.js
+public/vendor/
+.release.json
+__pycache__/
+*.pyc
+*.tar.gz
+backups/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+.env.*
+!.env.example

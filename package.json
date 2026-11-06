@@ -3,9 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "description": "薄肌日课 · 独立部署版",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.16"
+  },
   "scripts": {
     "build": "node build.js",
-    "start": "node --disable-warning=ExperimentalWarning server.js"
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "better-auth": "1.7.15",
+    "heic2any": "0.0.4",
+    "nodemailer": "10.3.1",
+    "sharp": "0.35.5"
   }
 }

@@ -1,4 +1,4 @@
-// 独立部署版的"平台层"：给页面提供和 Claude 页面版同样的 window.claude.use(...) 接口，
+// 独立部署版的"平台层"：给页面提供和 Claude 页面版同样的 window.ritual.use(...) 接口，
 // 背后改成调用自己服务器的 /api。页面主体代码两边共用一份。
 (function () {
   "use strict";
@@ -11,7 +11,7 @@
         body: rawType ? body : body !== undefined ? JSON.stringify(body) : undefined });
     } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; throw { code: "network", message: "连不上服务器" }; }
     let j = null; try { j = await r.json(); } catch {}
-    if (r.status === 401 && !/\/api\/(login|password)/.test(url)) { location.href = "/login.html"; throw { code: "session_expired" }; }
+    if (r.status === 401 && !url.startsWith("/api/auth/")) { location.href = "/login.html"; throw { code: "session_expired" }; }
     if (!r.ok) throw { code: (j && j.error) || "http_" + r.status, message: (j && j.message) || "" };
     return j;
   }
@@ -75,7 +75,7 @@
     isOwner: () => false, canEdit: () => false, can: () => null,
   };
 
-  window.claude = {
+  window.ritual = {
     hosted: true,
     async use(name) {
       const m = await meP;
@@ -86,7 +86,8 @@
       if (name === "sample") return m.ai ? sample : null;
       return null;   // comments 等 Claude 专属能力在独立部署版里没有
     },
-    changePassword: (oldPw, newPw) => api("POST", "/api/password", { old: oldPw, new: newPw }),
-    logout: () => api("POST", "/api/logout"),
+    changePassword: (oldPw, newPw) => api("POST", "/api/auth/change-password", { currentPassword: oldPw, newPassword: newPw, revokeOtherSessions: true }),
+    deleteAccount: password => api("POST", "/api/auth/delete-user", {password}),
+    logout: () => api("POST", "/api/auth/sign-out", {}),
   };
 })();

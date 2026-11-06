@@ -27,46 +27,58 @@ button.primary:disabled{opacity:.6}
 </head>
 <body>
 <main>
-  <h1>薄肌日课</h1>
+  <h1>Lean Ritual · 薄肌日课</h1>
   <p>每天的训练、饮食和体重，一个地方记下来。</p>
-  <form class="card" id="f" autocomplete="on">
-    <div class="tabs" id="tabs"><button type="button" data-m="login" class="on">登录</button><button type="button" data-m="register">注册</button></div>
-    <label>用户名<input id="u" name="username" autocomplete="username" required minlength="3" maxlength="32" autocapitalize="off" spellcheck="false"></label>
-    <label>密码<input id="p" name="password" type="password" autocomplete="current-password" required minlength="8"></label>
-    <label id="p2w" hidden>再输一次密码<input id="p2" type="password" autocomplete="new-password"></label>
+  <form class="card" id="f">
+    <div class="tabs" id="tabs"><button type="button" data-m="login">登录</button><button type="button" data-m="register">凭邀请注册</button></div>
+    <label id="nw" hidden>称呼<input id="n" maxlength="80" autocomplete="nickname"></label>
+    <label id="ew">邮箱<input id="e" type="email" autocomplete="email" required autocapitalize="off"></label>
+    <label id="pw">密码<input id="p" type="password" autocomplete="current-password" required minlength="12" maxlength="200"></label>
     <label id="iw" hidden>邀请码<input id="i" autocomplete="off"></label>
-    <p class="err" id="err" role="alert"></p>
-    <button class="primary" id="go" type="submit">登录</button>
-    <p class="hint" id="hint" hidden>用户名可用字母、数字、下划线、点或减号，3–32 位；密码至少 8 位。</p>
+    <p class="err" id="err" role="status" aria-live="polite"></p>
+    <button class="primary" id="go">登录</button>
+    <button type="button" id="forgot">忘记密码</button>
+    <button type="button" id="resend">重新发送验证邮件</button>
+    <p class="hint">仅受邀邮箱可以注册。密码至少 12 位；完成邮箱验证后才能登录。<a href="/privacy.html">隐私说明</a></p>
   </form>
 </main>
 <script>
-(async function(){
-  const $ = s => document.querySelector(s);
-  let mode = "login", cfg = {allowSignup:true, invite:false};
-  try { const r = await fetch("/api/me", {credentials:"same-origin"}); if (r.ok) { location.replace("/"); return; } } catch {}
-  try { cfg = await (await fetch("/api/config")).json(); } catch {}
-  if (!cfg.allowSignup) $("#tabs").hidden = true;
-  const setMode = m => {
-    mode = m; document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.m === m));
-    const reg = m === "register";
-    $("#p2w").hidden = !reg; $("#iw").hidden = !(reg && cfg.invite); $("#hint").hidden = !reg;
-    $("#p").autocomplete = reg ? "new-password" : "current-password"; $("#go").textContent = reg ? "注册并登录" : "登录"; $("#err").textContent = "";
+(function(){
+  const $ = s => document.querySelector(s), params = new URLSearchParams(location.search);
+  let mode = params.has("token") ? "reset" : params.has("invite") ? "register" : "login";
+  if(params.has("invite")) $("#i").value=params.get("invite");
+  if(params.has("email")) $("#e").value=params.get("email");
+  const labels={login:"登录",register:"注册并发送验证邮件",reset:"设置新密码",forgot:"发送密码重置邮件",resend:"发送验证邮件"};
+  function setMode(m){
+    mode=m; $("#nw").hidden=m!=="register"; $("#iw").hidden=m!=="register";
+    $("#pw").hidden=["forgot","resend"].includes(m); $("#p").required=!$("#pw").hidden;
+    $("#ew").hidden=m==="reset"; $("#e").required=m!=="reset";
+    $("#p").autocomplete=m==="login"?"current-password":"new-password";
+    $("#go").textContent=labels[m]; $("#err").textContent="";
+    document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.m===m));
+  }
+  $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
+  $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
+  setMode(mode);
+  if(params.has("error")) $("#err").textContent="链接无效或已过期，请重新发送邮件。";
+  $("#f").onsubmit=async e=>{
+    e.preventDefault(); $("#go").disabled=true; $("#err").textContent="";
+    const email=$("#e").value.trim(), password=$("#p").value;
+    const routes={login:"sign-in/email",register:"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
+    let body={email,password};
+    if(mode==="register")body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1"};
+    if(mode==="forgot")body={email,redirectTo:"/login.html"};
+    if(mode==="reset")body={token:params.get("token"),newPassword:password};
+    if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};
+    try{
+      const r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok)throw Error(j.message||"请求失败，请稍后再试。");
+      if(mode==="login"){location.replace("/");return}
+      if(mode==="reset"){history.replaceState(null,"","/login.html");setMode("login");$("#err").textContent="密码已更新，请重新登录。"}
+      else $("#err").textContent=mode==="register"?"请查收验证邮件，验证后再登录。":"如果邮箱符合条件，邮件会发送到你的邮箱。请检查垃圾邮件。";
+    }catch(err){$("#err").textContent=err.message||"连不上服务器。"}finally{$("#go").disabled=false}
   };
-  $("#tabs").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setMode(b.dataset.m); });
-  $("#f").addEventListener("submit", async e => {
-    e.preventDefault(); $("#err").textContent = "";
-    const body = {username:$("#u").value.trim(), password:$("#p").value};
-    if (mode === "register") { if ($("#p").value !== $("#p2").value) { $("#err").textContent = "两次输入的密码不一样"; return; } body.invite = $("#i").value.trim(); }
-    $("#go").disabled = true;
-    try {
-      const r = await fetch(mode === "register" ? "/api/register" : "/api/login", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json","X-Bojin":"1"}, body:JSON.stringify(body)});
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { $("#err").textContent = j.message || "没成功，稍后再试"; return; }
-      location.replace("/");
-    } catch { $("#err").textContent = "连不上服务器"; }
-    finally { $("#go").disabled = false; }
-  });
 })();
 </script>
 </body>

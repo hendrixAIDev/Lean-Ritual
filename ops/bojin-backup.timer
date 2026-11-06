@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily Lean Ritual backup (brief maintenance window)
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+[Install]
+WantedBy=timers.target
