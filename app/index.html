@@ -2,6 +2,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
 <style>
+[hidden]{display:none!important}
 /* 布局：手机优先的单栏训练本，底部五个标签；数字用窄体，像杠铃片上的刻字 */
 :root{
   --bg:#EEF2F0; --surface:#FFFFFF; --sunk:#E3E9E6; --ink:#15201C; --muted:#5B6964; --line:#D3DBD7;
@@ -551,6 +552,7 @@ const TABS = [["today","今天"],["food","饮食"],["log","记录"],["fb","反�
 function render(){
   const app = $("#app"), tabs = $("#tabs");
   if (!S.ready) return;
+  if (S.loadError) { tabs.hidden = true; app.innerHTML = banner(); return; }
   if (!S.profile || S.editing) { tabs.hidden = true; app.innerHTML = banner() + viewSetup(); return; }
   tabs.hidden = false;
   tabs.innerHTML = `<div class="in">${TABS.map(([k,l]) => `<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k}">${ICON[k]}<span>${l}</span></button>`).join("")}</div>`;
@@ -558,7 +560,7 @@ function render(){
   app.innerHTML = banner() + v();
 }
 function banner(){
-  if (S.loadError) return `<div class="banner" style="margin-bottom:10px">读取云端数据时出错了，刷新页面再试一次。</div>`;
+  if (S.loadError) return `<div class="banner" style="margin-bottom:10px">暂时无法读取账号数据。读取成功前不能新建或修改档案。<button type="button" data-act="reload-data">重新加载</button></div>`;
   if (S.noId) return `<div class="banner" style="margin-bottom:10px">登录已过期，请重新登录。</div>`;
   if (!S.cloud) return `<div class="banner" style="margin-bottom:10px">连不上服务器，请检查网络后刷新。</div>`;
   return "";
@@ -626,6 +628,7 @@ function profileDiff(a, b){
   return Object.keys(lbl).filter(k => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null)).map(k => `${lbl[k]}：${fmt(k, a[k])} → ${fmt(k, b[k])}`);
 }
 async function submitSetup(form){
+  if (S.loadError) { render(); return; }
   const fd = new FormData(form);
   const g = k => fd.get(k), all = k => fd.getAll(k);
   const req = {age:g("age"), height:g("height"), weight:g("weight")};
@@ -1621,6 +1624,7 @@ document.addEventListener("click", async ev => {
   if (act !== "del-meal" && act !== "del-more") S.confirmDel = null;
   if (act !== "ex-del") S.exDel = null;
   switch (act) {
+    case "reload-data": location.reload(); break;
     case "tab": S.ed = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
     case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
     case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;

@@ -47,3 +47,15 @@ test('shim sends AI requests to same-origin backend without provider credentials
   assert.equal(calls[1].options.credentials,'same-origin');
   assert.equal(calls[1].options.headers.Authorization,undefined);
 });
+
+test('failed cloud read hides onboarding and blocks profile submission', async () => {
+  const {ctx,app} = context();
+  vm.runInContext(script.split('/* ============ 启动 ============ */')[0],ctx);
+  vm.runInContext('S.store={get:async()=>{throw new Error("simulated read failure")}}; S.cloud=true',ctx);
+  await vm.runInContext('loadAll()',ctx);
+  vm.runInContext('S.ready=true; render()',ctx);
+  assert.match(app.innerHTML,/重新加载/);
+  assert.doesNotMatch(app.innerHTML,/<form|先花一分钟建档/);
+  // FormData is deliberately absent: the failure guard must return before reading a form.
+  await vm.runInContext('submitSetup(null)',ctx);
+});
