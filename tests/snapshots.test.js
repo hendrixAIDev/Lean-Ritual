@@ -20,3 +20,27 @@ test('pre-auth migration rollback restores legacy identity and excludes new auth
 });
 
 test('backup containment check resolves symlinked parent paths',async t=>{const {root,data}=fixture(t),alias=path.join(root,'alias');fs.symlinkSync(data,alias,'dir');await assert.rejects(createSnapshot(data,path.join(alias,'backup')),/outside DATA_DIR/);assert.equal(fs.existsSync(path.join(data,'backup')),false);});
+test('WAL backups are normalized and verification never adds sidecars',async t=>{
+ const {root,data}=fixture(t),snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);
+ const file=path.join(snapshot,'bojin.db'),db=new DatabaseSync(file);
+ assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode,'delete');db.close();
+ const before=fs.readdirSync(snapshot);verifySnapshot(snapshot);assert.deepEqual(fs.readdirSync(snapshot),before);fs.chmodSync(snapshot,0o755);fs.chmodSync(path.join(snapshot,'blobs'),0o755);
+});
+for(const legacy of [false,true])test('read-only snapshot verifies and restores (legacy='+legacy+')',{skip:process.getuid?.()===0},async t=>{
+ const {root,data}=fixture(t),snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);
+ if(legacy){const file=path.join(snapshot,'bojin.db'),db=new DatabaseSync(file);db.exec('PRAGMA journal_mode=WAL');db.close();const manifest=JSON.parse(fs.readFileSync(path.join(snapshot,'manifest.json')));const item=manifest.files.find(f=>f.name==='bojin.db');item.sha256=require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex');item.size=fs.statSync(file).size;fs.writeFileSync(path.join(snapshot,'manifest.json'),JSON.stringify(manifest));}
+ const before=fs.readdirSync(snapshot);
+ for(const name of before)if(name!=='blobs')fs.chmodSync(path.join(snapshot,name),0o444);
+ fs.chmodSync(path.join(snapshot,'blobs','a'.repeat(32)),0o444);fs.chmodSync(path.join(snapshot,'blobs'),0o555);fs.chmodSync(snapshot,0o555);
+
+ verifySnapshot(snapshot);restoreSnapshot(snapshot,path.join(root,'restore'),{version:1,users:[]});assert.deepEqual(fs.readdirSync(snapshot),before);fs.chmodSync(snapshot,0o755);fs.chmodSync(path.join(snapshot,'blobs'),0o755);
+});
+test('failed replay rolls back rows and restore can retry',async t=>{
+ const {root,data}=fixture(t);const db=new DatabaseSync(path.join(data,'bojin.db'));db.exec("ALTER TABLE docs ADD COLUMN uid TEXT; ALTER TABLE blobs ADD COLUMN uid TEXT; UPDATE docs SET uid='u_existing'; CREATE TRIGGER fail_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT,'injected'); END");db.close();
+ const ledger={version:1,users:[{uid:'u_existing',requested:'today'}]};
+ const {applyLedger}=require('../lib/deletion-ledger');assert.throws(()=>applyLedger(data,ledger),/injected/);
+ const check=new DatabaseSync(path.join(data,'bojin.db'));assert.equal(check.prepare('SELECT count(*) n FROM docs').get().n,1);check.close();
+ const snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);const target=path.join(root,'restore');
+ assert.throws(()=>restoreSnapshot(snapshot,target,ledger),/injected/);assert.deepEqual(fs.readdirSync(target),[]);
+ restoreSnapshot(snapshot,target,{version:1,users:[]});
+});
