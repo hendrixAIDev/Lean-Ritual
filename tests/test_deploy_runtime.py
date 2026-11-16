@@ -92,12 +92,18 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 
 class BackupServiceRuntimeTest(unittest.TestCase):
-    def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False):
+    def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False,
+                          non_root_paths=None):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
         lock_state = root / "lock.state"
-        lock_file = root / "maintenance.lock"
+        lock_dir = root / "run-bojin"
+        lock_file = lock_dir / "maintenance.lock"
+        legacy_lock_dir = root / "run-lock"
+        legacy_lock_dir.mkdir(exist_ok=True)
+        legacy_lock_file = legacy_lock_dir / "bojin-maintenance.lock"
+        non_root_json = json.dumps([str(p) for p in (non_root_paths or [])])
         data_dir = root / "data"
         backup_root = root / "backups"
         offsite_dir = root / "offsite"
@@ -121,14 +127,47 @@ class BackupServiceRuntimeTest(unittest.TestCase):
             target.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + textwrap.dedent(body))
             target.chmod(0o755)
 
+        real_py = shutil.which("python3")
+        real_install = shutil.which("install") or "/usr/bin/install"
+        write_stub("install", f"""
+            echo "install:$*" >> "{events}"
+            args=()
+            while (($#)); do
+              if [[ "$1" == "-o" || "$1" == "-g" ]]; then
+                shift 2
+              else
+                args+=("$1")
+                shift
+              fi
+            done
+            exec "{real_install}" "${{args[@]}}"
+        """)
+        stat_stub = bindir / "stat"
+        stat_stub.write_text(
+            f"#!{real_py}\n"
+            "import json, os, sys\n"
+            f"NON_ROOT = set({non_root_json!r} and json.loads({non_root_json!r}))\n"
+            "args = sys.argv[1:]\n"
+            "if args[:2] == ['-c', '%u']:\n"
+            "    target = args[-1]\n"
+            "    os.lstat(target)\n"
+            "    print(1001 if target in NON_ROOT else 0)\n"
+            "    sys.exit(0)\n"
+            "sys.exit(1)\n"
+        )
+        stat_stub.chmod(0o755)
+
         write_stub("flock", f"""
             if [[ "${{1:-}}" == "-x" ]]; then
               echo "locked" > "{lock_state}"
-              echo "flock:lock" >> "{events}"
+              echo "flock:lock:${{2:-}}" >> "{events}"
             elif [[ "${{1:-}}" == "-u" ]]; then
               echo "unlocked" > "{lock_state}"
-              echo "flock:unlock" >> "{events}"
+              echo "flock:unlock:${{2:-}}" >> "{events}"
             fi
+        """)
+        write_stub("logger", f"""
+            echo "logger:$*" >> "{events}"
         """)
         start_exit = "exit 1" if fail_start else ":"
         write_stub("systemctl", f"""
@@ -156,12 +195,16 @@ class BackupServiceRuntimeTest(unittest.TestCase):
             else
               fd9="closed"
             fi
+            if ( : >&8 ) 2>/dev/null; then
+              fd8="open"
+            else
+              fd8="closed"
+            fi
             state=$(cat "{lock_state}" 2>/dev/null || echo "none")
-            echo "rsync:lock=$state:fd9=$fd9:$*" >> "{events}"
+            echo "rsync:lock=$state:fd9=$fd9:fd8=$fd8:$*" >> "{events}"
         """)
 
         if free_bytes is not None:
-            real_py = shutil.which("python3")
             write_stub("python3", f"""
                 if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
                 exec "{real_py}" -c '
@@ -176,7 +219,9 @@ exec(compile(code, "<stdin>", "exec"))
             """)
 
         script_text = (ROOT / "ops/backup-service.sh").read_text()
-        script_text = script_text.replace("/run/lock/bojin-maintenance.lock", str(lock_file))
+        script_text = script_text.replace("/run/bojin/maintenance.lock", str(lock_file))
+        script_text = script_text.replace("/run/bojin", str(lock_dir))
+        script_text = script_text.replace("/run/lock/bojin-maintenance.lock", str(legacy_lock_file))
         script_text = script_text.replace("/var/backups/bojin-deploy", str(app_dir / "deploy-backups"))
         script_text = script_text.replace("/opt/bojin-releases", str(app_dir / "releases"))
         script_text = script_text.replace("/opt/bojin-previous", str(app_dir / "previous"))
@@ -206,7 +251,7 @@ exec(compile(code, "<stdin>", "exec"))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rsync_lines = [line for line in log if line.startswith("rsync:")]
                 self.assertEqual(len(rsync_lines), 1)
-                self.assertIn("rsync:lock=unlocked:fd9=closed:", rsync_lines[0])
+                self.assertIn("rsync:lock=unlocked:fd9=closed:fd8=closed:", rsync_lines[0])
                 self.assertIn("--timeout=120", rsync_lines[0])
                 self.assertIn("BatchMode=yes", rsync_lines[0])
                 self.assertIn("ConnectTimeout=15", rsync_lines[0])
@@ -263,6 +308,78 @@ exec(compile(code, "<stdin>", "exec"))
                 self.assertIn("systemctl:start bojin.service", log)
                 leftovers = [p.name for p in backup_root.iterdir() if p.name.startswith(".run-")]
                 self.assertEqual(leftovers, [])
+
+    def test_backup_lock_path_creation_symlink_ownership_transition_and_eacces(self):
+        script_src = (ROOT / "ops/backup-service.sh").read_text()
+        self.assertIn("/run/bojin/maintenance.lock", script_src)
+        self.assertIn("/run/lock/bojin-maintenance.lock", script_src)
+
+        # 1. Missing /run/bojin directory is created via install -d -o root -g root -m 0755,
+        #    and both locks are acquired in order (new fd 9 first, then legacy fd 8) and both released before rsync.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            result, log, _ = self.run_backup_script(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            install_lines = [line for line in log if line.startswith("install:")]
+            self.assertTrue(any("-d -o root -g root -m 0755" in line for line in install_lines), install_lines)
+            self.assertTrue((root / "run-bojin/maintenance.lock").is_file())
+            self.assertTrue((root / "run-lock/bojin-maintenance.lock").is_file())
+            flock_locks = [line for line in log if line.startswith("flock:lock:")]
+            self.assertEqual(flock_locks, ["flock:lock:9", "flock:lock:8"])
+            flock_unlocks = [line for line in log if line.startswith("flock:unlock:")]
+            self.assertEqual(set(flock_unlocks), {"flock:unlock:9", "flock:unlock:8"})
+
+        # 2. Symlinked lock dir or symlinked lock file is refused before stopping service.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            real_dir = root / "real-dir"
+            real_dir.mkdir(mode=0o700)
+            (root / "run-bojin").symlink_to(real_dir)
+            result, log, _ = self.run_backup_script(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlink", result.stderr.lower())
+            self.assertNotIn("systemctl:stop bojin.service", log)
+            self.assertEqual(real_dir.stat().st_mode & 0o777, 0o700)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "run-bojin").mkdir(mode=0o755)
+            target_file = root / "target-file"
+            target_file.write_text("keep")
+            (root / "run-bojin/maintenance.lock").symlink_to(target_file)
+            result, log, _ = self.run_backup_script(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("symlink", result.stderr.lower())
+            self.assertNotIn("systemctl:stop bojin.service", log)
+            self.assertEqual(target_file.read_text(), "keep")
+
+        # 3. Non-root lock dir or non-root lock file is refused.
+        for bad_rel in ("run-bojin", "run-bojin/maintenance.lock"):
+            with self.subTest(non_root=bad_rel), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                (root / "run-bojin").mkdir(mode=0o755)
+                if bad_rel.endswith(".lock"):
+                    (root / bad_rel).write_text("")
+                result, log, _ = self.run_backup_script(root, non_root_paths=[root / bad_rel])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("systemctl:stop bojin.service", log)
+
+        # 4. Old-path EACCES logs a warning and continues holding only the new lock (fd 9).
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            legacy_file = legacy_dir / "bojin-maintenance.lock"
+            legacy_file.write_text("")
+            legacy_file.chmod(0o000)
+            try:
+                result, log, _ = self.run_backup_script(root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([line for line in log if line.startswith("flock:lock:")], ["flock:lock:9"])
+                self.assertIn("eacces", result.stderr.lower())
+                self.assertTrue(any(line.startswith("logger:") and "eacces" in line.lower() for line in log), log)
+            finally:
+                legacy_file.chmod(0o600)
 
 
 if __name__ == "__main__":

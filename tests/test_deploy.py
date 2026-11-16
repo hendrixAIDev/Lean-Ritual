@@ -243,11 +243,15 @@ class DeploymentTests(unittest.TestCase):
         old = releases / "old-release"
         current = root / "current"
         env_file = root / "environment"
-        lock_file = root / "maintenance.lock"
+        lock_dir = root / "run-bojin"
+        lock_file = lock_dir / "maintenance.lock"
+        legacy_lock_dir = root / "run-lock"
+        legacy_lock_file = legacy_lock_dir / "bojin-maintenance.lock"
         stopped_flag = root / "allow-deploy-when-stopped"
         alert_bin = root / "bojin-alert"
         alert_log = root / "alert.log"
         old.mkdir(parents=True, exist_ok=True); data.mkdir(exist_ok=True); backups.mkdir(exist_ok=True)
+        legacy_lock_dir.mkdir(exist_ok=True)
         if not current.is_symlink():
             current.symlink_to(old)
         env_file.write_text("PORT=8080\n")
@@ -275,9 +279,17 @@ class DeploymentTests(unittest.TestCase):
             events.append("unpack")
             return orig_unpack(stream, destination)
 
+        orig_fstat = os.fstat
         def tracked_flock(fd, op):
-            lock_held[0] = True
-            events.append("flock")
+            raw_fd = fd if isinstance(fd, int) else fd.fileno()
+            if op == deploy.fcntl.LOCK_EX:
+                lock_held[0] = True
+                events.append("flock")
+                st = orig_fstat(raw_fd)
+                if lock_file.exists() and not lock_file.is_symlink() and st.st_ino == orig_os_lstat(lock_file).st_ino:
+                    events.append("flock:new")
+                elif legacy_lock_file.exists() and not legacy_lock_file.is_symlink() and st.st_ino == orig_os_lstat(legacy_lock_file).st_ino:
+                    events.append("flock:legacy")
 
         def fake_check_output(cmd, **kwargs):
             if cmd[:2] == ["/usr/bin/node", "-p"]:
@@ -292,6 +304,11 @@ class DeploymentTests(unittest.TestCase):
         def fake_run(cmd, **kwargs):
             if cmd and Path(cmd[0]) == alert_bin:
                 return orig_run(cmd, **kwargs)
+            if list(cmd[:7]) == ["/usr/bin/install", "-d", "-o", "root", "-g", "root", "-m"]:
+                events.append("install_lock_dir:" + " ".join(cmd))
+                target_dir = Path(cmd[-1])
+                target_dir.mkdir(mode=int(cmd[7], 8), parents=True, exist_ok=True)
+                return subprocess.CompletedProcess(cmd, 0)
             if cmd[:2] in (["/usr/bin/systemctl", "stop"], ["/usr/bin/systemctl", "start"]):
                 events.append(cmd[1])
             return subprocess.CompletedProcess(cmd, 0)
@@ -319,10 +336,23 @@ class DeploymentTests(unittest.TestCase):
         orig_os_lstat = os.lstat
         def fake_os_lstat(path, *args, **kwargs):
             st = orig_os_lstat(path, *args, **kwargs)
-            if Path(path) == stopped_flag:
+            p = Path(path)
+            if p == stopped_flag:
                 flag_lstat_calls[0] += 1
                 return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
                                        stopped_flag_uid, st.st_gid, st.st_size,
+                                       st.st_atime, st.st_mtime, st.st_ctime))
+            if p in (lock_dir, lock_file):
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
+                                       0, st.st_gid, st.st_size,
+                                       st.st_atime, st.st_mtime, st.st_ctime))
+            return st
+
+        def fake_os_fstat(fd):
+            st = orig_fstat(fd)
+            if lock_file.exists() and not lock_file.is_symlink() and st.st_ino == orig_os_lstat(lock_file).st_ino:
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
+                                       0, st.st_gid, st.st_size,
                                        st.st_atime, st.st_mtime, st.st_ctime))
             return st
 
@@ -341,9 +371,12 @@ class DeploymentTests(unittest.TestCase):
                               ("BACKUPS", backups), ("LOCK", lock_file), ("ENV_FILE", env_file),
                               ("ALERT", alert_bin), ("STOPPED_DEPLOY_FLAG", stopped_flag)]:
                 stack.enter_context(patch.object(deploy, attr, val))
+            if hasattr(deploy, "LEGACY_LOCK"):
+                stack.enter_context(patch.object(deploy, "LEGACY_LOCK", legacy_lock_file))
             stack.enter_context(patch.object(deploy, "unpack_release", side_effect=tracked_unpack))
             stack.enter_context(patch.object(deploy, "snapshot", side_effect=fake_snapshot))
             stack.enter_context(patch("os.lstat", side_effect=fake_os_lstat))
+            stack.enter_context(patch("os.fstat", side_effect=fake_os_fstat))
             stack.enter_context(patch.object(Path, "unlink", tracked_unlink))
             stack.enter_context(patch("syslog.syslog", side_effect=fake_syslog))
             stack.enter_context(patch("os.geteuid", return_value=0))
@@ -451,6 +484,112 @@ class DeploymentTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         for flag in ("--retry 3", "--retry-delay 2", "--retry-all-errors"):
             self.assertIn(flag, workflow)
+
+    def test_maintenance_lock_path_validation_transition_and_eacces(self):
+        # 1. Production paths use /run/bojin/maintenance.lock + transition /run/lock/bojin-maintenance.lock.
+        self.assertEqual(deploy.LOCK, Path("/run/bojin/maintenance.lock"))
+        self.assertEqual(deploy.LEGACY_LOCK, Path("/run/lock/bojin-maintenance.lock"))
+        auto_deploy = (ROOT / "ops/install-auto-deploy.py").read_text()
+        self.assertIn("maintenance_lock()", auto_deploy)
+        self.assertIn("bojin-tmpfiles.conf", auto_deploy)
+
+        # 2. Missing lock directory is created defensively via install -d -o root -g root -m 0755,
+        #    and both locks are acquired in exact order: new first, then legacy.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            events, _, _, _, _, _, _, _ = self.run_mock_deploy(root)
+            install_events = [e for e in events if e.startswith("install_lock_dir:")]
+            self.assertEqual(len(install_events), 1)
+            self.assertIn("-o root -g root -m 0755", install_events[0])
+            flock_order = [e for e in events if e in ("flock:new", "flock:legacy")]
+            self.assertEqual(flock_order, ["flock:new", "flock:legacy"])
+
+        # 3. Symlinked lock directory (pointing to real dir or dangling) is refused without mutating target.
+        for dangling in (False, True):
+            with self.subTest(symlink_dir_dangling=dangling), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                target = root / "real-target"
+                if not dangling:
+                    target.mkdir(mode=0o700)
+                (root / "run-bojin").symlink_to(target)
+                with self.assertRaisesRegex(ValueError, "symlink|lock"):
+                    self.run_mock_deploy(root)
+                if not dangling:
+                    self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+                    self.assertEqual(list(target.iterdir()), [])
+
+        # 4. Symlinked lock file (pointing to real file or dangling) is refused without touching target.
+        for dangling in (False, True):
+            with self.subTest(symlink_file_dangling=dangling), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                (root / "run-bojin").mkdir(mode=0o755)
+                target = root / "target-file"
+                if not dangling:
+                    target.write_text("untouched")
+                (root / "run-bojin/maintenance.lock").symlink_to(target)
+                with self.assertRaisesRegex(ValueError, "symlink|lock"):
+                    self.run_mock_deploy(root)
+                if not dangling:
+                    self.assertEqual(target.read_text(), "untouched")
+
+        # 5. Non-root lock directory and non-root lock file are refused.
+        for bad_kind in ("dir", "file"):
+            with self.subTest(non_root=bad_kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                lock_dir = root / "run-bojin"
+                lock_dir.mkdir(mode=0o755)
+                lock_file = lock_dir / "maintenance.lock"
+                legacy_dir = root / "run-lock"
+                legacy_dir.mkdir(mode=0o755)
+                legacy_file = legacy_dir / "bojin-maintenance.lock"
+                if bad_kind == "file":
+                    lock_file.write_text("")
+                orig_lstat = os.lstat
+                orig_fstat = os.fstat
+
+                def custom_lstat(path, *a, **kw):
+                    st = orig_lstat(path, *a, **kw)
+                    p = Path(path)
+                    uid = 1001 if ((bad_kind == "dir" and p == lock_dir) or (bad_kind == "file" and p == lock_file)) else (0 if p in (lock_dir, lock_file) else st.st_uid)
+                    return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+
+                def custom_fstat(fd):
+                    st = orig_fstat(fd)
+                    uid = 1001 if bad_kind == "file" else 0
+                    return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+
+                with patch.object(deploy, "LOCK", lock_file), patch.object(deploy, "LEGACY_LOCK", legacy_file), \
+                     patch("os.lstat", side_effect=custom_lstat), patch("os.fstat", side_effect=custom_fstat):
+                    with self.assertRaisesRegex(ValueError, "non-root|unsafe|lock"):
+                        with deploy.maintenance_lock():
+                            pass
+
+        # 6. Old-path EACCES (fs.protected_regular=2) logs a warning and continues holding the new lock,
+        #    while symlink on old path still fails closed.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            legacy_file = legacy_dir / "bojin-maintenance.lock"
+            legacy_file.write_text("")
+            legacy_file.chmod(0o000)
+            try:
+                events, _, _, current, old, _, syslogs, _ = self.run_mock_deploy(root)
+                self.assertNotEqual(current.resolve(), old)
+                self.assertEqual([e for e in events if e in ("flock:new", "flock:legacy")], ["flock:new"])
+                self.assertTrue(any("EACCES" in m or "legacy" in m.lower() for m in syslogs), syslogs)
+            finally:
+                legacy_file.chmod(0o600)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            target = root / "real-legacy"
+            target.write_text("")
+            (legacy_dir / "bojin-maintenance.lock").symlink_to(target)
+            with self.assertRaises((OSError, ValueError)):
+                self.run_mock_deploy(root)
 
 
 if __name__ == "__main__":

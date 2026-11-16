@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 """Root-owned, no-argument SSH receiver. Never execute uploaded code as root."""
+import contextlib
+import errno
 import fcntl
 import json
 import os
@@ -21,7 +23,12 @@ RELEASES = Path("/opt/bojin-releases")
 CURRENT = Path("/opt/bojin")
 DATA = Path("/var/lib/bojin")
 BACKUPS = Path("/var/backups/bojin-deploy")
-LOCK = Path("/run/lock/bojin-maintenance.lock")
+LOCK = Path("/run/bojin/maintenance.lock")
+# Transition compatibility (one release): also lock the legacy path after LOCK so an
+# un-upgraded host helper or manual command cannot run maintenance concurrently.
+# Remove in the next release once /etc/tmpfiles.d/bojin.conf, lean-ritual-deploy,
+# bojin-backup, bojin-watchdog and operator runbooks on the host all use LOCK.
+LEGACY_LOCK = Path("/run/lock/bojin-maintenance.lock")
 ALERT = Path("/usr/local/libexec/bojin-alert")
 ENV_FILE = Path("/etc/bojin/environment")
 STOPPED_DEPLOY_FLAG = Path("/etc/bojin/allow-deploy-when-stopped")
@@ -266,6 +273,66 @@ def snapshot(previous):
     return published
 
 
+@contextlib.contextmanager
+def maintenance_lock():
+    lock_dir = LOCK.parent
+    try:
+        dir_info = os.lstat(lock_dir)
+    except FileNotFoundError:
+        command("/usr/bin/install", "-d", "-o", "root", "-g", "root", "-m", "0755", str(lock_dir))
+        dir_info = os.lstat(lock_dir)
+    if stat.S_ISLNK(dir_info.st_mode) or not stat.S_ISDIR(dir_info.st_mode):
+        raise ValueError(f"Refusing symlink or non-directory maintenance lock path: {lock_dir}")
+    if dir_info.st_uid != 0:
+        raise ValueError(f"Refusing non-root maintenance lock directory: {lock_dir}")
+
+    try:
+        lock_info = os.lstat(LOCK)
+    except FileNotFoundError:
+        lock_info = None
+    if lock_info is not None:
+        if stat.S_ISLNK(lock_info.st_mode) or not stat.S_ISREG(lock_info.st_mode):
+            raise ValueError(f"Refusing symlink or non-regular maintenance lock: {LOCK}")
+        if lock_info.st_uid != 0:
+            raise ValueError(f"Refusing non-root maintenance lock: {LOCK}")
+
+    open_flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        new_fd = os.open(LOCK, open_flags, 0o600)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise ValueError(f"Refusing symlink maintenance lock: {LOCK}") from error
+        raise
+
+    legacy_fd = None
+    try:
+        fd_info = os.fstat(new_fd)
+        if not stat.S_ISREG(fd_info.st_mode) or fd_info.st_uid != 0:
+            raise ValueError(f"Refusing unsafe maintenance lock: {LOCK}")
+        fcntl.flock(new_fd, fcntl.LOCK_EX)
+
+        try:
+            legacy_fd = os.open(LEGACY_LOCK, open_flags, 0o600)
+        except OSError as error:
+            if error.errno == errno.EACCES:
+                warning = (
+                    f"lean-ritual-deploy: ignoring EACCES opening legacy lock {LEGACY_LOCK} "
+                    f"(fs.protected_regular); continuing with {LOCK} only"
+                )
+                syslog.syslog(syslog.LOG_WARNING, warning)
+                print("Warning: " + warning, file=sys.stderr, flush=True)
+            else:
+                raise
+        else:
+            fcntl.flock(legacy_fd, fcntl.LOCK_EX)
+
+        yield
+    finally:
+        if legacy_fd is not None:
+            os.close(legacy_fd)
+        os.close(new_fd)
+
+
 def main():
     if os.geteuid() != 0 or len(sys.argv) != 1:
         raise ValueError("Install as a root-owned no-argument receiver")
@@ -282,8 +349,7 @@ def main():
     check_free_space(DATA, RELEASES, BACKUPS)
     candidate = None
     try:
-        with LOCK.open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with maintenance_lock():
             # Staging shares the maintenance lock with retention.
             candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
             revision = metadata["revision"]

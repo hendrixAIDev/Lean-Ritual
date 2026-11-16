@@ -5,8 +5,31 @@
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo/root" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for tool in curl df flock logger systemctl timeout; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
+for tool in curl df flock install logger python3 stat systemctl timeout; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
 systemctl cat bojin.service >/dev/null 2>&1 || { echo "bojin.service not found; review the host first" >&2; exit 1; }
+
+path_uid() {
+  if stat -c '%u' / >/dev/null 2>&1; then
+    stat -c '%u' -- "$1"
+  else
+    stat -f '%u' "$1"
+  fi
+}
+
+[[ ! -L /etc/tmpfiles.d && ! -L /etc/tmpfiles.d/bojin.conf ]] || { echo "Refusing symlink tmpfiles path" >&2; exit 1; }
+install -d -o root -g root -m 0755 /etc/tmpfiles.d
+install -o root -g root -m 0644 "$here/bojin-tmpfiles.conf" /etc/tmpfiles.d/bojin.conf
+[[ ! -L /run/bojin ]] || { echo "Refusing symlink /run/bojin" >&2; exit 1; }
+if [[ -e /run/bojin ]]; then
+  [[ -d /run/bojin && "$(path_uid /run/bojin)" == 0 ]] || { echo "Refusing non-root or invalid /run/bojin" >&2; exit 1; }
+fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /etc/tmpfiles.d/bojin.conf
+fi
+if [[ ! -e /run/bojin ]]; then
+  install -d -o root -g root -m 0755 /run/bojin
+fi
+[[ ! -L /run/bojin && -d /run/bojin && "$(path_uid /run/bojin)" == 0 ]] || { echo "Refusing non-root or invalid /run/bojin" >&2; exit 1; }
 
 # Root-run programs live outside the replaceable release directory.
 install -o root -g root -m 0755 "$here/alert.sh" /usr/local/libexec/bojin-alert
