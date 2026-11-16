@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import syslog
@@ -109,12 +110,16 @@ def check_free_space(data_dir, *targets):
             raise ValueError("Need more than DATA_DIR size + 1.5 GiB free before staging and snapshot")
 
 
-def stopped_deploy_authorized():
-    if STOPPED_DEPLOY_FLAG.is_symlink() or not STOPPED_DEPLOY_FLAG.is_file():
+def consume_stopped_deploy_flag():
+    try:
+        info = os.lstat(STOPPED_DEPLOY_FLAG)
+    except FileNotFoundError:
         return False
-    stat = STOPPED_DEPLOY_FLAG.lstat()
-    if stat.st_uid != 0 or (stat.st_mode & 0o022) != 0:
-        raise ValueError("/etc/bojin/allow-deploy-when-stopped must be root-owned and not group/world-writable")
+    if not (stat.S_ISREG(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o600):
+        raise ValueError("/etc/bojin/allow-deploy-when-stopped must be a root-owned 0600 regular file")
+    STOPPED_DEPLOY_FLAG.unlink()
+    syslog.syslog(syslog.LOG_INFO, "lean-ritual-deploy: consumed /etc/bojin/allow-deploy-when-stopped")
+    print("Consumed one-shot /etc/bojin/allow-deploy-when-stopped authorization", flush=True)
     return True
 
 
@@ -132,10 +137,10 @@ def verify_service_unit(check_active_state=True):
     if state in ALLOWED_SERVICE_STATES:
         return
     if state in STOPPED_SERVICE_STATES:
-        if stopped_deploy_authorized():
+        if consume_stopped_deploy_flag():
             return
         raise ValueError(
-            f"bojin.service is {state}; start it first or create root-owned /etc/bojin/allow-deploy-when-stopped to authorize deployment"
+            f"bojin.service is {state}; start it first or create root-owned 0600 /etc/bojin/allow-deploy-when-stopped to authorize one deployment"
         )
     raise ValueError("bojin.service is in an unsupported state: " + state)
 
@@ -276,8 +281,8 @@ def main():
     try:
         with LOCK.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            verify_service_unit(check_active_state=True)
             check_free_space(DATA, RELEASES, BACKUPS)
+            verify_service_unit(check_active_state=True)
 
             def healthy(rollback=False):
                 # Ignore inherited HTTP proxies only for this loopback health check.

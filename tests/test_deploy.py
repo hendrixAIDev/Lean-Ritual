@@ -205,7 +205,7 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(set(backups.iterdir()), existing)
 
     def run_mock_deploy(self, root, service_state="active", pre_lock_state=None,
-                        stopped_flag_mode=None, stopped_flag_uid=0,
+                        stopped_flag_mode=None, stopped_flag_uid=0, stopped_flag_symlink=False,
                         new_healthy=True, rollback_healthy=True):
         releases, backups, data = root / "releases", root / "backups", root / "data"
         old = releases / "old-release"
@@ -221,11 +221,22 @@ class DeploymentTests(unittest.TestCase):
         env_file.write_text("PORT=8080\n")
         alert_bin.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
         alert_bin.chmod(0o755)
-        if stopped_flag_mode is not None:
+        if stopped_flag_symlink:
+            target = root / "real-flag"
+            target.write_text("")
+            target.chmod(0o600)
+            if stopped_flag.exists() or stopped_flag.is_symlink():
+                stopped_flag.unlink()
+            stopped_flag.symlink_to(target)
+        elif stopped_flag_mode is not None:
+            if stopped_flag.exists() or stopped_flag.is_symlink():
+                stopped_flag.unlink()
             stopped_flag.write_text("")
             stopped_flag.chmod(stopped_flag_mode)
         events = []
         lock_held = [False]
+        syslog_messages = []
+        flag_lstat_calls = [0]
 
         orig_unpack = deploy.unpack_release
         def tracked_unpack(stream, destination):
@@ -255,7 +266,7 @@ class DeploymentTests(unittest.TestCase):
 
         def fake_snapshot(previous):
             events.append("snapshot")
-            snap_dir = backups / "20261116T000000Z-abc123"
+            snap_dir = backups / f"20261116T000000Z-{len(list(backups.iterdir()))}"
             (snap_dir / "snapshot").mkdir(parents=True)
             (snap_dir / "snapshot/bojin.db").write_bytes(b"sqlite-backup")
             (snap_dir / "snapshot/manifest.json").write_text('{"version":1,"files":[]}')
@@ -273,14 +284,24 @@ class DeploymentTests(unittest.TestCase):
                     "__enter__": lambda s: s, "__exit__": lambda s, *a: None
                 })(json.dumps(payload).encode())
 
-        orig_lstat = Path.lstat
-        def fake_lstat(path_self):
-            st = orig_lstat(path_self)
-            if path_self == stopped_flag:
+        orig_os_lstat = os.lstat
+        def fake_os_lstat(path, *args, **kwargs):
+            st = orig_os_lstat(path, *args, **kwargs)
+            if Path(path) == stopped_flag:
+                flag_lstat_calls[0] += 1
                 return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
                                        stopped_flag_uid, st.st_gid, st.st_size,
                                        st.st_atime, st.st_mtime, st.st_ctime))
             return st
+
+        orig_unlink = Path.unlink
+        def tracked_unlink(path_self, *args, **kwargs):
+            if path_self == stopped_flag:
+                events.append(f"unlink_flag:locked={lock_held[0]}")
+            return orig_unlink(path_self, *args, **kwargs)
+
+        def fake_syslog(*args):
+            syslog_messages.append(args[-1])
 
         plenty = DiskUsage(20 * 1024 ** 3, 2 * 1024 ** 3, 18 * 1024 ** 3)
         with ExitStack() as stack:
@@ -290,7 +311,9 @@ class DeploymentTests(unittest.TestCase):
                 stack.enter_context(patch.object(deploy, attr, val))
             stack.enter_context(patch.object(deploy, "unpack_release", side_effect=tracked_unpack))
             stack.enter_context(patch.object(deploy, "snapshot", side_effect=fake_snapshot))
-            stack.enter_context(patch.object(Path, "lstat", fake_lstat))
+            stack.enter_context(patch("os.lstat", side_effect=fake_os_lstat))
+            stack.enter_context(patch.object(Path, "unlink", tracked_unlink))
+            stack.enter_context(patch("syslog.syslog", side_effect=fake_syslog))
             stack.enter_context(patch("os.geteuid", return_value=0))
             stack.enter_context(patch.object(deploy.sys, "argv", ["deploy"]))
             stack.enter_context(patch.object(deploy.sys, "stdin", type("FakeStdin", (), {"buffer": bundle()})()))
@@ -303,21 +326,21 @@ class DeploymentTests(unittest.TestCase):
             stack.enter_context(patch("subprocess.run", side_effect=fake_run))
             stack.enter_context(patch("urllib.request.build_opener", return_value=HealthOpener()))
             deploy.main()
-        return events, releases, backups, current, old, alert_log
+        return events, releases, backups, current, old, alert_log, syslog_messages, flag_lstat_calls[0]
 
     def test_service_states_evaluated_under_lock_and_stopped_gate(self):
         # active, failed, activating, reloading are allowed without flag; unpack precedes flock.
         for state in ("active", "failed", "activating", "reloading"):
             with self.subTest(allowed=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
-                events, _, _, current, old, _ = self.run_mock_deploy(root, service_state=state)
+                events, _, _, current, old, _, _, _ = self.run_mock_deploy(root, service_state=state)
                 self.assertLess(events.index("unpack"), events.index("flock"))
                 self.assertNotEqual(current.resolve(), old)
 
         # Transient inactive before lock (e.g. during backup-service.sh) becoming active under lock must succeed.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
-            events, _, _, current, old, _ = self.run_mock_deploy(
+            events, _, _, current, old, _, _, _ = self.run_mock_deploy(
                 root, service_state="active", pre_lock_state="inactive"
             )
             self.assertNotEqual(current.resolve(), old)
@@ -332,23 +355,38 @@ class DeploymentTests(unittest.TestCase):
                 self.assertEqual(list((root / "releases").iterdir()), [root / "releases/old-release"])
                 self.assertEqual(list((root / "backups").iterdir()), [])
 
-        # Explicit root-owned 0600 flag authorizes deploying over inactive/deactivating;
-        # non-root or group-writable flag is rejected.
+        # Explicit root-owned 0600 regular file authorizes deploying once over inactive/deactivating,
+        # validates with a single os.lstat, unlinks under LOCK_EX, logs consumption, and rejects the next stopped deploy.
         for state in ("inactive", "deactivating"):
             with self.subTest(authorized=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
-                _, _, _, current, old, _ = self.run_mock_deploy(
+                events, _, _, current, old, _, syslogs, lstats = self.run_mock_deploy(
                     root, service_state=state, stopped_flag_mode=0o600, stopped_flag_uid=0
                 )
                 self.assertNotEqual(current.resolve(), old)
+                self.assertEqual(lstats, 1)
+                self.assertFalse((root / "allow-deploy-when-stopped").exists())
+                self.assertIn("unlink_flag:locked=True", events)
+                self.assertTrue(any("allow-deploy-when-stopped" in m and "consumed" in m.lower() for m in syslogs), syslogs)
+                # Second deploy when service is stopped again must be rejected because flag was consumed.
+                with self.assertRaisesRegex(ValueError, "allow-deploy-when-stopped"):
+                    self.run_mock_deploy(root, service_state=state)
 
-        for bad_mode, bad_uid in [(0o664, 0), (0o600, 1001)]:
+        # Reject 0644, 0664, non-root uid, and symlinks.
+        for bad_mode, bad_uid in [(0o644, 0), (0o664, 0), (0o600, 1001)]:
             with self.subTest(bad_flag=(bad_mode, bad_uid)), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
                 with self.assertRaises(ValueError):
                     self.run_mock_deploy(
                         root, service_state="inactive", stopped_flag_mode=bad_mode, stopped_flag_uid=bad_uid
                     )
+
+        with self.subTest(bad_flag="symlink"), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with self.assertRaises(ValueError):
+                self.run_mock_deploy(
+                    root, service_state="inactive", stopped_flag_uid=0, stopped_flag_symlink=True
+                )
 
         # Missing systemd unit must be rejected.
         with patch("subprocess.check_output", return_value="LoadState=not-found\nActiveState=inactive\n"):
@@ -368,7 +406,7 @@ class DeploymentTests(unittest.TestCase):
                 # Failed candidate release dir must be cleaned up, leaving only old-release.
                 self.assertEqual(list((root / "releases").iterdir()), [old])
                 # Published pre-deploy snapshot and deletion ledger MUST remain intact!
-                published = root / "backups/20261116T000000Z-abc123"
+                published = root / "backups/20261116T000000Z-0"
                 self.assertTrue((published / "snapshot/bojin.db").is_file())
                 self.assertTrue((published / "snapshot/manifest.json").is_file())
                 self.assertTrue((published / "deletions.json").is_file())
