@@ -111,3 +111,36 @@ test("failed account creation rolls back invitation and user creation", { timeou
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal((await response.json()).user.id, invitation.userId);
 });
+
+test("deletion purges reissued invitation emails and retries after auth user removal", async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-delete-"));
+  const mails = [];
+  let service;
+  service = await createAuth({ dataDir, baseURL: "http://localhost:8080", secret: "deletion-test-secret-long-enough-123456", cookieSecure: false,
+    sendEmail: async mail => mails.push(mail), onDeleteRequested: async () => {},
+    onDeleteCompleted: async user => service.purgeDeletedArtifacts(user.id) });
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
+  t.after(() => { db.close(); service.close(); fs.rmSync(dataDir, {recursive:true, force:true}); });
+  const email = "reissued@example.com";
+  const old = service.invites.issue(email);
+  service.invites.revoke(old.token);
+  const expired = service.invites.issue(email);
+  db.prepare("UPDATE launch_invites SET expires=0 WHERE userId=?").run(expired.userId);
+  const invite = service.invites.issue(" Reissued@Example.com ");
+  assert.notEqual(old.userId, invite.userId);
+  const request = (route, body, cookie) => service.auth.handler(new Request("http://localhost:8080/api/auth/"+route, {
+    method:"POST", headers:{"content-type":"application/json", origin:"http://localhost:8080", ...(cookie ? {cookie} : {})}, body:JSON.stringify(body)
+  }));
+  const password = "strong deletion test password";
+  assert.equal((await request("sign-up/email", {email, name:"Delete", password, invitation:invite.token})).status, 200);
+  await service.auth.handler(new Request(mails[0].url));
+  const login = await request("sign-in/email", {email,password});
+  const cookie = login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ");
+  await request("request-password-reset", {email});
+  assert.equal((await request("delete-user", {password}, cookie)).status, 200);
+  service.purgeDeletedArtifacts(invite.userId);
+  for (const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()) {
+    assert.ok(!JSON.stringify(db.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'"').all()).includes(email), name+" retains email");
+  }
+});
