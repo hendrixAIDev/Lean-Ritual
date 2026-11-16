@@ -340,7 +340,7 @@ function mutate(path, fn){
   locks[path] = p;
   return p;
 }
-const saveErr = e => toast("保存失败（" + (e?.code || e?.message || "网络问题") + "），请刷新页面后再试");
+const saveErr = e => toast(e?.message ? "保存失败：" + e.message : "保存失败（" + (e?.code || "网络问题") + "），请稍后再试");
 async function updateDay(date, fn, opt = {}){
   const local = migrateDay(S.days[date] || {date, meals:[]}); fn(local); stampTargets(local); S.days[date] = local;
   if (!opt.quiet) render();
@@ -372,7 +372,15 @@ async function restoreWorkouts(){
   const restored = [];
   for (const [date, l] of Object.entries(latest)) {
     if (S.days[date]?.workout?.done) continue;
-    try { await updateDay(date, d => { if (!d.workout?.done) d.workout = clone(l.workout); }, {quiet:true, silent:true}); restored.push(date); } catch {}
+    try {
+      let changed = false;
+      const next = await mutate("days/" + date, cur => {
+        if (cur?.workout?.done) return null;
+        const d = migrateDay(cur || {date, meals:[]}); d.workout = clone(l.workout); stampTargets(d); changed = true; return d;
+      });
+      S.days[date] = migrateDay(next);
+      if (changed) restored.push(date);
+    } catch {}
   }
   if (restored.length) toast(`已从备份恢复 ${restored.length} 天的训练记录`, 8000);
 }
@@ -1074,15 +1082,16 @@ async function addMeal(mode, btn){
     for (const f of extra) { const r = await uploadOne(f.file).catch(() => null); if (r) m.more.push({...(r.id ? {id:r.id} : {thumb:r.thumb}), tag:"其他", at:new Date().toISOString()}); }
     if (!m.more.length) delete m.more;
   }
-  picked.forEach(f => URL.revokeObjectURL(f.url)); S.pendingPhotos = null;
   if (mode === "manual") {
     const f = S.mfill || {}, v = k => f[k] === "" || f[k] == null || isNaN(+f[k]) ? null : (k === "kcal" ? Math.round(+f[k]) : Math.round(+f[k]*10)/10);
     if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
   }
-  S.mtype = null; lsSet("bj-mtext", "");
   const date = S.date;
   try { await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }); } catch { return; }
+  picked.forEach(f => URL.revokeObjectURL(f.url)); S.pendingPhotos = null;
+  S.mtype = null; lsSet("bj-mtext", "");
   if (mode === "manual") { S.mfill = {}; render(); toast("已记下"); return; }
+  render();
   aiEstimate(date, m.id, anchor, early);
 }
 // AI is optional: manual entry and saved records work without a provider.

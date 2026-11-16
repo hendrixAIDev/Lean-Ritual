@@ -57,9 +57,8 @@ const exportingUsers = new Set();
 const uploads = require("./lib/uploads").createUploads(db, CFG.dataDir, {
   userBytes: +(process.env.PHOTO_USER_BYTES ?? 262144000), totalBytes: +(process.env.PHOTO_TOTAL_BYTES ?? 5368709120), daily: +(process.env.PHOTO_DAILY_LIMIT ?? 60)
 });
-const docQuota = require("./lib/doc-quota").createDocQuota(db, {
-  userBytes: +(process.env.DOC_USER_BYTES ?? 52428800), userCount: +(process.env.DOC_USER_COUNT ?? 20000), writePerMin: +(process.env.DOC_WRITE_PER_MIN ?? 120)
-});
+const {createDocQuota,docQuotaOptions} = require("./lib/doc-quota");
+const docQuota = createDocQuota(db, docQuotaOptions());
 const normName = s => String(s || "").trim().toLowerCase();
 const clientIP = req => (CFG.trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress || "?";
 

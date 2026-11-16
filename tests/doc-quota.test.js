@@ -6,7 +6,7 @@ const {DatabaseSync}=require('node:sqlite');
 test('HTTP document quotas: bytes, count, overwrite, deletion, isolation and throttle', {timeout:30000},async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-http-'));
  const base='http://127.0.0.1:18092';
- const env={...process.env,DATA_DIR:dir,DOC_USER_BYTES:'100',DOC_USER_COUNT:'2',DOC_WRITE_PER_MIN:'12',PORT:'18092',HOST:'127.0.0.1',AUTH_BASE_URL:base,AUTH_SECRET:'disposable-test-secret-at-least-32-characters',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_API_KEY:''};
+ const env={...process.env,DATA_DIR:dir,DOC_USER_BYTES:'100',DOC_USER_COUNT:'2',DOC_WRITE_PER_MIN:'30',PORT:'18092',HOST:'127.0.0.1',AUTH_BASE_URL:base,AUTH_SECRET:'disposable-test-secret-at-least-32-characters',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_API_KEY:''};
  // A real legacy data fixture proves the mapping preserves IDs and records.
  const legacy=new DatabaseSync(path.join(dir,'bojin.db'));
  legacy.exec("CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, created TEXT NOT NULL,mustChange INTEGER DEFAULT 0); INSERT INTO users VALUES('u_legacy_owner','legacy','not-a-real-password','2020-01-01',0)");legacy.close();
@@ -33,13 +33,25 @@ test('HTTP document quotas: bytes, count, overwrite, deletion, isolation and thr
  const put=(id,data,cookie=ca,uid=a.userId)=>request(doc(uid,id),{data},cookie,'PUT');
  assert.equal((await put('one',{x:'a'})).status,200);
  assert.equal((await put('one',{x:'b'.repeat(60)})).status,200);
+ assert.equal((await put('one',{x:'大'.repeat(20)})).status,200);
  let r=await put('two',{x:'c'.repeat(60)});assert.equal(r.status,413);assert.equal((await r.json()).error,'doc_quota');
  assert.equal((await put('two',{})).status,200);
  assert.equal((await put('three',{})).status,413);
  assert.equal((await request(doc(a.userId,'one'),null,ca,'DELETE')).status,200);
  assert.equal((await put('three',{x:'z'.repeat(60)})).status,200);
  assert.equal((await put('one',{x:'q'.repeat(60)},cb,b.userId)).status,200);
- for(let i=0;i<5;i++)await put('two',{});
- r=await put('two',{});assert.equal(r.status,429);assert.ok(+r.headers.get('retry-after')>0);
+ assert.equal((await request(doc(a.userId,'three'),{data:{x:'中'.repeat(40)}},ca,'PATCH')).status,413);
+ const inspect=new DatabaseSync(path.join(dir,'bojin.db'));
+ inspect.prepare('UPDATE docs SET data=? WHERE uid=?').run(JSON.stringify({x:'a'.repeat(150)}),a.userId);
+ assert.equal((await put('three',{x:'b'.repeat(120)})).status,200);
+ inspect.close();
+ for(let i=0;i<30;i++)await put('two',{});
+ r=await request(doc(a.userId,'two'),{data:{}},ca,'PATCH');assert.equal(r.status,429);assert.ok(+r.headers.get('retry-after')>0);
  assert.equal((await request(doc(a.userId,'two'),null,ca)).status,200);
+});
+
+test('document env values use blank defaults and reject invalid named values',()=>{
+ const {docQuotaOptions}=require('../lib/doc-quota');
+ assert.deepEqual(docQuotaOptions({DOC_USER_BYTES:' ',DOC_USER_COUNT:'',DOC_WRITE_PER_MIN:''}),{userBytes:52428800,userCount:20000,writePerMin:240});
+ for(const key of ['DOC_USER_BYTES','DOC_USER_COUNT','DOC_WRITE_PER_MIN'])for(const value of ['0','-1','1.5','oops'])assert.throws(()=>docQuotaOptions({[key]:value}),new RegExp(key));
 });
