@@ -183,6 +183,12 @@ class RetentionTests(unittest.TestCase):
             subprocess.run(args, check=True, capture_output=True)
             self.assertTrue(staged.exists())
             active.unlink()
+            manual = real / "manual_rollback"
+            manual.mkdir()
+            active.symlink_to(manual)
+            subprocess.run(args, check=True, capture_output=True)
+            self.assertTrue(manual.is_dir())
+            active.unlink()
             active.symlink_to(real / "missing")
             result = subprocess.run(args, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
