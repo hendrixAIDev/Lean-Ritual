@@ -28,3 +28,13 @@ for (const asset of ["vendor/heic2any.min.js", "ocr/tesseract.min.js", "ocr/work
 }
 fs.writeFileSync(path.join(__dirname, "public", "index.html"), out);
 console.log("已生成 public/index.html");
+
+// Bind CSP to the final emitted bytes, including inlined/rewritten assets.
+const hashes = new Set();
+for (const name of ["index.html", "login.html", "privacy.html", "guide.html"]) {
+  const html = fs.readFileSync(path.join(__dirname, "public", name), "utf8");
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    if (!/\bsrc\s*=/i.test(match[1])) hashes.add("'sha256-" + require("node:crypto").createHash("sha256").update(match[2].replace(/\r\n?/g, "\n")).digest("base64") + "'");
+  }
+}
+fs.writeFileSync(path.join(__dirname, "public", "csp-hashes.json"), JSON.stringify([...hashes]) + "\n");

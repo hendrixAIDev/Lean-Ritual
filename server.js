@@ -131,9 +131,23 @@ function serveStatic(req, res, user){
 }
 
 /* ---------- 路由 ---------- */
-const SEC_HEADERS = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY" };
-async function handle(req, res){
+// Generated from the final HTML by build.js; deploy it with the public assets.
+const scriptHashes = JSON.parse(fs.readFileSync(path.join(CFG.publicDir, "csp-hashes.json"), "utf8"));
+if (!Array.isArray(scriptHashes) || !scriptHashes.length || !scriptHashes.every(value => /^'sha256-[A-Za-z0-9+/]{43}='$/.test(value)))
+  throw new Error("Invalid CSP hash manifest; run npm run build");
+const SEC_HEADERS = {
+  "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+  "Content-Security-Policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' " + [...scriptHashes].join(" ") + "; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+};
+function securityHeaders(req, res) {
   for (const [k, v] of Object.entries(SEC_HEADERS)) res.setHeader(k, v);
+  if (CFG.cookieSecure || (CFG.trustProxy && req.headers["x-forwarded-proto"] === "https"))
+    res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+}
+async function handle(req, res){
+  securityHeaders(req, res);
   const url = new URL(req.url, "http://x"), p = url.pathname, m = req.method;
   if (p.startsWith("/api/auth/")) return authentication.handle(req, res);
   const user = await authentication.sessionUser(req);

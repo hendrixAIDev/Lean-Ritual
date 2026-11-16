@@ -957,13 +957,12 @@ function viewFood(){
 function mealCard(m){
   const e = m.est || {}, busy = S.busy["meal-"+m.id];
   const pend = m.visionReq?.status === "pending" && Date.now() - Date.parse(m.visionReq.at || 0) < 10*60e3; // 10 分钟还没回来就允许再点一次
-  const fb = safeImage(m.thumb) ? `this.onerror=null;this.src=this.dataset.fb` : `this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'照片不可用'}))`;
-  const img = safeBlobId(m.photo) ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(safeImage(m.thumb))}" alt="${esc(m.type)}照片" onerror="${fb}">` : (safeImage(S.files[m.id]?.url) ? `<img class="ph" src="${esc(safeImage(S.files[m.id].url))}" alt="">` : safeImage(m.thumb) ? `<img class="ph" src="${esc(safeImage(m.thumb))}" alt="">` : `<div class="ph">无照片</div>`);
+  const img = safeBlobId(m.photo) ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(safeImage(m.thumb))}" alt="${esc(m.type)}照片" data-photo-fallback="primary">` : (safeImage(S.files[m.id]?.url) ? `<img class="ph" src="${esc(safeImage(S.files[m.id].url))}" alt="">` : safeImage(m.thumb) ? `<img class="ph" src="${esc(safeImage(m.thumb))}" alt="">` : `<div class="ph">无照片</div>`);
   const confirm = S.confirmDel === m.id;
   return `<div class="meal">${img}<div class="body">
     <div class="row between"><select data-mtype-of="${esc(m.id)}" aria-label="改餐次" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(x)}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
     ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}
-    ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">← 左边是吃之前</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${safeBlobId(p.id) ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(safeImage(p.thumb))}" alt="${esc(MORE_TAG[p.tag] || "照片")}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb">` : safeImage(p.thumb) ? `<img src="${esc(safeImage(p.thumb))}" alt="">` : ``}${MORE_TAG[p.tag] ? `<span>${esc(MORE_TAG[p.tag])}</span>` : ""}<button class="link small" data-act="del-more" data-v="${esc(m.id)}|${i}">${S.confirmDel === m.id + "|" + i ? "确认删" : "删"}</button></figure>` : "").join("")}</div>` : ""}
+    ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">← 左边是吃之前</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${safeBlobId(p.id) ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(safeImage(p.thumb))}" alt="${esc(MORE_TAG[p.tag] || "照片")}" data-photo-fallback="extra">` : safeImage(p.thumb) ? `<img src="${esc(safeImage(p.thumb))}" alt="">` : ``}${MORE_TAG[p.tag] ? `<span>${esc(MORE_TAG[p.tag])}</span>` : ""}<button class="link small" data-act="del-more" data-v="${esc(m.id)}|${i}">${S.confirmDel === m.id + "|" + i ? "确认删" : "删"}</button></figure>` : "").join("")}</div>` : ""}
     ${S.busy["more-"+m.id] ? `<p class="small muted">照片上传中…</p>` : ""}
     ${moreOf(m).length && e.kcal != null && (e.photos || 1) < photoCount(m) ? `<p class="tip small">加了新照片，点「AI 重新估算」会把几张一起看；有吃完剩下的照片就按差值算。</p>` : ""}
     ${e.items?.length ? `<p class="small muted">${e.items.map(x => esc(x.name + (x.amount?" "+x.amount:""))).join("、")}</p>` : ""}
@@ -1637,6 +1636,14 @@ function viewMe(){
 }
 
 /* ============ 事件 ============ */
+document.addEventListener("error", ev => {
+  const img = ev.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.photoFallback) return;
+  const kind = img.dataset.photoFallback;
+  delete img.dataset.photoFallback;
+  if (img.dataset.fb) img.src = img.dataset.fb;
+  else if (kind === "primary") img.replaceWith(Object.assign(document.createElement("div"), {className:"ph", textContent:"照片不可用"}));
+}, true);
 document.addEventListener("click", async ev => {
   const b = ev.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act, v = b.dataset.v;

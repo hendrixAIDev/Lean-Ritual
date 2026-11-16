@@ -73,3 +73,21 @@ Deploys reject an intentionally stopped service unless authorized once via
 `sudo install -m 0600 -o root -g root /dev/null /etc/bojin/allow-deploy-when-stopped`; the deploy consumes this authorization under the maintenance lock.
 Backup and deploy require free space greater than size(DATA_DIR) + 1.5 GiB before stopping the app. Backup releases the maintenance lock before bounded offsite rsync.
 Release pruning skips entirely until the upgraded deploy helper has recorded /opt/bojin-previous after a successful deploy; active and previous pointers must resolve. Releases younger than the retention window are also kept.
+
+### Browser security headers
+
+All responses carry COOP `same-origin`, Permissions-Policy
+`camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()`
+and enforced CSP: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval' <SHA-256 hashes>; worker-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`.
+Hashes are computed at build time from the exact built HTML and static pages;
+deploy public/csp-hashes.json with the assets and restart after replacing HTML. Build before starting the server. No inline script
+or event-handler allowance is required; inline styles remain supported.
+Wasm compilation and blob workers support local Tesseract OCR.
+HSTS is `max-age=15552000; includeSubDomains` only with `COOKIE_SECURE=1`
+or trusted proxy requests with `X-Forwarded-Proto: https`.
+Only enable `TRUST_PROXY` behind a proxy that overwrites forwarded headers.
+Camera file capture does not use getUserMedia.
+
+Run the extended browser check with Playwright available:
+`CHROMIUM_PATH=/path/to/chromium node tests/security-browser.cjs`.
+It checks CSP events across public pages and authenticated photo/OCR flows.

@@ -85,7 +85,8 @@ test('photo loaders reject traversal and unsafe fallback fetches', async () => {
  await vm.runInContext('loadMore({id:"m",more:[{thumb:"/api/photo/1"}]},0)',c);
  assert.deepEqual(calls,['/_blob/valid_-123','/api/photo/1']);
  const html=vm.runInContext('mealCard({id:"m",type:"午餐",photo:"valid",thumb:"https://evil.test/x"})',c);
- assert.match(html,/照片不可用/);
+ assert.match(html,/data-photo-fallback="primary"/);
+ assert.doesNotMatch(html,/onerror=/);
  assert.doesNotMatch(html,/this.src=this.dataset.fb/);
 });
 test('pain insights are assembled plain and escaped once by the feedback view', () => {
