@@ -22,7 +22,9 @@ finish() {
     rm -rf -- "$snapshot" "$ledger"
   fi
   if [[ "$restart" == 1 ]]; then
-    if ! systemctl start bojin.service; then
+    if systemctl start bojin.service; then
+      :
+    else
       status=$?
     fi
   fi

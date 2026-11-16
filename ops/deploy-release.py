@@ -23,11 +23,13 @@ BACKUPS = Path("/var/backups/bojin-deploy")
 LOCK = Path("/run/lock/bojin-maintenance.lock")
 ALERT = Path("/usr/local/libexec/bojin-alert")
 ENV_FILE = Path("/etc/bojin/environment")
+STOPPED_DEPLOY_FLAG = Path("/etc/bojin/allow-deploy-when-stopped")
 ALLOWED = {"server.js", "package.json", "package-lock.json", ".release.json", "lib", "scripts", "public", "node_modules"}
 MAX_BYTES = 600 * 1024 * 1024
 MIN_FREE_HEADROOM = (3 * 1024 ** 3) // 2
 UPLOAD_TIMEOUT = 300
-ALLOWED_SERVICE_STATES = {"active", "activating", "reloading", "inactive", "failed", "deactivating"}
+ALLOWED_SERVICE_STATES = {"active", "activating", "reloading", "failed"}
+STOPPED_SERVICE_STATES = {"inactive", "deactivating"}
 
 
 def unpack_release(stream, destination):
@@ -107,7 +109,16 @@ def check_free_space(data_dir, *targets):
             raise ValueError("Need more than DATA_DIR size + 1.5 GiB free before staging and snapshot")
 
 
-def verify_service_unit():
+def stopped_deploy_authorized():
+    if STOPPED_DEPLOY_FLAG.is_symlink() or not STOPPED_DEPLOY_FLAG.is_file():
+        return False
+    stat = STOPPED_DEPLOY_FLAG.lstat()
+    if stat.st_uid != 0 or (stat.st_mode & 0o022) != 0:
+        raise ValueError("/etc/bojin/allow-deploy-when-stopped must be root-owned and not group/world-writable")
+    return True
+
+
+def verify_service_unit(check_active_state=True):
     output = subprocess.check_output(
         ["/usr/bin/systemctl", "show", "bojin.service", "--property=LoadState", "--property=ActiveState"],
         text=True, stdin=subprocess.DEVNULL,
@@ -115,8 +126,18 @@ def verify_service_unit():
     properties = dict(line.split("=", 1) for line in output.strip().splitlines() if "=" in line)
     if properties.get("LoadState") != "loaded":
         raise ValueError("bojin.service unit must exist before deployment")
-    if properties.get("ActiveState") not in ALLOWED_SERVICE_STATES:
-        raise ValueError("bojin.service is in an unsupported state: " + properties.get("ActiveState", "unknown"))
+    if not check_active_state:
+        return
+    state = properties.get("ActiveState", "unknown")
+    if state in ALLOWED_SERVICE_STATES:
+        return
+    if state in STOPPED_SERVICE_STATES:
+        if stopped_deploy_authorized():
+            return
+        raise ValueError(
+            f"bojin.service is {state}; start it first or create root-owned /etc/bojin/allow-deploy-when-stopped to authorize deployment"
+        )
+    raise ValueError("bojin.service is in an unsupported state: " + state)
 
 
 def stage_release(stream, releases_dir, timeout=UPLOAD_TIMEOUT):
@@ -157,18 +178,15 @@ def activate(candidate, current, stop, start, healthy, backup):
         raise ValueError("Complete the one-time symlink setup first")
     previous = current.resolve()
     stopped = False
-    backup_dir = None
     try:
         stop()
         stopped = True
-        backup_dir = backup(previous)
+        backup(previous)
         point_current(current, candidate)
         start()
         if not healthy():
             raise RuntimeError("New release did not become healthy")
     except BaseException:
-        if isinstance(backup_dir, Path) and backup_dir.exists():
-            shutil.rmtree(backup_dir, ignore_errors=True)
         if stopped:
             try:
                 try:
@@ -217,7 +235,6 @@ def snapshot(previous):
     stamp = time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime())
     work = Path(tempfile.mkdtemp(prefix=".work-" + stamp, dir=BACKUPS))
     published = BACKUPS / work.name.removeprefix(".work-")
-    renamed = False
     try:
         os.chown(work, app.pw_uid, app.pw_gid)
         work.chmod(0o700)
@@ -232,12 +249,9 @@ def snapshot(previous):
         if published.exists() or published.is_symlink():
             raise FileExistsError("Deploy snapshot destination already exists")
         work.rename(published)
-        renamed = True
     except BaseException:
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
-        if renamed and published.exists():
-            shutil.rmtree(published, ignore_errors=True)
         raise
     print("Pre-deployment snapshot and deletion ledger saved on host", flush=True)
     return published
@@ -254,7 +268,7 @@ def main():
         raise ValueError("Host requires Node 24")
     if not ENV_FILE.is_file() or not DATA.is_dir():
         raise ValueError("Complete and verify the one-time host setup first")
-    verify_service_unit()
+    verify_service_unit(check_active_state=False)
     RELEASES.mkdir(mode=0o755, exist_ok=True)
     check_free_space(DATA, RELEASES, BACKUPS)
     candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
@@ -262,7 +276,7 @@ def main():
     try:
         with LOCK.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            verify_service_unit()
+            verify_service_unit(check_active_state=True)
             check_free_space(DATA, RELEASES, BACKUPS)
 
             def healthy(rollback=False):

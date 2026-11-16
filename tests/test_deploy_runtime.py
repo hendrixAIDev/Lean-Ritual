@@ -92,7 +92,7 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 
 class BackupServiceRuntimeTest(unittest.TestCase):
-    def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False):
+    def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
@@ -130,6 +130,7 @@ class BackupServiceRuntimeTest(unittest.TestCase):
               echo "flock:unlock" >> "{events}"
             fi
         """)
+        start_exit = "exit 1" if fail_start else ":"
         write_stub("systemctl", f"""
             if [[ "${{1:-}}" == "show" ]]; then
               echo "{active_state}"
@@ -137,6 +138,9 @@ class BackupServiceRuntimeTest(unittest.TestCase):
               [[ "{active_state}" == "active" ]]
             else
               echo "systemctl:$*" >> "{events}"
+              if [[ "${{1:-}}" == "start" ]]; then
+                {start_exit}
+              fi
             fi
         """)
         write_stub("chown", f"""
@@ -230,6 +234,18 @@ exec(compile(code, "<stdin>", "exec"))
             self.assertIn("systemctl:start bojin.service", log)
             leftovers = [p.name for p in backup_root.iterdir() if p.name.startswith(".run-")]
             self.assertEqual(leftovers, [])
+
+    def test_backup_failure_plus_restart_failure_still_exits_nonzero(self):
+        for fail_backup, fail_start in [(True, True), (False, True)]:
+            with self.subTest(fail_backup=fail_backup, fail_start=fail_start), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                result, log, backup_root = self.run_backup_script(
+                    root, active_state="activating", fail_backup=fail_backup, fail_start=fail_start
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("systemctl:start bojin.service", log)
+                leftovers = [p.name for p in backup_root.iterdir() if p.name.startswith(".run-")]
+                self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

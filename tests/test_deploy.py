@@ -204,135 +204,176 @@ class DeploymentTests(unittest.TestCase):
                     deploy.snapshot(previous)
             self.assertEqual(set(backups.iterdir()), existing)
 
-    def test_main_unpacks_before_lock_supports_non_active_states_and_cleans_failed_deploy(self):
-        for service_state in ("active", "failed", "activating", "inactive"):
-            with self.subTest(state=service_state), tempfile.TemporaryDirectory() as directory:
+    def run_mock_deploy(self, root, service_state="active", pre_lock_state=None,
+                        stopped_flag_mode=None, stopped_flag_uid=0,
+                        new_healthy=True, rollback_healthy=True):
+        releases, backups, data = root / "releases", root / "backups", root / "data"
+        old = releases / "old-release"
+        current = root / "current"
+        env_file = root / "environment"
+        lock_file = root / "maintenance.lock"
+        stopped_flag = root / "allow-deploy-when-stopped"
+        alert_bin = root / "bojin-alert"
+        alert_log = root / "alert.log"
+        old.mkdir(parents=True, exist_ok=True); data.mkdir(exist_ok=True); backups.mkdir(exist_ok=True)
+        if not current.is_symlink():
+            current.symlink_to(old)
+        env_file.write_text("PORT=8080\n")
+        alert_bin.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+        alert_bin.chmod(0o755)
+        if stopped_flag_mode is not None:
+            stopped_flag.write_text("")
+            stopped_flag.chmod(stopped_flag_mode)
+        events = []
+        lock_held = [False]
+
+        orig_unpack = deploy.unpack_release
+        def tracked_unpack(stream, destination):
+            events.append("unpack")
+            return orig_unpack(stream, destination)
+
+        def tracked_flock(fd, op):
+            lock_held[0] = True
+            events.append("flock")
+
+        def fake_check_output(cmd, **kwargs):
+            if cmd[:2] == ["/usr/bin/node", "-p"]:
+                return "24.19.0\n"
+            if cmd[:3] == ["/usr/bin/systemctl", "show", "bojin.service"]:
+                state = service_state if (lock_held[0] or pre_lock_state is None) else pre_lock_state
+                events.append(f"show:{state}:locked={lock_held[0]}")
+                return f"LoadState=loaded\nActiveState={state}\n"
+            raise AssertionError(f"Unexpected check_output: {cmd}")
+
+        orig_run = subprocess.run
+        def fake_run(cmd, **kwargs):
+            if cmd and Path(cmd[0]) == alert_bin:
+                return orig_run(cmd, **kwargs)
+            if cmd[:2] in (["/usr/bin/systemctl", "stop"], ["/usr/bin/systemctl", "start"]):
+                events.append(cmd[1])
+            return subprocess.CompletedProcess(cmd, 0)
+
+        def fake_snapshot(previous):
+            events.append("snapshot")
+            snap_dir = backups / "20261116T000000Z-abc123"
+            (snap_dir / "snapshot").mkdir(parents=True)
+            (snap_dir / "snapshot/bojin.db").write_bytes(b"sqlite-backup")
+            (snap_dir / "snapshot/manifest.json").write_text('{"version":1,"files":[]}')
+            (snap_dir / "deletions.json").write_text('{"version":1,"users":[]}')
+            return snap_dir
+
+        class HealthOpener:
+            def open(self, url, timeout=2):
+                on_old = current.resolve() == old
+                if on_old:
+                    payload = {"ok": bool(rollback_healthy), "revision": "b" * 40}
+                else:
+                    payload = {"ok": bool(new_healthy), "revision": "a" * 40 if new_healthy else "wrong"}
+                return type("Resp", (io.BytesIO,), {
+                    "__enter__": lambda s: s, "__exit__": lambda s, *a: None
+                })(json.dumps(payload).encode())
+
+        orig_lstat = Path.lstat
+        def fake_lstat(path_self):
+            st = orig_lstat(path_self)
+            if path_self == stopped_flag:
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
+                                       stopped_flag_uid, st.st_gid, st.st_size,
+                                       st.st_atime, st.st_mtime, st.st_ctime))
+            return st
+
+        plenty = DiskUsage(20 * 1024 ** 3, 2 * 1024 ** 3, 18 * 1024 ** 3)
+        with ExitStack() as stack:
+            for attr, val in [("RELEASES", releases), ("CURRENT", current), ("DATA", data),
+                              ("BACKUPS", backups), ("LOCK", lock_file), ("ENV_FILE", env_file),
+                              ("ALERT", alert_bin), ("STOPPED_DEPLOY_FLAG", stopped_flag)]:
+                stack.enter_context(patch.object(deploy, attr, val))
+            stack.enter_context(patch.object(deploy, "unpack_release", side_effect=tracked_unpack))
+            stack.enter_context(patch.object(deploy, "snapshot", side_effect=fake_snapshot))
+            stack.enter_context(patch.object(Path, "lstat", fake_lstat))
+            stack.enter_context(patch("os.geteuid", return_value=0))
+            stack.enter_context(patch.object(deploy.sys, "argv", ["deploy"]))
+            stack.enter_context(patch.object(deploy.sys, "stdin", type("FakeStdin", (), {"buffer": bundle()})()))
+            stack.enter_context(patch("platform.system", return_value="Linux"))
+            stack.enter_context(patch("platform.machine", return_value="x86_64"))
+            stack.enter_context(patch("fcntl.flock", side_effect=tracked_flock))
+            stack.enter_context(patch("time.sleep"))
+            stack.enter_context(patch("shutil.disk_usage", return_value=plenty))
+            stack.enter_context(patch("subprocess.check_output", side_effect=fake_check_output))
+            stack.enter_context(patch("subprocess.run", side_effect=fake_run))
+            stack.enter_context(patch("urllib.request.build_opener", return_value=HealthOpener()))
+            deploy.main()
+        return events, releases, backups, current, old, alert_log
+
+    def test_service_states_evaluated_under_lock_and_stopped_gate(self):
+        # active, failed, activating, reloading are allowed without flag; unpack precedes flock.
+        for state in ("active", "failed", "activating", "reloading"):
+            with self.subTest(allowed=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
-                releases, backups, data = root / "releases", root / "backups", root / "data"
-                old = releases / "old-release"
-                current = root / "current"
-                env_file = root / "environment"
-                lock_file = root / "maintenance.lock"
-                alert_bin = root / "missing-alert"
-                old.mkdir(parents=True); data.mkdir(); backups.mkdir()
-                current.symlink_to(old)
-                env_file.write_text("PORT=8080\n")
-                events = []
-
-                orig_unpack = deploy.unpack_release
-                def tracked_unpack(stream, destination):
-                    events.append("unpack")
-                    return orig_unpack(stream, destination)
-
-                def tracked_flock(fd, op):
-                    events.append("flock")
-
-                def fake_check_output(cmd, **kwargs):
-                    if cmd[:2] == ["/usr/bin/node", "-p"]:
-                        return "24.19.0\n"
-                    if cmd[:3] == ["/usr/bin/systemctl", "show", "bojin.service"]:
-                        return f"LoadState=loaded\nActiveState={service_state}\n"
-                    raise AssertionError(f"Unexpected check_output: {cmd}")
-
-                def fake_run(cmd, **kwargs):
-                    if cmd[:2] == ["/usr/bin/systemctl", "is-active"]:
-                        return subprocess.CompletedProcess(cmd, 0)
-                    return subprocess.CompletedProcess(cmd, 0)
-
-                def fake_snapshot(previous):
-                    events.append("snapshot")
-                    snap_dir = backups / "snap-1"
-                    snap_dir.mkdir()
-                    return snap_dir
-
-                class FakeResponse(io.BytesIO):
-                    def __enter__(self): return self
-                    def __exit__(self, *args): pass
-
-                class FakeOpener:
-                    def open(self, url, timeout=2):
-                        return FakeResponse(json.dumps({"ok": True, "revision": "a" * 40}).encode())
-
-                fake_stdin = type("FakeStdin", (), {"buffer": bundle()})()
-                plenty = DiskUsage(20 * 1024 ** 3, 2 * 1024 ** 3, 18 * 1024 ** 3)
-                with ExitStack() as stack:
-                    for attr, val in [("RELEASES", releases), ("CURRENT", current), ("DATA", data),
-                                      ("BACKUPS", backups), ("LOCK", lock_file), ("ENV_FILE", env_file),
-                                      ("ALERT", alert_bin)]:
-                        stack.enter_context(patch.object(deploy, attr, val))
-                    stack.enter_context(patch.object(deploy, "unpack_release", side_effect=tracked_unpack))
-                    stack.enter_context(patch.object(deploy, "snapshot", side_effect=fake_snapshot))
-                    stack.enter_context(patch("os.geteuid", return_value=0))
-                    stack.enter_context(patch.object(deploy.sys, "argv", ["deploy"]))
-                    stack.enter_context(patch.object(deploy.sys, "stdin", fake_stdin))
-                    stack.enter_context(patch("platform.system", return_value="Linux"))
-                    stack.enter_context(patch("platform.machine", return_value="x86_64"))
-                    stack.enter_context(patch("fcntl.flock", side_effect=tracked_flock))
-                    stack.enter_context(patch("shutil.disk_usage", return_value=plenty))
-                    stack.enter_context(patch("subprocess.check_output", side_effect=fake_check_output))
-                    stack.enter_context(patch("subprocess.run", side_effect=fake_run))
-                    stack.enter_context(patch("urllib.request.build_opener", return_value=FakeOpener()))
-                    deploy.main()
+                events, _, _, current, old, _ = self.run_mock_deploy(root, service_state=state)
                 self.assertLess(events.index("unpack"), events.index("flock"))
                 self.assertNotEqual(current.resolve(), old)
 
-        # Missing systemd unit must be rejected before deployment.
+        # Transient inactive before lock (e.g. during backup-service.sh) becoming active under lock must succeed.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            events, _, _, current, old, _ = self.run_mock_deploy(
+                root, service_state="active", pre_lock_state="inactive"
+            )
+            self.assertNotEqual(current.resolve(), old)
+
+        # inactive and deactivating under lock are rejected without root authorization flag,
+        # without starting the service or leaking the candidate release directory.
+        for state in ("inactive", "deactivating"):
+            with self.subTest(rejected=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                with self.assertRaisesRegex(ValueError, "stopped|inactive|deactivating|allow-deploy-when-stopped"):
+                    self.run_mock_deploy(root, service_state=state)
+                self.assertEqual(list((root / "releases").iterdir()), [root / "releases/old-release"])
+                self.assertEqual(list((root / "backups").iterdir()), [])
+
+        # Explicit root-owned 0600 flag authorizes deploying over inactive/deactivating;
+        # non-root or group-writable flag is rejected.
+        for state in ("inactive", "deactivating"):
+            with self.subTest(authorized=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                _, _, _, current, old, _ = self.run_mock_deploy(
+                    root, service_state=state, stopped_flag_mode=0o600, stopped_flag_uid=0
+                )
+                self.assertNotEqual(current.resolve(), old)
+
+        for bad_mode, bad_uid in [(0o664, 0), (0o600, 1001)]:
+            with self.subTest(bad_flag=(bad_mode, bad_uid)), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                with self.assertRaises(ValueError):
+                    self.run_mock_deploy(
+                        root, service_state="inactive", stopped_flag_mode=bad_mode, stopped_flag_uid=bad_uid
+                    )
+
+        # Missing systemd unit must be rejected.
         with patch("subprocess.check_output", return_value="LoadState=not-found\nActiveState=inactive\n"):
             with self.assertRaises(ValueError):
                 deploy.verify_service_unit()
 
-        # Verify a failed health check cleans up both candidate release and deploy backup dir.
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            releases, backups, data = root / "releases", root / "backups", root / "data"
-            old = releases / "old-release"
-            current = root / "current"
-            env_file = root / "environment"
-            lock_file = root / "maintenance.lock"
-            old.mkdir(parents=True); data.mkdir(); backups.mkdir()
-            current.symlink_to(old)
-            env_file.write_text("PORT=8080\n")
-
-            def fake_check_output_loaded(cmd, **kwargs):
-                if cmd[:2] == ["/usr/bin/node", "-p"]:
-                    return "24.19.0\n"
-                return "LoadState=loaded\nActiveState=active\n"
-
-            def fake_snapshot(previous):
-                snap_dir = backups / "snap-failed"
-                snap_dir.mkdir()
-                return snap_dir
-
-            class UnhealthyNewOpener:
-                def open(self, url, timeout=2):
-                    rev = "old" if current.resolve() == old else "wrong"
-                    return type("Resp", (io.BytesIO,), {
-                        "__enter__": lambda s: s, "__exit__": lambda s, *a: None
-                    })(json.dumps({"ok": True, "revision": rev}).encode())
-
-            plenty = DiskUsage(20 * 1024 ** 3, 2 * 1024 ** 3, 18 * 1024 ** 3)
-            with ExitStack() as stack:
-                for attr, val in [("RELEASES", releases), ("CURRENT", current), ("DATA", data),
-                                  ("BACKUPS", backups), ("LOCK", lock_file), ("ENV_FILE", env_file),
-                                  ("ALERT", root / "no-alert")]:
-                    stack.enter_context(patch.object(deploy, attr, val))
-                stack.enter_context(patch.object(deploy, "snapshot", side_effect=fake_snapshot))
-                stack.enter_context(patch("os.geteuid", return_value=0))
-                stack.enter_context(patch.object(deploy.sys, "argv", ["deploy"]))
-                stack.enter_context(patch.object(deploy.sys, "stdin", type("FakeStdin", (), {"buffer": bundle()})()))
-                stack.enter_context(patch("platform.system", return_value="Linux"))
-                stack.enter_context(patch("platform.machine", return_value="x86_64"))
-                stack.enter_context(patch("fcntl.flock"))
-                stack.enter_context(patch("time.sleep"))
-                stack.enter_context(patch("shutil.disk_usage", return_value=plenty))
-                stack.enter_context(patch("subprocess.check_output", side_effect=fake_check_output_loaded))
-                stack.enter_context(patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0)))
-                stack.enter_context(patch("urllib.request.build_opener", return_value=UnhealthyNewOpener()))
+    def test_failed_activation_and_failed_rollback_preserve_published_snapshot(self):
+        for rollback_ok in (True, False):
+            with self.subTest(rollback_ok=rollback_ok), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
                 with self.assertRaises(RuntimeError):
-                    deploy.main()
-            self.assertEqual(current.resolve(), old)
-            self.assertEqual(list(releases.iterdir()), [old])
-            self.assertEqual(list(backups.iterdir()), [])
+                    self.run_mock_deploy(
+                        root, service_state="active", new_healthy=False, rollback_healthy=rollback_ok
+                    )
+                old = root / "releases/old-release"
+                self.assertEqual((root / "current").resolve(), old)
+                # Failed candidate release dir must be cleaned up, leaving only old-release.
+                self.assertEqual(list((root / "releases").iterdir()), [old])
+                # Published pre-deploy snapshot and deletion ledger MUST remain intact!
+                published = root / "backups/20261116T000000Z-abc123"
+                self.assertTrue((published / "snapshot/bojin.db").is_file())
+                self.assertTrue((published / "snapshot/manifest.json").is_file())
+                self.assertTrue((published / "deletions.json").is_file())
+                if not rollback_ok:
+                    self.assertTrue((root / "alert.log").is_file())
 
     def test_systemd_timeout_and_workflow_health_retry(self):
         unit = (ROOT / "ops/bojin-backup.service").read_text()
