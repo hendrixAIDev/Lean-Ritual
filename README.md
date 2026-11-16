@@ -6,7 +6,7 @@ GitHub 自动部署（测试通过后部署到现有阿里云主机）：见 [GI
 
 独立部署的训练、饮食、体重记录应用。受邀用户通过邮箱和密码登录；不需要 Claude 账号、订阅或个人 API 密钥。AI 由服务器上的付费 API 提供，未配置 AI 时仍可手动记录。
 
-当前已部署供受邀测试，尚未开放公测。任务及验证记录见 [上线计划](docs/LAUNCH-PLAN.md)，账号细节见 [authentication](docs/authentication.md)。
+当前已部署供受邀测试，尚未开放公测。任务及验证记录见 [上线计划](docs/LAUNCH-PLAN.md)，账号细节见 [authentication](docs/authentication.md)，受邀内测上线门槛与依赖审计报告见 [RELEASE-GATES.md](docs/RELEASE-GATES.md)。
 
 ## 技术与目录
 
