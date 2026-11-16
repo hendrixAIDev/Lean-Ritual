@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import syslog
@@ -20,8 +21,13 @@ CURRENT = Path("/opt/bojin")
 DATA = Path("/var/lib/bojin")
 BACKUPS = Path("/var/backups/bojin-deploy")
 LOCK = Path("/run/lock/bojin-maintenance.lock")
+ALERT = Path("/usr/local/libexec/bojin-alert")
+ENV_FILE = Path("/etc/bojin/environment")
 ALLOWED = {"server.js", "package.json", "package-lock.json", ".release.json", "lib", "scripts", "public", "node_modules"}
 MAX_BYTES = 600 * 1024 * 1024
+MIN_FREE_HEADROOM = (3 * 1024 ** 3) // 2
+UPLOAD_TIMEOUT = 300
+ALLOWED_SERVICE_STATES = {"active", "activating", "reloading", "inactive", "failed", "deactivating"}
 
 
 def unpack_release(stream, destination):
@@ -68,6 +74,76 @@ def unpack_release(stream, destination):
     return metadata
 
 
+def notify_alert(message):
+    if ALERT.is_file() and os.access(ALERT, os.X_OK):
+        try:
+            subprocess.run([str(ALERT), message], check=False, stdin=subprocess.DEVNULL, timeout=30)
+        except (OSError, subprocess.SubprocessError) as error:
+            syslog.syslog(syslog.LOG_ERR, "lean-ritual-deploy alert failed: " + repr(error))
+
+
+def data_size(path):
+    total = 0
+    for root, _, files in os.walk(Path(path).resolve()):
+        for name in files:
+            try:
+                total += (Path(root) / name).lstat().st_size
+            except FileNotFoundError:
+                pass
+    return total
+
+
+def existing_parent(path):
+    current = Path(path)
+    while not current.exists():
+        current = current.parent
+    return current
+
+
+def check_free_space(data_dir, *targets):
+    required = data_size(data_dir) + MIN_FREE_HEADROOM
+    for target in targets:
+        if shutil.disk_usage(existing_parent(target)).free <= required:
+            raise ValueError("Need more than DATA_DIR size + 1.5 GiB free before staging and snapshot")
+
+
+def verify_service_unit():
+    output = subprocess.check_output(
+        ["/usr/bin/systemctl", "show", "bojin.service", "--property=LoadState", "--property=ActiveState"],
+        text=True, stdin=subprocess.DEVNULL,
+    )
+    properties = dict(line.split("=", 1) for line in output.strip().splitlines() if "=" in line)
+    if properties.get("LoadState") != "loaded":
+        raise ValueError("bojin.service unit must exist before deployment")
+    if properties.get("ActiveState") not in ALLOWED_SERVICE_STATES:
+        raise ValueError("bojin.service is in an unsupported state: " + properties.get("ActiveState", "unknown"))
+
+
+def stage_release(stream, releases_dir, timeout=UPLOAD_TIMEOUT):
+    def handle_timeout(signum, frame):
+        raise TimeoutError("Timed out receiving release archive")
+
+    previous_handler = signal.signal(signal.SIGALRM, handle_timeout)
+    incoming = Path(tempfile.mkdtemp(prefix=".incoming-", dir=releases_dir))
+    candidate = None
+    signal.alarm(timeout)
+    try:
+        metadata = unpack_release(stream, incoming)
+        revision = metadata["revision"]
+        candidate = releases_dir / f"{revision}-{time.time_ns()}-{os.getpid()}"
+        incoming.rename(candidate)
+        return candidate, metadata
+    except BaseException:
+        if candidate is not None and candidate.exists():
+            shutil.rmtree(candidate, ignore_errors=True)
+        raise
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if incoming.exists():
+            shutil.rmtree(incoming, ignore_errors=True)
+
+
 def point_current(current, target):
     temporary = current.with_name(current.name + ".next")
     if temporary.exists() or temporary.is_symlink():
@@ -81,21 +157,32 @@ def activate(candidate, current, stop, start, healthy, backup):
         raise ValueError("Complete the one-time symlink setup first")
     previous = current.resolve()
     stopped = False
+    backup_dir = None
     try:
         stop()
         stopped = True
-        backup(previous)
+        backup_dir = backup(previous)
         point_current(current, candidate)
         start()
         if not healthy():
             raise RuntimeError("New release did not become healthy")
     except BaseException:
+        if isinstance(backup_dir, Path) and backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
         if stopped:
-            stop()
-            point_current(current, previous)
-            start()
-            if not healthy(rollback=True):
-                raise RuntimeError("Deployment failed and previous code did not recover; investigate on host") from None
+            try:
+                try:
+                    stop()
+                finally:
+                    point_current(current, previous)
+                start()
+                if not healthy(rollback=True):
+                    raise RuntimeError("Deployment failed and previous code did not recover; investigate on host")
+            except BaseException as rollback_error:
+                notify_alert("deploy failed and rollback did not recover; investigate bojin.service")
+                if isinstance(rollback_error, RuntimeError) and str(rollback_error) == "Deployment failed and previous code did not recover; investigate on host":
+                    raise rollback_error from None
+                raise RuntimeError("Deployment failed and previous code did not recover; investigate on host") from rollback_error
         raise
 
 
@@ -104,19 +191,56 @@ def command(*args):
     subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
 
 
+def chown_root_tree(root):
+    root = Path(root)
+    if root.is_symlink():
+        raise ValueError("Refusing symlink backup directory")
+    os.chown(root, 0, 0, follow_symlinks=False)
+    for parent, directories, files in os.walk(root, followlinks=False):
+        parent_path = Path(parent)
+        if parent_path.is_symlink():
+            raise ValueError("Refusing symlink inside backup")
+        os.chown(parent_path, 0, 0, follow_symlinks=False)
+        for name in directories + files:
+            entry = parent_path / name
+            if entry.is_symlink():
+                raise ValueError("Refusing symlink inside backup")
+            os.chown(entry, 0, 0, follow_symlinks=False)
+
+
 def snapshot(previous):
     BACKUPS.mkdir(mode=0o710, parents=True, exist_ok=True)
     import pwd
     app = pwd.getpwnam("bojin")
     os.chown(BACKUPS, 0, app.pw_gid)
     BACKUPS.chmod(0o710)
-    directory = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime()), dir=BACKUPS))
-    os.chown(directory, app.pw_uid, app.pw_gid)
-    for arguments in [("backup", str(directory / "snapshot")), ("ledger", str(directory / "deletions.json"))]:
-        command("/usr/sbin/runuser", "-u", "bojin", "--", "/usr/bin/env", "-i",
-                "PATH=/usr/bin:/bin", "DATA_DIR=" + str(DATA), "/usr/bin/node",
-                str(previous / "scripts/data-backup.js"), *arguments)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ-", time.gmtime())
+    work = Path(tempfile.mkdtemp(prefix=".work-" + stamp, dir=BACKUPS))
+    published = BACKUPS / work.name.removeprefix(".work-")
+    renamed = False
+    try:
+        os.chown(work, app.pw_uid, app.pw_gid)
+        work.chmod(0o700)
+        for arguments in [("backup", str(work / "snapshot")), ("ledger", str(work / "deletions.json"))]:
+            command("/usr/sbin/runuser", "-u", "bojin", "--", "/usr/bin/env", "-i",
+                    "PATH=/usr/bin:/bin", "DATA_DIR=" + str(DATA), "/usr/bin/node",
+                    str(previous / "scripts/data-backup.js"), *arguments)
+        chown_root_tree(work)
+        work.chmod(0o700)
+        (work / "snapshot").chmod(0o700)
+        (work / "deletions.json").chmod(0o600)
+        if published.exists() or published.is_symlink():
+            raise FileExistsError("Deploy snapshot destination already exists")
+        work.rename(published)
+        renamed = True
+    except BaseException:
+        if work.exists():
+            shutil.rmtree(work, ignore_errors=True)
+        if renamed and published.exists():
+            shutil.rmtree(published, ignore_errors=True)
+        raise
     print("Pre-deployment snapshot and deletion ledger saved on host", flush=True)
+    return published
 
 
 def main():
@@ -128,44 +252,46 @@ def main():
     version = subprocess.check_output(["/usr/bin/node", "-p", "process.versions.node"], text=True).strip()
     if version.split(".")[0] != "24":
         raise ValueError("Host requires Node 24")
-    if not Path("/etc/bojin/environment").is_file() or not DATA.is_dir():
+    if not ENV_FILE.is_file() or not DATA.is_dir():
         raise ValueError("Complete and verify the one-time host setup first")
+    verify_service_unit()
     RELEASES.mkdir(mode=0o755, exist_ok=True)
-    with LOCK.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "bojin.service"]).returncode:
-            raise ValueError("App must be running before deployment")
-        if shutil.disk_usage(RELEASES).free < 1024 ** 3:
-            raise ValueError("Need at least 1 GiB free before staging and snapshot; check backup capacity too")
-        incoming = Path(tempfile.mkdtemp(prefix=".incoming-", dir=RELEASES))
-        try:
-            metadata = unpack_release(sys.stdin.buffer, incoming)
-            revision = metadata["revision"]
-            candidate = RELEASES / (revision + "-" + str(time.time_ns()))
-            incoming.rename(candidate)
-        finally:
-            if incoming.exists():
-                shutil.rmtree(incoming)
+    check_free_space(DATA, RELEASES, BACKUPS)
+    candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
+    revision = metadata["revision"]
+    try:
+        with LOCK.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            verify_service_unit()
+            check_free_space(DATA, RELEASES, BACKUPS)
 
-        def healthy(rollback=False):
-            # Ignore inherited HTTP proxies only for this loopback health check.
-            client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            for _ in range(30):
-                try:
-                    active = subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "bojin.service"]).returncode == 0
-                    with client.open("http://127.0.0.1:8080/api/health", timeout=2) as response:
-                        result = json.load(response)
-                    if active and result.get("ok") is True and (rollback or result.get("revision") == revision):
-                        return True
-                except (OSError, ValueError):
-                    pass
-                time.sleep(1)
-            return False
+            def healthy(rollback=False):
+                # Ignore inherited HTTP proxies only for this loopback health check.
+                client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                for _ in range(30):
+                    try:
+                        active = subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "bojin.service"]).returncode == 0
+                        with client.open("http://127.0.0.1:8080/api/health", timeout=2) as response:
+                            result = json.load(response)
+                        if active and result.get("ok") is True and (rollback or result.get("revision") == revision):
+                            return True
+                    except (OSError, ValueError):
+                        pass
+                    time.sleep(1)
+                return False
 
-        activate(candidate, CURRENT,
-                 lambda: command("/usr/bin/systemctl", "stop", "bojin.service"),
-                 lambda: command("/usr/bin/systemctl", "start", "bojin.service"), healthy, snapshot)
-        print("Deployed " + revision, flush=True)
+            def start_service():
+                subprocess.run(["/usr/bin/systemctl", "reset-failed", "bojin.service"], stdin=subprocess.DEVNULL)
+                command("/usr/bin/systemctl", "start", "bojin.service")
+
+            activate(candidate, CURRENT,
+                     lambda: command("/usr/bin/systemctl", "stop", "bojin.service"),
+                     start_service, healthy, snapshot)
+    except BaseException:
+        if candidate.exists() and (not CURRENT.is_symlink() or CURRENT.resolve() != candidate.resolve()):
+            shutil.rmtree(candidate, ignore_errors=True)
+        raise
+    print("Deployed " + revision, flush=True)
 
 
 if __name__ == "__main__":
