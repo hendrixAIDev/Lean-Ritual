@@ -279,7 +279,12 @@ async function cli(args){
     if (stopping) return; stopping = true;
     server.close(() => { try { authentication.close(); db.close(); } finally { process.exit(code); } });
     server.closeIdleConnections();
-    setTimeout(() => process.exit(code || 1), 5000).unref();
+    setTimeout(() => {
+      server.closeAllConnections();
+      try { authentication.close(); } catch {}
+      try { db.close(); } catch {}
+      process.exit(code ?? 1);
+    }, 5000).unref();
   };
   for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => shutdown(0));
   // After an unexpected error the process state is unknown. Stop taking requests,
