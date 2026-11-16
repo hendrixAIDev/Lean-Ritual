@@ -5,7 +5,7 @@
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo/root" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for tool in curl df flock logger systemctl; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
+for tool in curl df flock logger systemctl timeout; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
 systemctl cat bojin.service >/dev/null 2>&1 || { echo "bojin.service not found; review the host first" >&2; exit 1; }
 
 # Root-run programs live outside the replaceable release directory.

@@ -49,12 +49,21 @@ if [[ ! "$max_time" =~ ^[1-9][0-9]*$ ]]; then max_time=10; fi
 connect_timeout=5
 if (( max_time < connect_timeout )); then connect_timeout=$max_time; fi
 
-http_code=$(curl --proto '=https' --proto-redir '=https' \
-  --location --max-redirs 5 --post301 --post302 --post303 \
-  --fail --silent --show-error \
-  --connect-timeout "$connect_timeout" --max-time "$max_time" \
-  -H "Title: Lean Ritual" -H "Tags: warning" \
-  --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+if [[ "${BOJIN_ALERT_WRAPPED:-0}" != 1 ]] && command -v timeout >/dev/null 2>&1; then
+  http_code=$(timeout -k 1s "$((max_time + 1))s" curl --proto '=https' --proto-redir '=https' \
+    --location --max-redirs 5 --post301 --post302 --post303 \
+    --fail --silent --show-error \
+    --connect-timeout "$connect_timeout" --max-time "$max_time" \
+    -H "Title: Lean Ritual" -H "Tags: warning" \
+    --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+else
+  http_code=$(curl --proto '=https' --proto-redir '=https' \
+    --location --max-redirs 5 --post301 --post302 --post303 \
+    --fail --silent --show-error \
+    --connect-timeout "$connect_timeout" --max-time "$max_time" \
+    -H "Title: Lean Ritual" -H "Tags: warning" \
+    --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+fi
 curl_rc=$?
 if (( curl_rc != 0 )) || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
   logger -t bojin-alert -p daemon.err -- "Could not deliver alert to ALERT_URL (curl=$curl_rc http=${http_code:-000})"

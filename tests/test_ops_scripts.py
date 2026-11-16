@@ -59,6 +59,7 @@ class OpsHarness:
                 "http://127.0.0.1:80/": 0,
                 "https://ntfy.sh/test-secret-topic": 0,
             },
+            "systemctl_delays": {},
             "hostname": "bojin-prod",
         }
         self._save_config()
@@ -99,8 +100,20 @@ class OpsHarness:
             self.bin_dir / "systemctl",
             stub_prelude
             + """
+import time
 args = sys.argv[1:]
 record("systemctl", args=args)
+delays = CFG.get("systemctl_delays", {})
+if args:
+    cmd = args[0]
+    unit = args[-1]
+    if cmd in ("restart", "start") and "--no-block" not in args:
+        blocking_delay = float(delays.get("blocking_job", 0.0))
+        if blocking_delay > 0:
+            time.sleep(blocking_delay)
+    specific_delay = float(delays.get(f"{cmd}:{unit}", delays.get(cmd, 0.0)))
+    if specific_delay > 0:
+        time.sleep(specific_delay)
 if len(args) >= 2 and args[0] == "is-active":
     unit = args[-1]
     state = CFG["units"].get(unit, {}).get("active", "inactive")
@@ -124,12 +137,16 @@ sys.exit(0)
             self.bin_dir / "df",
             stub_prelude
             + """
+import time
 args = sys.argv[1:]
 record("df", args=args)
 path = args[-1]
 info = CFG["df"].get(path)
 if info is None:
     sys.exit(1)
+delay = float(info.get("delay", 0.0))
+if delay > 0:
+    time.sleep(delay)
 out_arg = next((a for a in args if a.startswith("--output=")), "--output=pcent")
 cols = out_arg.split("=", 1)[1].split(",")
 headers = {"pcent": "Use%", "ipcent": "IUse%", "target": "Mounted on"}
@@ -160,22 +177,26 @@ proto_redir_https = "--proto-redir" in args and args[args.index("--proto-redir")
 def resolve_spec(u):
     raw = CFG["curl"].get(u, 0)
     if isinstance(raw, int):
-        return {"rc": raw, "http_code": "200" if raw == 0 else "000", "delay": 0.0}
+        return {"rc": raw, "http_code": "200" if raw == 0 else "000", "delay": 0.0, "ignore_sigterm": False}
     return {
         "rc": int(raw.get("rc", 0)),
         "http_code": str(raw.get("http_code", "200" if raw.get("rc", 0) == 0 else "000")),
         "delay": float(raw.get("delay", 0.0)),
         "redirect_to": raw.get("redirect_to"),
+        "ignore_sigterm": bool(raw.get("ignore_sigterm", False)),
     }
 
 spec = resolve_spec(url)
+if spec["ignore_sigterm"]:
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 attempts = 1 + (retries if spec["rc"] != 0 or spec["delay"] > (max_time or 9999) else 0)
 for _ in range(attempts):
     delay = spec["delay"]
     if delay > 0:
-        if max_time is not None and delay > max_time:
+        if max_time is not None and delay > max_time and not spec["ignore_sigterm"]:
             time.sleep(max_time)
-            spec = {"rc": 28, "http_code": "000", "delay": 0.0}
+            spec = {"rc": 28, "http_code": "000", "delay": 0.0, "ignore_sigterm": False}
         else:
             time.sleep(delay)
 
@@ -209,26 +230,43 @@ sys.exit(spec["rc"])
         write_executable(
             self.bin_dir / "timeout",
             """#!/usr/bin/env python3
-import os, signal, subprocess, sys
+import os, signal, subprocess, sys, time
 args = sys.argv[1:]
+kill_after = None
+sig = signal.SIGTERM
 while args and args[0].startswith("-"):
     flag = args.pop(0)
-    if flag in ("-k", "-s"):
-        args.pop(0)
+    if flag == "-k":
+        kill_after = float(args.pop(0).rstrip("s"))
+    elif flag == "-s":
+        s_val = args.pop(0).upper()
+        sig = signal.SIGKILL if s_val in ("KILL", "SIGKILL", "9") else signal.SIGTERM
 limit = float(args.pop(0).rstrip("s"))
 proc = subprocess.Popen(args, start_new_session=True)
+pgid = proc.pid
 try:
     sys.exit(proc.wait(timeout=limit))
 except subprocess.TimeoutExpired:
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-        proc.wait(timeout=0.5)
-    except Exception:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except Exception:
-            pass
-    sys.exit(124)
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    if sig != signal.SIGKILL:
+        deadline = time.monotonic() + (kill_after if kill_after is not None else 0.5)
+        while time.monotonic() < deadline:
+            proc.poll()
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    proc.wait()
+    sys.exit(137 if sig == signal.SIGKILL else 124)
 """,
         )
 
@@ -518,13 +556,13 @@ class OpsScriptsTests(unittest.TestCase):
             if step < 3:
                 caddy_restarts = [
                     e for e in self.h.events()
-                    if e["kind"] == "systemctl" and e["args"] == ["restart", "caddy.service"]
+                    if e["kind"] == "systemctl" and e["args"][0] == "restart" and "caddy.service" in e["args"]
                 ]
                 self.assertEqual(caddy_restarts, [])
 
         caddy_restarts = [
             e for e in self.h.events()
-            if e["kind"] == "systemctl" and e["args"] == ["restart", "caddy.service"]
+            if e["kind"] == "systemctl" and e["args"] == ["restart", "--no-block", "caddy.service"]
         ]
         self.assertEqual(len(caddy_restarts), 1)
 
@@ -583,7 +621,7 @@ class OpsScriptsTests(unittest.TestCase):
             self.h.set_uptime(uptime)
             self.h.run_watchdog()
         sctl = [e["args"] for e in self.h.events() if e["kind"] == "systemctl"]
-        self.assertIn(["restart", "bojin.service"], sctl)
+        self.assertIn(["restart", "--no-block", "bojin.service"], sctl)
 
     def test_nrestarts_crash_alert_retries_after_transient_failure_and_deduplicates_same_mount(self) -> None:
         self.h.run_watchdog()
@@ -642,7 +680,8 @@ class OpsScriptsTests(unittest.TestCase):
         events = self.h.events()
         restart_indices = [
             idx for idx, e in enumerate(events)
-            if e["kind"] == "systemctl" and e["args"] in (["restart", "caddy.service"], ["restart", "bojin.service"])
+            if e["kind"] == "systemctl"
+            and e["args"] in (["restart", "--no-block", "caddy.service"], ["restart", "--no-block", "bojin.service"])
         ]
         alert_indices = [
             idx for idx, e in enumerate(events)
@@ -789,6 +828,189 @@ class OpsScriptsTests(unittest.TestCase):
         }
         res_downgrade = self.h.run_alert("downgrade redirect")
         self.assertNotEqual(res_downgrade.returncode, 0)
+
+    def test_hanging_systemctl_restart_uses_no_block_and_finishes_within_budget(self) -> None:
+        # Simulate BOTH:
+        # 1) any blocking systemctl start/restart without --no-block hangs 65s, AND
+        # 2) systemctl restart --no-block caddy.service itself hangs 15s (e.g. D-Bus stall).
+        # Watchdog must pass --no-block, time out the hung caddy restart, still check/restart
+        # bojin.service, and still flush alerts within budget.
+        self.h.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.h.state_dir / "failures-caddy.service").write_text("2\n", encoding="utf-8")
+        (self.h.state_dir / "failures").write_text("2\n", encoding="utf-8")
+        self.h.config["df"]["/opt"] = {"pcent": "95%", "ipcent": "10%", "target": "/mnt/opt"}
+        self.h.config["curl"]["http://127.0.0.1:80/"] = 28
+        self.h.config["curl"]["http://127.0.0.1:8080/api/health"] = 28
+        self.h.config["systemctl_delays"] = {
+            "blocking_job": 65.0,
+            "restart:caddy.service": 15.0,
+        }
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_CMD_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_CHECKS_BUDGET_SEC": "6",
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "4",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "12",
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 4.5, f"Hanging systemctl restart exceeded budget ({elapsed:.2f}s)")
+
+        sctl = [e["args"] for e in self.h.events() if e["kind"] == "systemctl"]
+        self.assertIn(["restart", "--no-block", "caddy.service"], sctl)
+        self.assertIn(["restart", "--no-block", "bojin.service"], sctl)
+
+        delivered = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(delivered), 3, f"Expected disk + caddy + bojin alerts flushed, got {delivered}")
+
+    def test_hanging_df_times_out_and_runs_later_checks_and_flushes_alerts(self) -> None:
+        # /var/lib/bojin df hangs 15s, while /opt is 94% full and bojin.service crashed once.
+        self.h.config["df"] = {
+            "/var/lib/bojin": {"pcent": "50%", "ipcent": "10%", "target": "/mnt/hung", "delay": 15.0},
+            "/var/backups": {"pcent": "40%", "ipcent": "10%", "target": "/mnt/backups"},
+            "/opt": {"pcent": "94%", "ipcent": "10%", "target": "/"},
+        }
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 1,
+            "invocation": "inv-after-hung-df",
+        }
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_CMD_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_CHECKS_BUDGET_SEC": "6",
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "4",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "12",
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 4.5, f"Hanging df exceeded budget ({elapsed:.2f}s)")
+
+        delivered = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(any("/opt" in m and "94%" in m for m in delivered), delivered)
+        self.assertTrue(any("app crashed and systemd restarted it (1x" in m for m in delivered), delivered)
+
+    def test_hanging_systemctl_show_preserves_state_and_runs_later_checks_and_alerts(self) -> None:
+        # Seed caddy restarts baseline, then make systemctl show hang on caddy.service while
+        # bojin.service crashes and /var/backups fills up.
+        self.h.config["units"]["caddy.service"] = {
+            "active": "active",
+            "nrestarts": 3,
+            "invocation": "inv-caddy-seed",
+        }
+        self.h.run_watchdog()
+        self.h.clear_events()
+        self.h.set_uptime(3000.0)
+
+        self.h.config["systemctl_delays"] = {"show:caddy.service": 15.0}
+        self.h.config["df"]["/var/backups"] = {"pcent": "93%", "ipcent": "10%", "target": "/mnt/backups"}
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 2,
+            "invocation": "inv-bojin-crash",
+        }
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_CMD_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_CHECKS_BUDGET_SEC": "6",
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "4",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "12",
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 4.5, f"Hanging systemctl show exceeded budget ({elapsed:.2f}s)")
+
+        # Caddy restart baseline must not be wiped to 0 by a timed-out systemctl show.
+        caddy_prev = (self.h.state_dir / "restarts-caddy.service").read_text(encoding="utf-8").strip()
+        self.assertEqual(caddy_prev, "3 inv-caddy-seed")
+
+        delivered = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(any("/var/backups" in m and "93%" in m for m in delivered), delivered)
+        self.assertTrue(any("app crashed and systemd restarted it (2x" in m for m in delivered), delivered)
+
+    def test_checks_deadline_reserves_alert_budget_and_accounts_for_kill_grace(self) -> None:
+        # 1. Verify production default budgets leave >=22s for alert delivery and stay well under 60s.
+        script_text = WATCHDOG_SH.read_text(encoding="utf-8")
+        import re
+        defaults = {
+            m.group(1): int(m.group(2))
+            for m in re.finditer(r"(TOTAL_BUDGET_SEC|CHECKS_BUDGET_SEC|ALERT_BUDGET_SEC)=\$\{[^:]+:-([0-9]+)\}", script_text)
+        }
+        self.assertLessEqual(defaults["TOTAL_BUDGET_SEC"], 52)
+        self.assertGreaterEqual(defaults["TOTAL_BUDGET_SEC"] - defaults["CHECKS_BUDGET_SEC"], 22)
+        self.assertGreaterEqual(defaults["ALERT_BUDGET_SEC"], 22)
+
+        # 2. When hanging df calls exhaust CHECKS_BUDGET_SEC, pre-queued alerts still flush and
+        #    skipped HTTP probes do NOT falsely increment failure counters.
+        pending_dir = self.h.state_dir / "pending"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        (pending_dir / "crash-bojin.service").write_text("1800\nqueued crash from prior tick\n", encoding="utf-8")
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "50%", "ipcent": "10%", "target": p, "delay": 10.0}
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_CMD_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_CHECKS_BUDGET_SEC": "2",
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "3",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "6",
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 4.0)
+        self.assertFalse((self.h.state_dir / "failures").exists())
+        delivered = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(delivered, ["Lean Ritual: queued crash from prior tick"])
+
+        # 3. Even when curl ignores SIGTERM and --max-time, -k 1s grace accounting prevents budget overrun.
+        self.h.clear_events()
+        for idx in range(3):
+            (pending_dir / f"custom-{idx}").write_text(f"1800\nmsg {idx}\n", encoding="utf-8")
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "50%", "ipcent": "10%", "target": "/"}
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = {
+            "rc": 0,
+            "delay": 10.0,
+            "ignore_sigterm": True,
+        }
+        started = time.monotonic()
+        res_grace = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "3",
+                "BOJIN_WATCHDOG_ALERT_MAX_TIME": "2",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "8",
+            }
+        )
+        elapsed_grace = time.monotonic() - started
+        self.assertEqual(res_grace.returncode, 0, res_grace.stderr)
+        self.assertLess(elapsed_grace, 4.2, f"Kill grace overran alert budget ({elapsed_grace:.2f}s)")
 
 
 if __name__ == "__main__":
