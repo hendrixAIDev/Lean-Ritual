@@ -31,9 +31,9 @@ These checks do not exercise signup invitation enforcement or authenticated
 cross-account access. An early probe used `/api/signup` and `/api/export`, which
 are not the implemented routes; their 401 responses were excluded as route evidence.
 
-Finding: the deployed privacy page still says the selected host has not been
+Historical finding (initial November 5 check, superseded by the continuation below): the deployed privacy page still says the selected host has not been
 deployed and omits Resend. This PR corrects those known facts while preserving
-draft status and unconfirmed provider/backup details. It is not yet deployed.
+draft status and unconfirmed provider/backup details. At that initial check, the correction was not yet deployed. The later continuation records 13/13 passing checks including the corrected disclosure and supersedes this finding.
 
 ## Remaining gates
 

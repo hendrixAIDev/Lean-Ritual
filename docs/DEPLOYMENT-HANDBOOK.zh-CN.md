@@ -42,11 +42,23 @@
 ## 3. 已发现的交接冲突（优先核对）
 
 1. **Node 22 与 Node 24：** 手册记载主机 Node 22.23.4，而 `release.yml`、`package-release.py`、接收器和首次安装脚本均要求 Node 24 / Linux x64。`package.json` 的最低版本不代表部署链的兼容版本。成功部署不能证明手册中的 Node 22 记录仍有效，也不能证明主机 helper 与仓库完全一致。通过 `/usr/bin/node --version`、`uname -m`，以及主机 helper 与对应仓库文件的 SHA-256 核对。不要直接降低接收器版本检查。
+
+   **2026-11-16 仓库复核状态：** 仓库部署链强制 Node 24 / Linux x64；主机仍须执行 `/usr/bin/node --version` 核实。
 2. **备份脚本位于 release：** 交接写 `/opt/bojin/ops/backup-local.sh`，但当前打包白名单不包含 `ops/`，仓库也没有此 local 脚本。若 timer 仍引用该路径，下一次切换 release 后可能找不到脚本；若以 root 执行发布目录内脚本，还违反权限边界。先读取实际 `bojin-backup-local.service` / timer，取得脚本进行审查，再将经审查的 root 包装器固定安装到 `/usr/local/libexec/` 并修正 unit。不要仅复制一个未知脚本后宣称修复。
+
+   **2026-11-16 仓库复核状态：** `backup-local.sh` 不在仓库或发布包内；须检查主机，日报备份可能因 203/EXEC 失败。PR #14 提议只读审计脚本。仓库 `ops/bojin-backup.timer` 为 UTC 04:00，要求 OFFSITE_DEST 且无清理；它不是交接所述 UTC 09:17、保留 7 份的主机 local timer。
 3. **配置路径：** 邮件段落仍引用 `/opt/bojin/.env`，而目录和迁移记录指向 `/etc/bojin/environment`。以实际 systemd `EnvironmentFiles` 为准；不要维护两份可能漂移的配置。
+
+   **2026-11-16 仓库复核状态：** 本 PR 已将仓库 bojin.service 配置改为 `/etc/bojin/environment`，并更新 ALIYUN 文档；主机实际 drop-in 为准，未在此验证或修改。
 4. **删除台账：** 恢复必须使用最新独立保存的删除台账，而不是旧备份同时间戳的台账，否则可能恢复已删除账号。最新台账不可用时，先核对删除记录，不恢复对外服务。
+
+   **2026-11-16 仓库复核状态：** 恢复 CLI 要求最新删除台账；异地复制仍未闭环。
 5. **备份权限：** 交接的 `sudo node ... restore` 会以 root 执行 release 中的 JS，且可能产生应用不可写的文件。应使用经审查的低权限执行流程；先给恢复操作提供受限的快照读取权限，而不是为了绕过 root-only 目录把 JS 改为 root 执行。
+
+   **2026-11-16 仓库复核状态：** 备份以 bojin 运行；PR #11 修复从只读快照以 bojin 恢复的问题，不代表已合并或主机已更新。
 6. **7 份不等于 7 天或所有备份均到期：** 每日本地备份、部署前快照、release 和异地副本各有独立保留范围。原先提出的 30 天不是已确认政策；不能把一个 timer 的保留数写成完整隐私承诺。
+
+   **2026-11-16 仓库复核状态：** 仓库任何位置均无自动保留清理；保留政策尚未决定。
 
 ## 4. 日常发布：如何确认真的上线
 

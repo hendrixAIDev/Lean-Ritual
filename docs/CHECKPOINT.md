@@ -1,11 +1,13 @@
 # Implementation checkpoint — November 5, 2026 (UTC)
 
+Current status (2026-11-16): invitation-only production is live at https://leanritual.app behind Caddy; GitHub main auto-deploys, Resend SMTP is configured, and AI is off. Local development supports Node >=22.16; production/auto-deploy requires Node 24 on Linux x64. Offsite restoration, retention and representative device/carrier acceptance remain open.
+
 Current continuation: see STAGING-STATUS.md for verified public-site checks and
-GITHUB-DEPLOYMENT.md for the proposed GitHub Actions deployment. The source below
+GITHUB-DEPLOYMENT.md for the active GitHub Actions deployment. The source below
 was recovered from Jay's matching release archive; its login/privacy/shim match
 the live site. The historical local checkpoint does not describe current host access.
 
-Resume here. Source changes are saved in this workspace. No production deployment, real user migration, external email or paid AI call has been performed. Tests use disposable data.
+Historical local checkpoint (November 5, 2026): Source changes are saved in this workspace. No production deployment, real user migration, external email or paid AI call has been performed. Tests use disposable data.
 
 ## Implemented locally
 
@@ -23,7 +25,7 @@ Resume here. Source changes are saved in this workspace. No production deploymen
 - Previous session: production dependency audit reported zero vulnerabilities. This is a point-in-time result.
 - All existing user data was left untouched. Expected SQLite trigger failure logging is a successful negative test.
 
-## Next deployment gates and Jay-owned inputs
+## Historical deployment gates and Jay-owned inputs (November 5, 2026)
 
 1. LEA-6: Jay has provisioned Aliyun US West (Silicon Valley), Ubuntu 24.04, 2 vCPU / 2 GiB / 40 GiB. Domain purchase via Cloudflare is planned; hostname and scoped deployment access remain pending. See ALIYUN-DEPLOYMENT.md.
 2. LEA-7: AI provider/model permitted for intended users, billing controls, SMTP credentials and verified sender domain. Store credentials in secret configuration, never chat or Linear.
@@ -40,4 +42,19 @@ Authentication implementation and independent recovery/privacy review already co
 
 ## Hosting update — November 4, 2026 (America/Los_Angeles)
 
-US West replaces the original Hong Kong assumption. README and privacy draft now reflect the selected, not-yet-deployed region. ALIYUN-DEPLOYMENT.md provides DNS-only/Caddy setup and host handoff; MAINLAND-TESTING.md provides the tester matrix. No remote server changes or DNS purchases were performed.
+Historical record (November 4; superseded by the current status above): US West replaces the original Hong Kong assumption. README and privacy draft now reflect the selected, not-yet-deployed region. ALIYUN-DEPLOYMENT.md provides DNS-only/Caddy setup and host handoff; MAINLAND-TESTING.md provides the tester matrix. No remote server changes or DNS purchases were performed.
+
+## Open PRs (2026-11-16)
+
+Pointers for owner review; no merge status is implied.
+
+- [#5](https://github.com/hendrixAIDev/Lean-Ritual/pull/5): Escape AI and stored values in app HTML.
+- [#6](https://github.com/hendrixAIDev/Lean-Ritual/pull/6): Enforce per-user document quotas and write throttling.
+- [#7](https://github.com/hendrixAIDev/Lean-Ritual/pull/7): Send pseudonymous user ID to AI provider.
+- [#8](https://github.com/hendrixAIDev/Lean-Ritual/pull/8): Purge reissued invitations on account deletion.
+- [#9](https://github.com/hendrixAIDev/Lean-Ritual/pull/9): Align privacy disclosure with actual data flows.
+- [#10](https://github.com/hendrixAIDev/Lean-Ritual/pull/10): Harden data leases and graceful shutdown.
+- [#11](https://github.com/hendrixAIDev/Lean-Ritual/pull/11): Support read-only snapshots and atomic ledger replay.
+- [#12](https://github.com/hendrixAIDev/Lean-Ritual/pull/12): Harden watchdog, HTTPS alerts and systemd timing.
+- [#13](https://github.com/hendrixAIDev/Lean-Ritual/pull/13): Harden backup locking, preflight and deploy receiver.
+- [#14](https://github.com/hendrixAIDev/Lean-Ritual/pull/14): Add read-only host audit script.
