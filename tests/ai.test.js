@@ -30,3 +30,16 @@ test('invalid requests do not consume quota; output token cap is enforced',async
 test('zero global quota disables AI without disabling application storage',async()=>{
  const {db,proxy}=fixture({aiGlobalDaily:0});try{await assert.rejects(proxy({id:'a'},body),e=>e.status===429);assert.equal(db.prepare('SELECT COUNT(*) n FROM ai_usage').get().n,0);}finally{db.close();}
 });
+test('provider user IDs are stable pseudonyms and never expose account IDs',async()=>{
+ const sent=[];const {db,proxy}=fixture({authSecret:'test-server-secret'},async(u,o)=>{sent.push(JSON.parse(o.body));return {ok:true,json:async()=>({choices:[{message:{content:'ok'}}]})};});try{
+ const first='internal-account-alice',second='internal-account-bob';
+ await proxy({id:first},body);await proxy({id:first},body);await proxy({id:second},body);
+ assert.equal(sent[0].user,sent[1].user);assert.notEqual(sent[0].user,sent[2].user);
+ for(const request of sent){assert.match(request.user,/^[a-f0-9]{32}$/);assert.ok(!JSON.stringify(request).includes(first));assert.ok(!JSON.stringify(request).includes(second));}
+ }finally{db.close();}
+});
+test('provider user field is omitted without a server secret',async()=>{
+ let sent;const {db,proxy}=fixture({},async(u,o)=>{sent=JSON.parse(o.body);return {ok:true,json:async()=>({choices:[{message:{content:'ok'}}]})};});try{
+ await proxy({id:'internal-account-alice'},body);assert.equal(Object.hasOwn(sent,'user'),false);
+ }finally{db.close();}
+});
