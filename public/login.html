@@ -71,13 +71,15 @@ button.primary:disabled{opacity:.6}
     if(mode==="reset")body={token:params.get("token"),newPassword:password};
     if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};
     try{
-      const r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      let r;
+      try{r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});}
+      catch{$("#err").textContent="连不上服务器。";return}
       const j=await r.json().catch(()=>({}));
       if(!r.ok)throw Error(j.message||"请求失败，请稍后再试。");
       if(mode==="login"){location.replace("/");return}
       if(mode==="reset"){history.replaceState(null,"","/login.html");setMode("login");$("#err").textContent="密码已更新，请重新登录。"}
       else $("#err").textContent=mode==="register"?"请查收验证邮件，验证后再登录。":"如果邮箱符合条件，邮件会发送到你的邮箱。请检查垃圾邮件。";
-    }catch(err){$("#err").textContent=err.message||"连不上服务器。"}finally{$("#go").disabled=false}
+    }catch(err){$("#err").textContent=err.message||"请求失败，请稍后再试。"}finally{$("#go").disabled=false}
   };
 })();
 </script>
