@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -uo pipefail
-if (( EUID != 0 )); then echo 'FAIL Run with sudo (root required)'; exit 1; fi
+if (( EUID != 0 )) && ! [[ ${AUDIT_TEST_MODE:-} == 1 && ${AUDIT_ROOT:-} == /* && ${AUDIT_ROOT//\//} != "" ]]; then echo 'FAIL Run with sudo (root required)'; exit 1; fi
 R=${AUDIT_ROOT:-}; fails=0; warns=0
 report() { echo "$1 $2"; case $1 in FAIL) ((fails+=1));; WARN) ((warns+=1));; esac; }
 p() { printf '%s%s' "$R" "$1"; }
-# Unstructured service output is deliberately suppressed: journal messages and
-# command arguments can contain arbitrary credentials without recognizable keys.
-safe_lines() { sed -E '/[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss]|[Tt][Oo][Kk][Ee][Nn]|[Tt][Oo][Pp][Ii][Cc]|https?:\/\//c\[REDACTED sensitive line]' ; }
+# Redact whole sensitive lines, retaining ordinary diagnostics.
+safe_lines() { python3 -c 'import sys,re
+for line in sys.stdin:
+ print("[REDACTED sensitive line]" if re.search(r"key|secret|pass|token|topic|Authorization|https?://",line,re.I) else line.rstrip())'; }
+audit_tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$audit_tmp"' EXIT
+{
+
 echo 'Runtime'
 nodebin=$(p /usr/bin/node); v=$($nodebin --version 2>/dev/null || true)
 [[ $v == v24.* ]] && report PASS "node $v" || report FAIL 'node expected v24.x'
@@ -37,14 +42,15 @@ for unit in bojin.service caddy.service bojin-backup.service bojin-backup.timer 
  echo "$unit"
  systemctl show "$unit" -p LoadState -p ActiveState -p SubState -p Result -p NRestarts -p ExecMainStatus -p User -p EnvironmentFiles | safe_lines
  execspec=$(systemctl show "$unit" -p ExecStart --value 2>/dev/null || true)
+ printf 'ExecStart=%s\n' "$execspec" | safe_lines
  while IFS= read -r path; do [[ -z $path ]] && continue; echo "ExecStart path=$path" | safe_lines; [[ -e $(p "$path") ]] || report FAIL "ExecStart missing: $path"; done < <(printf '%s' "$execspec" | grep -oE 'path=[^ ;}]+' | cut -d= -f2)
  [[ $unit == *.timer ]] && systemctl list-timers "$unit" --no-pager | safe_lines
 done
 for unit in bojin-backup-local.service bojin-backup.service; do
- echo "Journal $unit (20 lines; message text withheld to guarantee no credentials)"
- journalctl -u "$unit" -n 20 --no-pager 2>/dev/null | awk '{print "[journal entry withheld]"}'
+ echo "Journal $unit (last 20 lines, sensitive lines redacted)"
+ journalctl -u "$unit" -n 20 --no-pager 2>/dev/null | safe_lines
 done
-systemctl cat bojin.service 2>/dev/null | grep -E '^(Restart|StartLimit[^=]*|EnvironmentFile|User|WorkingDirectory)=' | safe_lines
+systemctl cat bojin.service 2>/dev/null | grep -E '^(Restart|StartLimit[^=]*|EnvironmentFile|User|WorkingDirectory|ExecStart)=' | safe_lines
 echo 'Permissions and capacity'
 for path in /etc/bojin/environment /var/lib/bojin /var/lib/bojin/bojin.db /var/lib/bojin/auth.sqlite /run/lock/bojin-maintenance.lock; do
  stat -c '%U:%G %a %n' "$(p "$path")" 2>/dev/null | safe_lines
@@ -62,15 +68,21 @@ find "$(p /var/lib/bojin/.access)" -maxdepth 1 -type f -printf '%f %s bytes %TY-
 echo 'Configuration (values withheld)'
 python3 - "$R" <<'PY'
 import sys,pathlib
-for name,expected in [('bojin/environment','AUTH_SECRET AUTH_BASE_URL SMTP_HOST SMTP_USER SMTP_PASS MAIL_FROM OPENROUTER_API_KEY OPENROUTER_MODEL COOKIE_SECURE TRUST_PROXY DATA_DIR'),('bojin-backup.env','OFFSITE_DEST'),('bojin-alert.env','')]:
+from urllib.parse import urlsplit
+for name,expected in [('bojin/environment','AUTH_SECRET AUTH_BASE_URL SMTP_HOST SMTP_USER SMTP_PASS MAIL_FROM OPENROUTER_API_KEY OPENROUTER_MODEL COOKIE_SECURE TRUST_PROXY DATA_DIR'),('bojin-backup.env','OFFSITE_DEST'),('bojin-alert.env','ALERT_URL')]:
  p=pathlib.Path(sys.argv[1]+'/etc/'+name); print(name, 'present' if p.exists() else 'MISSING'); d={}
  if p.exists():
   for line in p.read_text().splitlines():
    if '=' in line and not line.lstrip().startswith('#'):
     k,v=line.split('=',1); d[k.strip()]=v.strip().strip('\"\'')
  for k in expected.split():
-  v=d.get(k,''); print(k, 'present' if v else 'empty/missing')
-  if k=='AUTH_SECRET': print('AUTH_SECRET length',len(v),'PASS' if len(v)>=32 else 'WARN')
+  v=d.get(k,''); print(('PASS ' if v else 'WARN ')+k, 'present' if v else 'empty/missing')
+  if k in ('OFFSITE_DEST','ALERT_URL') and v:
+   try:
+    u=urlsplit(v)
+    print(k+' endpoint',u.scheme+'://'+u.hostname if u.scheme and u.hostname and all(c.isalnum() or c in '.-:' for c in u.hostname) else '[non-URL destination withheld]')
+   except ValueError: print(k+' endpoint [invalid URL]')
+  if k=='AUTH_SECRET': print(('PASS' if len(v)>=32 else 'WARN'),'AUTH_SECRET length',len(v))
   if k in ('COOKIE_SECURE','TRUST_PROXY'): print(k, v if v in ('true','false','0','1') else '[invalid/empty]')
  print('additional key count',len(set(d)-set(expected.split())))
 PY
@@ -78,5 +90,9 @@ caddy version
 caddy validate --config "$(p /etc/caddy/Caddyfile)" >/dev/null 2>&1 && report PASS 'Caddy validation' || report FAIL 'Caddy validation'
 for directive in lb_try_duration handle_errors; do grep -q "$directive" "$(p /etc/caddy/Caddyfile)" 2>/dev/null && report PASS "Caddy $directive present" || report WARN "Caddy $directive absent"; done
 timeout 10 openssl s_client -connect 127.0.0.1:443 -servername leanritual.app </dev/null 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | safe_lines
+} >"$audit_tmp/report" 2>&1
+cat "$audit_tmp/report"
+fails=$(grep -c '^FAIL ' "$audit_tmp/report" || true)
+warns=$(grep -c '^WARN ' "$audit_tmp/report" || true)
 echo "Summary: FAIL=$fails WARN=$warns"
 exit 0
