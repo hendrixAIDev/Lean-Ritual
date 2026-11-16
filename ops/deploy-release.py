@@ -191,6 +191,8 @@ def activate(candidate, current, stop, start, healthy, backup):
         start()
         if not healthy():
             raise RuntimeError("New release did not become healthy")
+        # Called under the maintenance lock; only successful activation changes rollback target.
+        point_current(current.with_name("bojin-previous"), previous)
     except BaseException:
         if stopped:
             try:
@@ -276,11 +278,13 @@ def main():
     verify_service_unit(check_active_state=False)
     RELEASES.mkdir(mode=0o755, exist_ok=True)
     check_free_space(DATA, RELEASES, BACKUPS)
-    candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
-    revision = metadata["revision"]
+    candidate = None
     try:
         with LOCK.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            # Staging shares the maintenance lock with retention.
+            candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
+            revision = metadata["revision"]
             check_free_space(DATA, RELEASES, BACKUPS)
             verify_service_unit(check_active_state=True)
 
@@ -307,7 +311,7 @@ def main():
                      lambda: command("/usr/bin/systemctl", "stop", "bojin.service"),
                      start_service, healthy, snapshot)
     except BaseException:
-        if candidate.exists() and (not CURRENT.is_symlink() or CURRENT.resolve() != candidate.resolve()):
+        if candidate is not None and candidate.exists() and (not CURRENT.is_symlink() or CURRENT.resolve() != candidate.resolve()):
             shutil.rmtree(candidate, ignore_errors=True)
         raise
     print("Deployed " + revision, flush=True)

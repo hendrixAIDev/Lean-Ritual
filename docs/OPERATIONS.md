@@ -23,7 +23,7 @@ The snapshot includes bojin.db, auth.sqlite if present, and every photo referenc
 Daily backups and pre-deploy snapshots stay on the server for approximately 7 days
 (owner decision 2026-11-16). BACKUP_RETENTION_DAYS in /etc/bojin-backup.env defaults
 to 7. The newest two of each snapshot type and newest deletion ledger are always
-kept regardless of age. Releases retain the active release, its predecessor as
+kept regardless of age. Releases retain the active release, the persisted /opt/bojin-previous as
 rollback target, and newest five others. Pruning runs after successful publication
 under the maintenance lock; failures fail the backup unit without removing the new
 snapshot. Only recognized names are pruned, never symlink entries.
@@ -35,7 +35,7 @@ Verify with `systemctl list-timers bojin-backup.timer` and
 `journalctl -u bojin-backup.service`. Run a manual backup and restore drill.
 An empty OFFSITE_DEST logs "offsite disabled"; configured rsync retains bounded
 timeouts and failures fail the unit. Offsite backup remains a known gap:
-loss of the host can lose all recent data.
+loss of the host can lose all server data.
 
 ## Restore and rollback
 
@@ -67,3 +67,8 @@ Tests cover writer exclusion, checksums, refusing overwrites, snapshots with bot
 文档保护：`DOC_USER_BYTES` 默认 52428800（50 MiB，按 UTF-8 字节计算），`DOC_USER_COUNT` 默认 20000；覆盖按新旧大小差计算，删除释放额度。超过额度返回 413 / `doc_quota`。`DOC_WRITE_PER_MIN` 默认 240，每账号固定 60 秒窗口限制写入（含删除与失败尝试），超限返回 429 和 `Retry-After`；读取不限流，重启清空窗口。配置均须为正整数。默认值为日常记录保留充足空间，同时限制单账号滥用。
 
 超额账号可覆盖为不增加字节数的现有文档，以便删减内容恢复额度；`node server.js import` 同样执行文档额度检查。客户端对 429 最多重试两次，遵循 `Retry-After`（1–65 秒，缺省 5 秒）；413 立即提示错误并保留待保存输入。
+
+Deploys reject an intentionally stopped service unless authorized once via
+`sudo install -m 0600 -o root -g root /dev/null /etc/bojin/allow-deploy-when-stopped`; the deploy consumes this authorization under the maintenance lock.
+Backup and deploy require free space greater than size(DATA_DIR) + 1.5 GiB before stopping the app. Backup releases the maintenance lock before bounded offsite rsync.
+Release pruning skips entirely until the upgraded deploy helper has recorded /opt/bojin-previous after a successful deploy; active and previous pointers must resolve. Releases younger than the retention window are also kept.

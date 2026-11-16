@@ -42,6 +42,25 @@ def bundle(extra=None, metadata=None):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_previous_pointer_tracks_successful_activation_after_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, broken, fixed = [root / name for name in ("manual", "broken", "fixed")]
+            for p in (old, broken, fixed):
+                p.mkdir()
+            current = root / "bojin"
+            current.symlink_to(old)
+            previous = root / "bojin-previous"
+            previous.symlink_to(broken)
+            deploy.activate(fixed, current, lambda: None, lambda: None,
+                            lambda **kwargs: True, lambda p: None)
+            self.assertEqual(previous.resolve(), old.resolve())
+            with self.assertRaises(RuntimeError):
+                deploy.activate(broken, current, lambda: None, lambda: None,
+                                lambda rollback=False: rollback, lambda p: None)
+            self.assertEqual(previous.resolve(), old.resolve())
+            self.assertEqual(current.resolve(), fixed.resolve())
+
     def test_safe_bundle_and_service_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)

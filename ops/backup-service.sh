@@ -8,7 +8,7 @@ set -euo pipefail
 exec 9>/run/lock/bojin-maintenance.lock
 flock -x 9
 cd /opt/bojin
-stamp=$(date -u +%Y%m%dT%H%M%SZ)
+read -r start_epoch stamp < <(python3 -c 'import time; t = int(time.time()); print(t, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t)))')
 snapshot="$BACKUP_ROOT/snapshot-$stamp"
 ledger="$BACKUP_ROOT/deletions-$stamp.json"
 work=""
@@ -89,57 +89,108 @@ if [[ "$restart" == 1 ]]; then
   systemctl start bojin.service
 fi
 # Prune only after publication, under the same maintenance lock.
-python3 - "$BACKUP_ROOT" "$BACKUP_RETENTION_DAYS" "$snapshot" <<'PYRET'
-import datetime, os, pathlib, re, shutil, sys, time
-root = pathlib.Path(sys.argv[1])
-cutoff = time.time() - int(sys.argv[2]) * 86400
-new = pathlib.Path(sys.argv[3])
-def entries(base, pattern, directory):
+python3 - "$BACKUP_ROOT" "$BACKUP_RETENTION_DAYS" "$snapshot" "$ledger" "$start_epoch" <<'PYRET'
+import datetime, pathlib, re, shutil, sys
+
+def check_root(base):
     if base.is_symlink():
-        raise RuntimeError("Refusing symlink retention root")
+        raise RuntimeError(f"Refusing symlink retention root: {base}")
     if not base.exists():
+        return None
+    return base.resolve(strict=True)
+
+def parse_stamp(name):
+    m = re.search(r"([0-9]{8}T[0-9]{6}Z)", name)
+    if not m:
+        return None
+    try:
+        return (datetime.datetime.strptime(m.group(1), "%Y%m%dT%H%M%SZ")
+                .replace(tzinfo=datetime.timezone.utc).timestamp())
+    except ValueError:
+        return None
+
+now = int(sys.argv[5])
+cutoff = now - int(sys.argv[2]) * 86400
+new_protected = {
+    pathlib.Path(sys.argv[3]).resolve(strict=True),
+    pathlib.Path(sys.argv[4]).resolve(strict=True),
+}
+
+def dated_entries(raw_base, pattern, directory):
+    base = check_root(raw_base)
+    if base is None:
         return []
-    return sorted((p for p in base.iterdir()
-                   if re.fullmatch(pattern, p.name) and not p.is_symlink()
-                   and (p.is_dir() if directory else p.is_file())),
-                  key=lambda p: p.name, reverse=True)
-def prune(items, keep, dated=True):
-    for p in items:
-        if p in keep or p == new:
+    found = []
+    for p in base.iterdir():
+        if (re.fullmatch(pattern, p.name) and not p.is_symlink()
+                and (p.is_dir() if directory else p.is_file())):
+            ts = parse_stamp(p.name)
+            if ts is None:
+                print(f"skipping invalid timestamp entry {p.name}", file=sys.stderr, flush=True)
+                continue
+            if ts > now + 3600:
+                print("skipping future timestamp entry " + p.name, file=sys.stderr)
+                continue
+            found.append((ts, p.name, p))
+    found.sort(reverse=True)
+    return found
+
+def newest_keep(dated_list, count):
+    return {p for _, _, p in dated_list[:count]}
+
+def prune_dated(dated_list, keep):
+    for ts, _, p in dated_list:
+        if p in keep or p in new_protected:
             continue
-        stamp = re.search(r"[0-9]{8}T[0-9]{6}Z", p.name)
-        age = (datetime.datetime.strptime(stamp.group(), "%Y%m%dT%H%M%SZ")
-               .replace(tzinfo=datetime.timezone.utc).timestamp()
-               if dated else p.stat().st_mtime)
-        if age < cutoff or not dated:
-            if p.is_dir():
+        st = p.lstat()
+        if ts < cutoff and st.st_mtime < cutoff:
+            if p.is_dir() and not p.is_symlink():
                 shutil.rmtree(p)
             else:
                 p.unlink()
             print("pruned " + p.name, flush=True)
-snapshots = entries(root, r"snapshot-[0-9]{8}T[0-9]{6}Z", True)
-ledgers = entries(root, r"deletions-[0-9]{8}T[0-9]{6}Z\.json", False)
-keep = set(snapshots[:2])
-ledger_keep = set(ledgers[:1])
-ledger_keep.update(root / ("deletions-" + p.name[9:] + ".json") for p in keep)
-prune(snapshots, keep)
-prune(ledgers, ledger_keep)
-deploy = entries(pathlib.Path("/var/backups/bojin-deploy"),
-                 r"[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9_]{8}", True)
-# Each deploy directory includes its deletion ledger; preserve the newest.
-prune(deploy, set(deploy[:2]))
-releases = entries(pathlib.Path("/opt/bojin-releases"),
-                   r"[0-9a-f]{40}-[0-9]+-[0-9]+", True)
-releases.sort(key=lambda p: int(p.name.split("-")[1]), reverse=True)
-active = pathlib.Path("/opt/bojin").resolve(strict=True)
-protected = {active}
-# The predecessor in activation order is the rollback target.
-older = [p for p in releases if p != active and
-         int(p.name.split("-")[1]) < int(active.name.split("-")[1])]
-protected.update(older[:1])
-others = [p for p in releases if p not in protected]
-protected.update(others[:5])
-prune(releases, protected, dated=False)
+
+root = pathlib.Path(sys.argv[1])
+snapshots = dated_entries(root, r"snapshot-[0-9]{8}T[0-9]{6}Z", True)
+ledgers = dated_entries(root, r"deletions-[0-9]{8}T[0-9]{6}Z\.json", False)
+keep = newest_keep(snapshots, 2) | {pathlib.Path(sys.argv[3]).resolve(strict=True)}
+ledger_keep = newest_keep(ledgers, 1) | {pathlib.Path(sys.argv[4]).resolve(strict=True)}
+if snapshots:
+    resolved_root = root.resolve(strict=True)
+    ledger_keep.update(resolved_root / ("deletions-" + p.name[9:] + ".json") for p in keep)
+prune_dated(snapshots, keep)
+prune_dated(ledgers, ledger_keep)
+
+deploy = dated_entries(pathlib.Path("/var/backups/bojin-deploy"),
+                       r"[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9_]{8}", True)
+prune_dated(deploy, newest_keep(deploy, 2))
+
+rel_base = check_root(pathlib.Path("/opt/bojin-releases"))
+if rel_base is not None:
+    rel_re = re.compile(r"[0-9a-f]{40}-([0-9]+)-[0-9]+")
+    releases = sorted(
+        (p for p in rel_base.iterdir()
+         if rel_re.fullmatch(p.name) and not p.is_symlink() and p.is_dir()),
+        key=lambda p: int(rel_re.fullmatch(p.name).group(1)),
+        reverse=True,
+    )
+    active = pathlib.Path("/opt/bojin").resolve(strict=True)
+    protected = {active}
+    prev_link = pathlib.Path("/opt/bojin-previous")
+    if prev_link.is_symlink() or prev_link.exists():
+        protected.add(prev_link.resolve(strict=True))
+    else:
+        print("release pruning disabled: previous pointer missing", file=sys.stderr)
+        sys.exit(0)
+    others = [p for p in releases if p not in protected]
+    protected.update(others[:5])
+    for p in releases:
+        if p in protected or p.samefile(active):
+            continue
+        st = p.lstat()
+        if max(st.st_mtime, st.st_ctime) < cutoff:
+            shutil.rmtree(p)
+            print("pruned " + p.name, flush=True)
 PYRET
 flock -u 9
 exec 9>&-
