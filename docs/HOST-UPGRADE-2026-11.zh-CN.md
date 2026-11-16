@@ -15,10 +15,12 @@ GitHub Actions 自动部署仅更新 `/opt/bojin` 应用代码，**不会**更�
 | **6** | （可选）开启阿里云云盘自动快照策略作整机故障兜底 | **否** |
 | **7** | 分步回滚说明（从只读备份原件与记录的 timer 状态恢复） | 视回滚项而定（仅 7.5 显式重启应用） |
 
-> **三条铁律（全程遵守）：**
-> 1. **切勿执行 `rm /run/lock/bojin-maintenance.lock`**：删除可能正被持有的 `flock` 锁文件会让新进程锁在全新 inode 上导致并发冲突；PR #19 的双锁包装器会在 `fs.protected_regular=2` 返回 `EACCES` 时安全打开并锁住现有文件。
-> 2. **保留完整的 `( set -euo pipefail ... )` 子进程边界**：本手册每个非编辑代码块均包裹在 `( set -euo pipefail ... )` 子 shell 中——整段粘贴执行时，任一命令失败都会**立即中止后续命令**，同时不会退出你当前的交互式 SSH 会话。含 `sudo nano` 的步骤已拆分为“先编辑、后校验执行”两小步，切勿把校验块贴进编辑器。
-> 3. **切勿在聊天、Git、Issue 或命令行参数中粘贴任何密钥/告警 URL**：所有敏感配置一律用 `sudo nano` 直接写入受保护文件，且不要执行 `cat /etc/bojin/environment`。
+> [!IMPORTANT]
+> **四条铁律（开始前必读，全程严格遵守）：**
+> 1. **逐段粘贴、逐段看门控——遇非零立即停手**：每次**只复制粘贴一个代码块**执行。每个代码块末尾都会打印 `STEP ... OK`（或 `ROLLBACK ... OK`）以及 `BLOCK EXIT=<退出码>`（子 shell 不会关闭你的交互式 SSH 会话，但**不会自动阻止你继续手动粘贴下一段**）。**只要未看到 `OK`、`BLOCK EXIT` 非 `0`，或屏幕出现 `STOP:` / `停止`，必须立即停止整个升级流程，严禁继续粘贴下一代码块**——先按该步“失败处理”排查或按**步骤 7** 回滚后再继续。
+> 2. **切勿执行 `rm /run/lock/bojin-maintenance.lock`**：删除可能正被持有的 `flock` 锁文件会让新进程锁在全新 inode 上导致并发冲突；PR #19 的双锁包装器会在 `fs.protected_regular=2` 返回 `EACCES` 时安全打开并锁住现有文件。
+> 3. **含 `sudo nano` 的步骤分两段执行**：步骤 4 与步骤 5 已拆为“`.1` 打开编辑器保存退出”与“`.2` 权限收敛 + 校验执行”两个独立代码块，切勿把 `.2` 代码块贴进 `nano` 编辑器。
+> 4. **切勿在聊天、Git、Issue 或命令行参数中粘贴任何密钥/告警 URL**：所有敏感配置一律用 `sudo nano` 直接写入受保护文件，且不要执行 `cat /etc/bojin/environment`。
 
 ---
 
@@ -36,26 +38,36 @@ echo "Live revision: $LIVE_SHA"
 if [[ ! -d ~/Lean-Ritual/.git ]]; then
   git clone https://github.com/hendrixAIDev/Lean-Ritual.git ~/Lean-Ritual
 fi
-test -z "$(git -C ~/Lean-Ritual status --porcelain)"
+if [[ -n "$(git -C ~/Lean-Ritual status --porcelain)" ]]; then
+  echo "STOP: ~/Lean-Ritual has local modifications or untracked files" >&2
+  exit 1
+fi
 git -C ~/Lean-Ritual -c core.hooksPath=/dev/null fetch https://github.com/hendrixAIDev/Lean-Ritual.git main
-test "$(git -C ~/Lean-Ritual rev-parse FETCH_HEAD)" = "$LIVE_SHA"
+if [[ "$(git -C ~/Lean-Ritual rev-parse FETCH_HEAD)" != "$LIVE_SHA" ]]; then
+  echo "STOP: origin/main FETCH_HEAD does not match live revision ($LIVE_SHA)" >&2
+  exit 1
+fi
 git -C ~/Lean-Ritual -c core.hooksPath=/dev/null checkout --detach "$LIVE_SHA"
-test "$(git -C ~/Lean-Ritual rev-parse HEAD)" = "$LIVE_SHA"
-test -z "$(git -C ~/Lean-Ritual status --porcelain)"
-echo "OK: clean checkout matches origin/main and live ($LIVE_SHA)"
-)
+if [[ "$(git -C ~/Lean-Ritual rev-parse HEAD)" != "$LIVE_SHA" ]] || [[ -n "$(git -C ~/Lean-Ritual status --porcelain)" ]]; then
+  echo "STOP: checkout verification failed" >&2
+  exit 1
+fi
+echo "STEP 0 OK (revision=$LIVE_SHA)"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
-- **预期输出**：打印 `Live revision: <40位SHA>` 与 `OK: clean checkout matches origin/main and live (<40位SHA>)`，退出码为 `0`。
+> **门控检查**：必须看到 `STEP 0 OK` 且 `BLOCK EXIT=0` 方可继续；若 `BLOCK EXIT` 非 `0` 或输出 `STOP:` / `停止`，**立即停止，不得粘贴步骤 1**，先按下方排查。
+
+- **预期输出**：打印 `Live revision: <40位SHA>`、`STEP 0 OK (revision=<40位SHA>)` 与 `BLOCK EXIT=0`。
 - **失败处理**：
-  - 若 `git status --porcelain` 非空导致中止：说明 `~/Lean-Ritual` 存在本地修改或未跟踪文件，执行 `rm -rf ~/Lean-Ritual` 后重跑步骤 0 获取全新克隆。
-  - 若 `FETCH_HEAD` 与 `LIVE_SHA` 不一致：先打开 GitHub Actions 检查最新 `release.yml` 是否仍在部署或失败，等线上 revision 与 `main` 完全一致后再继续。
+  - 若报 `STOP: ~/Lean-Ritual has local modifications or untracked files`：执行 `rm -rf ~/Lean-Ritual` 后重跑步骤 0 获取全新克隆。
+  - 若报 `STOP: origin/main FETCH_HEAD does not match live revision`：先打开 GitHub Actions 检查最新 `release.yml` 是否仍在部署或失败，等线上 revision 与 `main` 完全一致后再继续。
 
 ---
 
 ## 步骤 1：运行只读主机审计（PR #14）
 
-- **变更内容**：以 `root` 运行只读脚本 `scripts/host-audit.sh`（自动脱敏密钥与完整 URL），将升级前基线保存到 `/tmp/host-audit-before.txt`，并确认旧版 `bojin-backup-local.service` 当前未在运行。不修改任何系统文件或服务。**不重启应用**。
+- **变更内容**：以 `root` 运行只读脚本 `scripts/host-audit.sh`（自动脱敏密钥与完整 URL），将升级前基线保存到 `/tmp/host-audit-before.txt`，并强制确认旧版 `bojin-backup-local.service` 当前未在运行。不修改任何系统文件或服务。**不重启应用**。
 - **执行命令**：
 
 ```bash
@@ -66,9 +78,15 @@ sudo bash scripts/host-audit.sh | tee /tmp/host-audit-before.txt
 echo "--- 关注项汇总 ---"
 grep -E '^(FAIL|WARN|Summary:)' /tmp/host-audit-before.txt || true
 systemctl status bojin-backup-local.timer bojin-backup-local.service --no-pager 2>/dev/null || true
-! systemctl is-active --quiet bojin-backup-local.service
-)
+if systemctl is-active --quiet bojin-backup-local.service; then
+  echo "STOP: legacy backup is active" >&2
+  exit 1
+fi
+echo "STEP 1 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：必须看到 `STEP 1 OK`、`BLOCK EXIT=0`，且人工核对下方第 1、3 项无阻塞性问题后方可继续；若 `BLOCK EXIT` 非 `0` 或发现硬前提 `FAIL`，**立即停止，不得粘贴步骤 2**。
 
 - **预期输出与重点核查项**：
   1. **必须为 `PASS` 的硬前提**：`PASS node v24.x`、`PASS architecture x86_64`、`Health ok: True`、`PASS AUTH_SECRET present`、`PASS Caddy validation`。
@@ -78,10 +96,10 @@ systemctl status bojin-backup-local.timer bojin-backup-local.service --no-pager 
      - `WARN OPENROUTER_API_KEY empty/missing`、`WARN OPENROUTER_MODEL empty/missing`、`WARN ALERT_URL empty/missing`（步骤 4、5 配置后消除；`OFFSITE_DEST empty/missing` 按当前 7 天本机保留决策属预期 `WARN`）。
      - `WARN maintenance lock not root owned`（若 `/run/lock/bojin-maintenance.lock` 曾由非 root 创建：**切勿删除**，步骤 2 双锁包装器会自动兼容）。
   3. **需要额外留意的异常项**：
-     - `FAIL leftover environment file: <路径>`：说明 `/opt` 下残留旧 `.env`。确认审计中 `bojin/environment present` 且 `AUTH_SECRET`/`SMTP_*` 均为 `PASS` 后，用审计报告给出的完整路径移入 `/root` 保存：`sudo bash -c 'dst="/root/legacy-opt-env-$(date -u +%Y%m%dT%H%M%SZ).bak"; [[ ! -e "$dst" ]] && mv "<审计输出的完整.env路径>" "$dst" && chmod 0600 "$dst"'`。
+     - `FAIL leftover environment file: <路径>`：说明 `/opt` 下残留旧 `.env`。确认审计中 `bojin/environment present` 且 `AUTH_SECRET`/`SMTP_*` 均为 `PASS` 后，用审计报告给出的完整路径移入 `/root` 保存：`sudo bash -c 'set -euo pipefail; dst="/root/legacy-opt-env-$(date -u +%Y%m%dT%H%M%SZ)-$$.bak"; if [[ -e "$dst" || -L "$dst" ]]; then echo "STOP: backup file exists" >&2; exit 1; fi; mv "<审计输出的完整.env路径>" "$dst"; chmod 0600 "$dst"'`。
      - 磁盘空间（报告中 `df -h` 与 `du -sh /var/lib/bojin`）：确认 `/var/backups` 与 `/opt` 所在分区剩余可用空间 **大于 `size(/var/lib/bojin) + 1.5 GiB`**（备份与部署预检硬门槛）。
 - **失败处理**：
-  - 若末尾 `! systemctl is-active --quiet bojin-backup-local.service` 失败：等该次旧备份任务跑完变为 `inactive`/`failed` 后再进入步骤 2。
+  - 若报 `STOP: legacy backup is active`：等该次旧备份任务跑完变为 `inactive`/`failed` 后再重跑步骤 1。
   - 若出现 `FAIL node expected v24.x`、`FAIL Caddy validation` 或磁盘空间不足：**立即停止升级**，先排查基础环境或释放空间。
 
 ---
@@ -108,17 +126,22 @@ cd ~/Lean-Ritual
 
 # 2.0 复核检出版本仍与线上一致且工作区干净，防止期间发生过新部署
 LIVE_SHA=$(curl -fsSL https://leanritual.app/api/health | python3 -c 'import json,re,sys; d=json.load(sys.stdin); assert d.get("ok") is True; s=d["revision"]; assert re.fullmatch("[0-9a-f]{40}", s); print(s)')
-test "$(git rev-parse HEAD)" = "$LIVE_SHA"
-test -z "$(git status --porcelain)"
+if [[ "$(git rev-parse HEAD)" != "$LIVE_SHA" ]] || [[ -n "$(git status --porcelain)" ]]; then
+  echo "STOP: ~/Lean-Ritual no longer matches live revision ($LIVE_SHA) or is dirty" >&2
+  exit 1
+fi
 
 # 2.1 预检活跃单元与锁文件状态（若 /run/lock/bojin-maintenance.lock 存在，强制校验为普通文件，切勿 rm！）
 systemctl is-active bojin.service bojin-backup.service bojin-backup-local.service bojin-watchdog.service || true
-! systemctl is-active --quiet bojin-backup-local.service
+if systemctl is-active --quiet bojin-backup-local.service; then
+  echo "STOP: legacy backup is active" >&2
+  exit 1
+fi
 sudo stat -c '%U:%G %a %F %n' /run/lock/bojin-maintenance.lock /run/bojin 2>/dev/null || true
 sudo bash -c '
   set -euo pipefail
   if [[ -L /run/lock/bojin-maintenance.lock ]] || { [[ -e /run/lock/bojin-maintenance.lock ]] && [[ ! -f /run/lock/bojin-maintenance.lock ]]; }; then
-    echo "Refusing non-regular /run/lock/bojin-maintenance.lock" >&2
+    echo "STOP: non-regular /run/lock/bojin-maintenance.lock" >&2
     exit 1
   fi
 '
@@ -128,7 +151,10 @@ BACKUP_STAGE="/root/bojin-host-pre-202611-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 sudo bash -c '
   set -euo pipefail
   stage=$1
-  [[ ! -e "$stage" && ! -L "$stage" ]]
+  if [[ -e "$stage" || -L "$stage" ]]; then
+    echo "STOP: backup stage already exists: $stage" >&2
+    exit 1
+  fi
   install -d -o root -g root -m 0700 "$stage"
   : > "$stage/absent-before.txt"
   chmod 0600 "$stage/absent-before.txt"
@@ -220,26 +246,28 @@ systemctl show bojin.service -p Restart -p StartLimitIntervalUSec
 systemctl show bojin-watchdog.service bojin-alert@test.service bojin-backup.service -p TimeoutStartUSec
 systemctl list-timers 'bojin-*' --no-pager
 sudo journalctl -t bojin-watchdog -n 20 --no-pager
-echo "OK: all host helpers upgraded and hash-verified"
-)
+echo "STEP 2 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
+> **门控检查**：必须看到 `STEP 2 OK` 且 `BLOCK EXIT=0` 方可继续；若 `BLOCK EXIT` 非 `0` 或输出 `STOP:` / `停止`，**立即停止整个升级流程，不得粘贴步骤 3**——先按下方排查或执行**步骤 7.2** 回滚。
+
 - **预期输出**：
-  - 打印 `OK: all host helpers upgraded and hash-verified`，6 组文件 `sha256sum` 成对相等且 `cmp -s` 全部通过；
+  - 打印 `STEP 2 OK` 与 `BLOCK EXIT=0`，6 组文件 `sha256sum` 成对相等且 `cmp -s` 全部通过；
   - `stat` 显示 `/etc/tmpfiles.d/bojin.conf` 为 `root:root 644`，`/run/bojin` 与 `/usr/local/sbin/bojin-maintenance-lock` 为 `root:root 755`，`/run/bojin/maintenance.lock` 与 `/etc/bojin-backup.env` 为 `root:root 600`（首次生成的 `/etc/bojin-alert.env` 也为 `root:root 600`；若原先已存在，步骤 4 会统一收敛为 `0600`）；
   - `bojin.service` 显示 `Restart=always`、`StartLimitIntervalUSec=0`；`bojin-watchdog.service` 与 `bojin-alert@test.service` 显示 `TimeoutStartUSec=1min`，`bojin-backup.service` 显示 `TimeoutStartUSec=30min`；
   - `systemctl list-timers 'bojin-*'` 同时列出 `bojin-watchdog.timer`（每 30 秒）与 `bojin-backup.timer`（每日 `04:00:00 UTC` + 最多 5 分钟随机延迟）；
   - `journalctl -t bojin-watchdog` 无报错（若旧锁曾属非 root，输出一行 `Warning: ... opened existing file without O_CREAT for flock` 属预期兼容提示）。
 - **失败处理**：
   - 若 2.0 校验失败：说明期间有新提交自动部署上线，回到**步骤 0** 重新对齐后再跑。
-  - 若报 `Refusing symlink ...` 或 `Refusing non-root ...`：立即用 `sudo ls -ld /run/bojin /run/lock/bojin-maintenance.lock /etc/tmpfiles.d/bojin.conf` 排查异常路径，切勿强行绕过；需要回退时按**步骤 7.2** 恢复。
+  - 若报 `Refusing symlink ...`、`Refusing non-root ...` 或 `STOP:`：立即用 `sudo ls -ld /run/bojin /run/lock/bojin-maintenance.lock /etc/tmpfiles.d/bojin.conf` 排查异常路径，切勿强行绕过；需要回退时按**步骤 7.2** 恢复。
   - *运维备忘*：升级接收器后，如未来因维护人为停止 `bojin.service`，自动部署默认会拒绝；若确需在停服状态下放行**单次**自动部署，执行 `sudo install -m 0600 -o root -g root /dev/null /etc/bojin/allow-deploy-when-stopped`（部署消费后自动删除）。
 
 ---
 
 ## 步骤 3：首次手动备份与旧定时器停用核验
 
-- **变更内容**：手动运行一次 `bojin-backup.service` 生成本地一致性快照（`/var/backups/bojin/snapshot-*`）与删除台账（`deletions-*.json`），并以 `root` 核验产物属主权限及确认遗留 `bojin-backup-local` 已停用。
+- **变更内容**：手动运行一次 `bojin-backup.service` 生成本地一致性快照（`/var/backups/bojin/snapshot-*`）与删除台账（`deletions-*.json`），并以 `root` 核验产物属主权限及强制确认遗留 `bojin-backup-local` 已停用。
   - *关于服务中断说明*：`bojin-backup.service` 内部自带双维护锁（**切勿**在命令外再包一层 `bojin-maintenance-lock`，否则会自锁等待），并在锁保护下自动 `stop` → 快照 → `start` `bojin.service`（停机时长随 `/var/lib/bojin` 数据与照片量增长）。
 - **执行命令**：
 
@@ -255,24 +283,29 @@ sudo bash -c '
   shopt -s nullglob
   snaps=(/var/backups/bojin/snapshot-*)
   ledgers=(/var/backups/bojin/deletions-*.json)
-  (( ${#snaps[@]} >= 1 && ${#ledgers[@]} >= 1 ))
+  if (( ${#snaps[@]} < 1 || ${#ledgers[@]} < 1 )); then
+    echo "STOP: backup snapshot or deletion ledger missing in /var/backups/bojin" >&2
+    exit 1
+  fi
   stat -c "%U:%G %a %n" /var/backups/bojin "${snaps[${#snaps[@]}-1]}" "${ledgers[${#ledgers[@]}-1]}"
 '
 curl -fsSL https://leanritual.app/api/health | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True; print("Health OK:", d.get("revision"))'
 
-! systemctl is-active --quiet bojin-backup-local.service
-! systemctl is-active --quiet bojin-backup-local.timer
-! systemctl is-enabled --quiet bojin-backup-local.timer 2>/dev/null
-echo "OK: backup verified and legacy bojin-backup-local is disabled/inactive"
-)
+if systemctl is-active --quiet bojin-backup-local.service; then echo "STOP: legacy backup service active" >&2; exit 1; fi
+if systemctl is-active --quiet bojin-backup-local.timer; then echo "STOP: legacy backup timer active" >&2; exit 1; fi
+if systemctl is-enabled --quiet bojin-backup-local.timer 2>/dev/null; then echo "STOP: legacy backup timer enabled" >&2; exit 1; fi
+echo "STEP 3 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：必须看到 `STEP 3 OK` 且 `BLOCK EXIT=0` 方可继续；若 `BLOCK EXIT` 非 `0` 或输出 `STOP:` / `停止`，**立即停止，不得粘贴步骤 4**，先按下方排查。
 
 - **预期输出**：
   - `journalctl -u bojin-backup.service` 末尾显示 `Finished Lean Ritual verified local backup and retention` 与 `offsite disabled`（首次运行还会打印 `release pruning disabled: previous pointer missing or not a symlink`——这是**正常现象**，切勿手工创建 `/opt/bojin-previous`，待下一次 PR 自动部署成功后接收器会自动记录）；
   - `stat`（在 `sudo bash -c` 内展开受限目录通配符）显示 `/var/backups/bojin` 为 `root:bojin 710`，最新 `snapshot-*` 为 `root:root 700`、最新 `deletions-*.json` 为 `root:root 600`；
-  - 打印 `Health OK: <40位SHA>` 与 `OK: backup verified and legacy bojin-backup-local is disabled/inactive`。
+  - 打印 `Health OK: <40位SHA>`、`STEP 3 OK` 与 `BLOCK EXIT=0`。
 - **失败处理**：
-  - 若末尾 `bojin-backup-local` 校验失败：执行 `sudo systemctl disable --now bojin-backup-local.timer` 后重跑校验。
+  - 若报 `STOP: legacy backup timer active/enabled`：执行 `sudo systemctl disable --now bojin-backup-local.timer` 后重跑步骤 3。
   - 若 `bojin-backup.service` 失败：查 `sudo journalctl -u bojin-backup.service -n 50 --no-pager`（常见原因：可用磁盘不足 `size(DATA_DIR) + 1.5 GiB` 或残留租约）；脚本 `EXIT` trap 会自动拉起 `bojin.service`，用 `systemctl is-active bojin.service` 确认服务在线。
 
 ---
@@ -283,7 +316,7 @@ echo "OK: backup verified and legacy bojin-backup-local is disabled/inactive"
 - **执行命令（分 4.1 编辑 与 4.2 校验推送两段执行）**：
 
 ```bash
-# 4.1 生成随机主题名参考并收敛权限，成功后才打开 nano 编辑（在手机 ntfy App 订阅同一主题名，切勿外传）
+# 4.1 生成随机主题名参考并收敛权限，成功后打开 nano 编辑（在手机 ntfy App 订阅同一主题名，切勿外传）
 (
 set -euo pipefail
 echo "建议订阅主题名: leanritual-$(openssl rand -hex 12)"
@@ -293,16 +326,20 @@ sudo chmod 0600 /etc/bojin-alert.env
 sudo nano /etc/bojin-alert.env
 # 将文件内 ALERT_URL= 改为（必须使用 https://，http:// 会被安全策略拒绝）：
 # ALERT_URL=https://ntfy.sh/你的随机主题名
-)
+echo "STEP 4.1 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
-保存退出 `nano` 后，执行 4.2 校验并发送测试推送：
+> **门控检查**：保存退出 `nano` 后必须看到 `STEP 4.1 OK` 且 `BLOCK EXIT=0`，再粘贴下方 4.2；若 `BLOCK EXIT` 非 `0`，**立即停止，不得粘贴 4.2**。
 
 ```bash
 # 4.2 强制核验权限与非空 https:// 配置（不输出真实 URL），并发送测试告警
 (
 set -euo pipefail
-test "$(sudo stat -c '%U:%G:%a' /etc/bojin-alert.env)" = "root:root:600"
+if [[ "$(sudo stat -c '%U:%G:%a' /etc/bojin-alert.env)" != "root:root:600" ]]; then
+  echo "STOP: /etc/bojin-alert.env permissions are not root:root:600" >&2
+  exit 1
+fi
 sudo python3 - <<'PY'
 url = ""
 for line in open("/etc/bojin-alert.env", encoding="utf-8"):
@@ -317,12 +354,14 @@ assert url.startswith("https://") and " " not in url, "ALERT_URL must be a non-e
 print("ALERT_URL verified: https://<redacted>")
 PY
 sudo /usr/local/libexec/bojin-alert "主机升级告警联通性测试"
-echo "OK: bojin-alert exited 0 — 请确认手机已收到推送通知"
-)
+echo "STEP 4.2 OK — 请确认手机已实际收到推送通知"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
-- **预期输出**：打印 `ALERT_URL verified: https://<redacted>` 与 `OK: bojin-alert exited 0`，**且手机 ntfy App 在数秒内实际收到 `Lean Ritual: 主机升级告警联通性测试`**（必须以手机实收为准）。
-- **失败处理**：若报错退出或手机未收到，查 `sudo journalctl -t bojin-alert -n 10 --no-pager`：若报 `ALERT_URL must be a non-empty https:// URL` 或 `Refusing invalid or non-HTTPS ALERT_URL`，重新 `sudo nano /etc/bojin-alert.env` 修正协议或多余空格；若报 `curl` 超时/非 `2xx`，检查主机出站 HTTPS 连通性。
+> **门控检查**：必须看到 `STEP 4.2 OK`、`BLOCK EXIT=0` **且手机实际收到通知**方可继续；若 `BLOCK EXIT` 非 `0` 或手机未收到，**立即停止，不得粘贴步骤 5**，先排查修复告警或按**步骤 7.4** 处理。
+
+- **预期输出**：打印 `ALERT_URL verified: https://<redacted>`、`STEP 4.2 OK` 与 `BLOCK EXIT=0`，**且手机 ntfy App 在数秒内实际收到 `Lean Ritual: 主机升级告警联通性测试`**。
+- **失败处理**：若报错退出或手机未收到，查 `sudo journalctl -t bojin-alert -n 10 --no-pager`：若报 `ALERT_URL must be a non-empty https:// URL` 或 `Refusing invalid or non-HTTPS ALERT_URL`，重新运行 4.1 修正协议或多余空格；若报 `curl` 超时/非 `2xx`，检查主机出站 HTTPS 连通性。
 
 ---
 
@@ -346,7 +385,10 @@ sudo test -f "$BACKUP_STAGE/etc/bojin/environment"
 PRE_AI_BAK="/root/bojin-env-pre-ai-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 sudo bash -c '
   set -euo pipefail
-  [[ ! -e "$1" && ! -L "$1" ]]
+  if [[ -e "$1" || -L "$1" ]]; then
+    echo "STOP: pre-AI backup path already exists: $1" >&2
+    exit 1
+  fi
   cp -a /etc/bojin/environment "$1"
   chmod 0600 "$1"
   if [[ ! -e /root/bojin-env-pre-ai-initial ]]; then
@@ -359,18 +401,22 @@ sudo nano /etc/bojin/environment
 # 新增或修改以下两行（保留原有 AUTH_SECRET、SMTP_* 等全部配置，切勿 cat 文件）：
 # OPENROUTER_API_KEY=sk-or-v1-你的专用密钥
 # OPENROUTER_MODEL=openrouter/auto-beta
-)
+echo "STEP 5.1 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
-保存退出 `nano` 后，执行 5.2 收敛权限、重启应用并完成最终审计门控：
+> **门控检查**：保存退出 `nano` 后必须看到 `STEP 5.1 OK` 且 `BLOCK EXIT=0`，再粘贴下方 5.2；若 `BLOCK EXIT` 非 `0` 或输出 `STOP:`，**立即停止，不得粘贴 5.2**。
 
 ```bash
-# 5.2 强制收敛 root:bojin 0640、校验键非空、在双锁包装器内重启应用，并强制验证 FAIL=0
+# 5.2 强制收敛 root:bojin 0640、校验键非空、在双锁包装器内重启应用，并显式拦截任何 FAIL 审计项
 (
 set -euo pipefail
 sudo chown root:bojin /etc/bojin/environment
 sudo chmod 0640 /etc/bojin/environment
-test "$(sudo stat -c '%U:%G:%a' /etc/bojin/environment)" = "root:bojin:640"
+if [[ "$(sudo stat -c '%U:%G:%a' /etc/bojin/environment)" != "root:bojin:640" ]]; then
+  echo "STOP: /etc/bojin/environment permissions are not root:bojin:640" >&2
+  exit 1
+fi
 
 sudo python3 - <<'PY'
 d = {}
@@ -395,19 +441,24 @@ sudo journalctl -u bojin.service -n 25 --no-pager | grep 'AI 已配置 openroute
 cd ~/Lean-Ritual
 sudo bash scripts/host-audit.sh | tee /tmp/host-audit-after.txt
 grep -E '^(FAIL|WARN|Summary:)' /tmp/host-audit-after.txt || true
-! grep -q '^FAIL ' /tmp/host-audit-after.txt
-echo "OK: AI enabled and post-upgrade host audit passed with FAIL=0"
-)
+if grep -q '^FAIL ' /tmp/host-audit-after.txt; then
+  echo "STOP: host audit has FAIL findings" >&2
+  exit 1
+fi
+echo "STEP 5.2 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：必须看到 `STEP 5.2 OK` 且 `BLOCK EXIT=0` 才代表宿主机升级与 AI 启用全部通过；若 `BLOCK EXIT` 非 `0` 或输出 `STOP:` / `停止`，**立即停止**，按下方排查或执行**步骤 7.5** 回滚。
 
 - **预期输出**：
   - 脱敏检查输出 `OPENROUTER_API_KEY: present (len=...)` 与 `OPENROUTER_MODEL: openrouter/auto-beta`；
   - `Health:` 输出 `{'ok': True, 'revision': '...'}`，`Config:` 输出 `{'allowSignup': True, 'invite': True, 'ai': True}`（注：`/api/config` 的 `ai:true` 仅证明应用读到了非空密钥；上游模型路由与视觉识图可用性仍需登录测试账号拍一张餐食照实测）；
-  - `journalctl` 输出 `薄肌日课已启动：http://127.0.0.1:8080  （AI 已配置 openrouter/auto-beta）`；
-  - `host-audit-after.txt` 通过 `! grep -q '^FAIL '` 门控，末尾显示 **`Summary: FAIL=0 WARN=...`**，且 4 个 root 辅助程序均为 `PASS MATCH`。
+  - `journalctl` 匹配到 `AI 已配置 openrouter/auto-beta`；
+  - `host-audit-after.txt` 通过显式 `if grep -q '^FAIL '` 门控，末尾显示 **`Summary: FAIL=0 WARN=...`**（4 个 root 辅助程序均为 `PASS MATCH`），并打印 `STEP 5.2 OK` 与 `BLOCK EXIT=0`。
 - **失败处理**：
-  - 若 Python 校验失败：重新 `sudo nano /etc/bojin/environment` 检查 `OPENROUTER_API_KEY` 与 `OPENROUTER_MODEL=openrouter/auto-beta` 是否拼写正确且未加 `#` 注释。
-  - 若重启后健康检查或审计未通过：先查 `sudo journalctl -u bojin.service -n 30 --no-pager`，或立即执行**步骤 7.5** 恢复未开启 AI 前的环境文件并重启。
+  - 若 Python 校验失败：重新 `sudo nano /etc/bojin/environment` 检查 `OPENROUTER_API_KEY` 与 `OPENROUTER_MODEL=openrouter/auto-beta` 是否拼写正确且未加 `#` 注释，再重跑 5.2。
+  - 若重启后健康检查失败或报 `STOP: host audit has FAIL findings`：先查 `sudo journalctl -u bojin.service -n 30 --no-pager` 与 `/tmp/host-audit-after.txt` 中的 `FAIL` 行，或立即执行**步骤 7.5** 恢复未开启 AI 前的环境文件并重启。
 
 ---
 
@@ -426,12 +477,12 @@ echo "OK: AI enabled and post-upgrade host audit passed with FAIL=0"
 
 ## 步骤 7：分步回滚说明（恢复原件与 timer 原启停状态）
 
-升级前初始基线固定记录在 `/root/bojin-host-pre-initial`（对应目录内含原件副本、`absent-before.txt` 及 `timer-states.tsv`），步骤 5 首次编辑前的环境配置另存在 `/root/bojin-env-pre-ai-initial`。回滚任何宿主机组件时**仍须通过双锁包装器加锁，且切勿删除 `/run/lock/bojin-maintenance.lock`**。由于 `/root` 为 `0700`，所有读取与哈希比对均须带 `sudo`。
+升级前初始基线固定记录在 `/root/bojin-host-pre-initial`（对应目录内含原件副本、`absent-before.txt` 及 `timer-states.tsv`），步骤 5 首次编辑前的环境配置另存在 `/root/bojin-env-pre-ai-initial`。回滚任何宿主机组件时**仍须通过双锁包装器加锁，切勿删除 `/run/lock/bojin-maintenance.lock`，且每段执行后同样必须确认 `ROLLBACK ... OK` 与 `BLOCK EXIT=0`**。由于 `/root` 为 `0700`，所有读取与哈希比对均须带 `sudo`。
 
 ### 7.0 / 7.1 步骤 0 与步骤 1 回滚
 只读操作无需回滚；审计完成后可清理临时报告：`sudo rm -f /tmp/host-audit-before.txt /tmp/host-audit-after.txt`。
 
-### 7.2 步骤 2 回滚（恢复旧版辅助程序、systemd 单元及 timer 原启停状态）
+### 7.2 步骤 2 回滚（恢复旧版辅助程序、systemd 单元及 timer 常规启停状态）
 
 - **仅回滚单个辅助程序**（例如仅回滚部署接收器，其余保持新版；不重启应用）：
 
@@ -444,10 +495,13 @@ sudo /usr/local/sbin/bojin-maintenance-lock -- \
   cp -a "$BACKUP_STAGE/usr/local/sbin/lean-ritual-deploy" /usr/local/sbin/lean-ritual-deploy
 sudo sha256sum "$BACKUP_STAGE/usr/local/sbin/lean-ritual-deploy" /usr/local/sbin/lean-ritual-deploy
 sudo cmp -s "$BACKUP_STAGE/usr/local/sbin/lean-ritual-deploy" /usr/local/sbin/lean-ritual-deploy
-)
+echo "ROLLBACK 7.2a OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
-- **整套回滚步骤 2 全部宿主机文件与 timer 状态**（恢复升级前存在的文件，停用并移除升级前不存在的新增单元，按 `timer-states.tsv` 精确还原 `bojin-backup.timer` 与 `bojin-watchdog.timer` 原本的 `enabled/disabled` 与 `active/inactive` 状态，保留 `/etc/tmpfiles.d/bojin.conf` 与 `/usr/local/sbin/bojin-maintenance-lock`；不重启应用）：
+> **门控检查**：确认输出 `ROLLBACK 7.2a OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `/root/bojin-host-pre-initial` 备份目录完整性。
+
+- **整套回滚步骤 2 全部宿主机文件与 timer 状态**（恢复升级前存在的文件，停用并移除升级前不存在的新增单元，按 `timer-states.tsv` 还原 `bojin-backup.timer` 与 `bojin-watchdog.timer` 原本的 `enabled`/`enabled-runtime`/`disabled` 与 `active`/`inactive` 状态——注：若某单元升级前处于 `masked` 将保持 `masked`；保留 `/etc/tmpfiles.d/bojin.conf` 与 `/usr/local/sbin/bojin-maintenance-lock`；不重启应用）：
 
 ```bash
 (
@@ -488,11 +542,15 @@ sudo /usr/local/sbin/bojin-maintenance-lock -- bash -c '
   systemctl daemon-reload
 
   while read -r unit prev_en prev_ac; do
-    [[ -n "$unit" ]] || continue
-    [[ "$unit" == "bojin-backup-local.timer" ]] && continue
-    systemctl cat "$unit" >/dev/null 2>&1 || continue
+    if [[ -z "$unit" || "$unit" == "bojin-backup-local.timer" ]]; then
+      continue
+    fi
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+      continue
+    fi
     case "$prev_en" in
-      enabled|enabled-runtime) systemctl enable "$unit" ;;
+      enabled) systemctl enable "$unit" ;;
+      enabled-runtime) systemctl enable --runtime "$unit" ;;
       *) systemctl disable "$unit" 2>/dev/null || true ;;
     esac
     case "$prev_ac" in
@@ -502,11 +560,14 @@ sudo /usr/local/sbin/bojin-maintenance-lock -- bash -c '
   done < "$stage/timer-states.tsv"
 ' _ "$BACKUP_STAGE"
 systemctl list-timers --all 'bojin-*' --no-pager
-)
+echo "ROLLBACK 7.2b OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
 
+> **门控检查**：确认输出 `ROLLBACK 7.2b OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `systemctl status bojin-watchdog.timer bojin-backup.timer`。
+
 ### 7.3 步骤 3 回滚（首次备份与旧 `bojin-backup-local.timer` 状态恢复）
-`/var/backups/bojin/` 下新生成的快照不影响运行，无需删除。仅当已执行 7.2 回退了备份单元，且需按 `timer-states.tsv` 还原旧 `bojin-backup-local.timer` 原状态（若原状态为 `enabled`/`active`，请先确认其 `ExecStart` 脚本真实存在，避免重现 `203/EXEC` 报错）时执行：
+`/var/backups/bojin/` 下新生成的快照不影响运行，无需删除。仅当已执行 7.2 回退了备份单元，且需按 `timer-states.tsv` 还原旧 `bojin-backup-local.timer` 原状态（若原状态为 `enabled`/`enabled-runtime`/`active`，请先确认其 `ExecStart` 脚本真实存在，避免重现 `203/EXEC` 报错）时执行：
 
 ```bash
 (
@@ -520,7 +581,8 @@ sudo bash -c '
   systemctl cat bojin-backup-local.timer >/dev/null 2>&1
   systemctl disable --now bojin-backup.timer 2>/dev/null || true
   case "$prev_en" in
-    enabled|enabled-runtime) systemctl enable bojin-backup-local.timer ;;
+    enabled) systemctl enable bojin-backup-local.timer ;;
+    enabled-runtime) systemctl enable --runtime bojin-backup-local.timer ;;
     *) systemctl disable bojin-backup-local.timer 2>/dev/null || true ;;
   esac
   case "$prev_ac" in
@@ -528,8 +590,11 @@ sudo bash -c '
     *) systemctl stop bojin-backup-local.timer 2>/dev/null || true ;;
   esac
 ' _ "$BACKUP_STAGE"
-)
+echo "ROLLBACK 7.3 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：确认输出 `ROLLBACK 7.3 OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `systemctl cat bojin-backup-local.timer`。
 
 ### 7.4 步骤 4 回滚（停用外部手机告警推送）
 恢复初始备份的 `/etc/bojin-alert.env`（若升级前不存在则置空 `ALERT_URL=`），立即退回“仅写系统日志、不发网络请求”，**不重启应用**：
@@ -545,8 +610,11 @@ else
   sudo chown root:root /etc/bojin-alert.env
   sudo chmod 0600 /etc/bojin-alert.env
 fi
-)
+echo "ROLLBACK 7.4 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：确认输出 `ROLLBACK 7.4 OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `/etc/bojin-alert.env` 权限。
 
 ### 7.5 步骤 5 回滚（关闭 AI 并恢复未开启 AI 前的原环境配置）
 优先从不可覆盖的 `/root/bojin-env-pre-ai-initial`（或步骤 2 的 `/root/bojin-host-pre-initial`）恢复 `/etc/bojin/environment`，强制核对权限并在维护锁下重启 `bojin.service`（**会重启应用**）：
@@ -567,8 +635,11 @@ sudo chmod 0640 /etc/bojin/environment
 sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
 curl -fsSL https://leanritual.app/api/health | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ok") is True; print("Health:", d)'
 curl -fsSL https://leanritual.app/api/config | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("ai") is False, d; print("Config:", d)'
-)
+echo "ROLLBACK 7.5 OK"
+); block_rc=$?; printf 'BLOCK EXIT=%s\n' "$block_rc"
 ```
+
+> **门控检查**：确认输出 `ROLLBACK 7.5 OK`、`Config:` 中 `'ai': False` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并查看 `sudo journalctl -u bojin.service -n 30 --no-pager`。
 
 ### 7.6 步骤 6 回滚
 在阿里云控制台解绑云盘自动快照策略并按需删除快照，不影响线上服务。
