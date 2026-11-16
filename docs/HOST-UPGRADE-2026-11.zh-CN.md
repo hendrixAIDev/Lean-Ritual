@@ -13,7 +13,7 @@ GitHub Actions 自动部署仅更新 `/opt/bojin` 应用代码，**不会**更�
 | **4** | 配置 `/etc/bojin-alert.env`（`0600 root:root`）并验证手机推送 | **否** |
 | **5** | 配置 OpenRouter Auto Router 环境变量并重启应用生效 | **是（唯一显式配置重启 `systemctl restart bojin.service`）** |
 | **6** | （可选）开启阿里云云盘自动快照策略作整机故障兜底 | **否** |
-| **7** | 分步回滚说明（从只读备份原件与记录的 timer 状态恢复） | 视回滚项而定（仅 7.5 显式重启应用） |
+| **7** | 分步回滚说明（从只读备份原件与记录的 timer 状态恢复） | 视回滚项而定（7.5 显式重启应用；7.2/7.3 若恢复启动带 `Persistent=true` 的备份 timer，可能立即触发一次补跑备份并短暂停启应用） |
 
 > [!IMPORTANT]
 > **四条铁律（开始前必读，全程严格遵守）：**
@@ -501,7 +501,7 @@ echo "ROLLBACK 7.2a OK"
 
 > **门控检查**：确认输出 `ROLLBACK 7.2a OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `/root/bojin-host-pre-initial` 备份目录完整性。
 
-- **整套回滚步骤 2 全部宿主机文件与 timer 状态**（恢复升级前存在的文件，停用并移除升级前不存在的新增单元，按 `timer-states.tsv` 还原 `bojin-backup.timer` 与 `bojin-watchdog.timer` 原本的 `enabled`/`enabled-runtime`/`disabled` 与 `active`/`inactive` 状态——注：若某单元升级前处于 `masked` 将保持 `masked`；保留 `/etc/tmpfiles.d/bojin.conf` 与 `/usr/local/sbin/bojin-maintenance-lock`；不重启应用）：
+- **整套回滚步骤 2 全部宿主机文件与 timer 状态**（恢复升级前存在的文件，停用并移除升级前不存在的新增单元，按 `timer-states.tsv` 还原 `bojin-backup.timer` 与 `bojin-watchdog.timer` 原本的 `enabled`/`enabled-runtime`/`disabled` 与 `active`/`inactive` 状态——注：若某单元升级前处于 `masked` 将保持 `masked`；保留 `/etc/tmpfiles.d/bojin.conf` 与 `/usr/local/sbin/bojin-maintenance-lock`；回滚脚本本身不显式重启应用，但注意：**启动/重启带 `Persistent=true` 的 timer 可能因上次触发窗口已过而立即触发一次补跑备份（catch-up backup），离线备份会短暂停启 `bojin.service`**）：
 
 ```bash
 (
@@ -550,7 +550,7 @@ sudo /usr/local/sbin/bojin-maintenance-lock -- bash -c '
     fi
     case "$prev_en" in
       enabled) systemctl enable "$unit" ;;
-      enabled-runtime) systemctl enable --runtime "$unit" ;;
+      enabled-runtime) systemctl disable "$unit"; systemctl enable --runtime "$unit" ;;
       *) systemctl disable "$unit" 2>/dev/null || true ;;
     esac
     case "$prev_ac" in
@@ -567,7 +567,7 @@ echo "ROLLBACK 7.2b OK"
 > **门控检查**：确认输出 `ROLLBACK 7.2b OK` 且 `BLOCK EXIT=0`；若非 `0`，立即停止并检查 `systemctl status bojin-watchdog.timer bojin-backup.timer`。
 
 ### 7.3 步骤 3 回滚（首次备份与旧 `bojin-backup-local.timer` 状态恢复）
-`/var/backups/bojin/` 下新生成的快照不影响运行，无需删除。仅当已执行 7.2 回退了备份单元，且需按 `timer-states.tsv` 还原旧 `bojin-backup-local.timer` 原状态（若原状态为 `enabled`/`enabled-runtime`/`active`，请先确认其 `ExecStart` 脚本真实存在，避免重现 `203/EXEC` 报错）时执行：
+`/var/backups/bojin/` 下新生成的快照不影响运行，无需删除。仅当已执行 7.2 回退了备份单元，且需按 `timer-states.tsv` 还原旧 `bojin-backup-local.timer` 原状态（若原状态为 `enabled`/`enabled-runtime`/`active`，请先确认其 `ExecStart` 脚本真实存在，避免重现 `203/EXEC` 报错；同时注意：**启动/重启带 `Persistent=true` 的 timer 可能立即触发一次补跑备份**）时执行：
 
 ```bash
 (
@@ -582,7 +582,7 @@ sudo bash -c '
   systemctl disable --now bojin-backup.timer 2>/dev/null || true
   case "$prev_en" in
     enabled) systemctl enable bojin-backup-local.timer ;;
-    enabled-runtime) systemctl enable --runtime bojin-backup-local.timer ;;
+    enabled-runtime) systemctl disable bojin-backup-local.timer; systemctl enable --runtime bojin-backup-local.timer ;;
     *) systemctl disable bojin-backup-local.timer 2>/dev/null || true ;;
   esac
   case "$prev_ac" in
