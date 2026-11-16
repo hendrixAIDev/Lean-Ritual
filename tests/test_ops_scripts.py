@@ -234,6 +234,7 @@ import os, signal, subprocess, sys, time
 args = sys.argv[1:]
 kill_after = None
 sig = signal.SIGTERM
+foreground = False
 while args and args[0].startswith("-"):
     flag = args.pop(0)
     if flag == "-k":
@@ -241,12 +242,23 @@ while args and args[0].startswith("-"):
     elif flag == "-s":
         s_val = args.pop(0).upper()
         sig = signal.SIGKILL if s_val in ("KILL", "SIGKILL", "9") else signal.SIGTERM
+    elif flag == "--foreground":
+        foreground = True
 limit = float(args.pop(0).rstrip("s"))
-proc = subprocess.Popen(args, start_new_session=True)
+proc = subprocess.Popen(args, start_new_session=not foreground)
 pgid = proc.pid
 try:
     sys.exit(proc.wait(timeout=limit))
 except subprocess.TimeoutExpired:
+    if foreground:
+        proc.send_signal(sig)
+        if sig != signal.SIGKILL:
+            try:
+                proc.wait(timeout=kill_after if kill_after is not None else 0.5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        proc.wait()
+        sys.exit(137 if sig == signal.SIGKILL else 124)
     try:
         os.killpg(pgid, sig)
     except ProcessLookupError:
@@ -274,7 +286,11 @@ except subprocess.TimeoutExpired:
             self.bin_dir / "logger",
             stub_prelude
             + """
+import time
 record("logger", args=sys.argv[1:])
+delay = float(CFG.get("logger_delay", 0.0))
+if delay > 0:
+    time.sleep(delay)
 sys.exit(0)
 """,
         )
@@ -333,14 +349,14 @@ sys.exit(0)
             timeout=10,
         )
 
-    def run_watchdog(self, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    def run_watchdog(self, env_extra: dict | None = None, timeout: int = 10) -> subprocess.CompletedProcess:
         self._save_config()
         return subprocess.run(
             ["bash", str(WATCHDOG_SH)],
             env=self.base_env(env_extra),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
         )
 
 
@@ -1011,6 +1027,51 @@ class OpsScriptsTests(unittest.TestCase):
         elapsed_grace = time.monotonic() - started
         self.assertEqual(res_grace.returncode, 0, res_grace.stderr)
         self.assertLess(elapsed_grace, 4.2, f"Kill grace overran alert budget ({elapsed_grace:.2f}s)")
+
+    def test_hanging_logger_does_not_block_checks_restarts_or_alert_delivery(self) -> None:
+        # Simulate a stalled journald/syslog socket (logger hangs 15s on every call) while multiple
+        # code paths attempt to log (df timeout, caddy activating, bojin 3rd probe failure + restart,
+        # and disk full alert delivery via alert.sh).
+        self.h.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.h.state_dir / "failures").write_text("2\n", encoding="utf-8")
+        self.h.config["logger_delay"] = 15.0
+        self.h.config["df"] = {
+            "/var/lib/bojin": {"pcent": "50%", "ipcent": "10%", "target": "/mnt/hung", "delay": 5.0},
+            "/var/backups": {"pcent": "40%", "ipcent": "10%", "target": "/mnt/backups"},
+            "/opt": {"pcent": "96%", "ipcent": "10%", "target": "/"},
+        }
+        self.h.config["units"]["caddy.service"] = {
+            "active": "activating",
+            "nrestarts": 0,
+            "invocation": "inv-caddy-act",
+        }
+        self.h.config["curl"]["http://127.0.0.1:8080/api/health"] = 28
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_CMD_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_LOG_TIMEOUT_SEC": "1",
+                "BOJIN_WATCHDOG_CHECKS_BUDGET_SEC": "6",
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "5",
+                "BOJIN_WATCHDOG_TOTAL_BUDGET_SEC": "10",
+            },
+            timeout=6,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 5.5, f"Hanging logger stalled watchdog ({elapsed:.2f}s)")
+
+        sctl = [e["args"] for e in self.h.events() if e["kind"] == "systemctl"]
+        self.assertIn(["restart", "--no-block", "bojin.service"], sctl)
+
+        delivered = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(any("/opt" in m and "96%" in m for m in delivered), delivered)
+        self.assertTrue(any("app stopped answering health checks" in m for m in delivered), delivered)
 
 
 if __name__ == "__main__":

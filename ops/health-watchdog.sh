@@ -13,12 +13,14 @@ FAIL_LIMIT=${BOJIN_WATCHDOG_FAIL_LIMIT:-3}
 ACTIVATING_LIMIT=${BOJIN_WATCHDOG_ACTIVATING_LIMIT:-3}
 DISK_WARN_PERCENT=${BOJIN_WATCHDOG_DISK_WARN_PERCENT:-90}
 INODE_WARN_PERCENT=${BOJIN_WATCHDOG_INODE_WARN_PERCENT:-90}
-# Keep worst-case runtime (including 1s SIGKILL grace) comfortably under TimeoutStartSec=60:
-# up to 25s for all checks, leaving >=22s (up to 25s) for alert delivery within a 50s cap.
+# Keep worst-case runtime (including 1s SIGKILL grace and bounded logger) comfortably
+# under TimeoutStartSec=60: up to 24s for checks, <=2s for stalled journald detection,
+# leaving >=24s (22s alert budget) within a 50s total cap.
 TOTAL_BUDGET_SEC=${BOJIN_WATCHDOG_TOTAL_BUDGET_SEC:-50}
-CHECKS_BUDGET_SEC=${BOJIN_WATCHDOG_CHECKS_BUDGET_SEC:-25}
+CHECKS_BUDGET_SEC=${BOJIN_WATCHDOG_CHECKS_BUDGET_SEC:-24}
 CMD_TIMEOUT_SEC=${BOJIN_WATCHDOG_CMD_TIMEOUT_SEC:-4}
 PROBE_MAX_TIME=${BOJIN_WATCHDOG_PROBE_MAX_TIME:-4}
+LOG_TIMEOUT_SEC=${BOJIN_WATCHDOG_LOG_TIMEOUT_SEC:-2}
 ALERT_BUDGET_SEC=${BOJIN_WATCHDOG_ALERT_BUDGET_SEC:-22}
 ALERT_MAX_TIME=${BOJIN_WATCHDOG_ALERT_MAX_TIME:-8}
 STATE=${BOJIN_WATCHDOG_STATE_DIR:-/run/bojin-watchdog}
@@ -27,6 +29,7 @@ LOCK_FILE=${BOJIN_WATCHDOG_LOCK_FILE:-/run/lock/bojin-maintenance.lock}
 UPTIME_FILE=${BOJIN_WATCHDOG_UPTIME_FILE:-/proc/uptime}
 HAS_TIMEOUT=0
 if command -v timeout >/dev/null 2>&1; then HAS_TIMEOUT=1; fi
+LOGGER_STALLED=0
 if [[ -n "${BOJIN_WATCHDOG_DISK_PATHS:-}" ]]; then
   IFS=':' read -r -a DISK_PATHS <<<"$BOJIN_WATCHDOG_DISK_PATHS"
 else
@@ -34,6 +37,30 @@ else
 fi
 
 install -d -m 0700 "$STATE" "$STATE/pending"
+
+# Best-effort journal logging: runs logger directly under timeout -s KILL
+# (never calling run_cmd_bounded recursively), capped by LOG_TIMEOUT_SEC and
+# remaining total budget, and trips LOGGER_STALLED if journald/syslog blocks.
+log_best_effort() {
+  (( LOGGER_STALLED == 1 )) && return 0
+  local total_rem=$(( TOTAL_BUDGET_SEC - (SECONDS - WATCHDOG_START) ))
+  (( total_rem <= 0 )) && return 0
+  if (( HAS_TIMEOUT == 1 )); then
+    local limit=$LOG_TIMEOUT_SEC
+    if (( total_rem < limit )); then
+      limit=$total_rem
+    fi
+    (( limit < 1 )) && limit=1
+    local rc=0
+    timeout -s KILL "${limit}s" logger "$@" 9>&- >/dev/null 2>&1 || rc=$?
+    if (( rc == 124 || rc == 137 )); then
+      LOGGER_STALLED=1
+    fi
+  else
+    logger "$@" 9>&- >/dev/null 2>&1 || true
+  fi
+  return 0
+}
 
 checks_budget_left() {
   (( CHECKS_BUDGET_SEC - (SECONDS - WATCHDOG_START) > 0 ))
@@ -45,7 +72,7 @@ run_cmd_bounded() {
   local desired=$1; shift
   local remaining=$(( CHECKS_BUDGET_SEC - (SECONDS - WATCHDOG_START) ))
   if (( remaining <= 0 )); then
-    logger -t bojin-watchdog -p daemon.warning -- \
+    log_best_effort -t bojin-watchdog -p daemon.warning -- \
       "checks deadline (${CHECKS_BUDGET_SEC}s) reached before $1; advancing to alert flush"
     return 124
   fi
@@ -122,7 +149,8 @@ run_alert_bounded() {
   local remaining=$1 message=$2 per_call
   if (( HAS_TIMEOUT == 1 )); then
     if (( remaining <= 1 )); then
-      BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_MAX_TIME=1 timeout -s KILL 1s "$ALERT" "$message" 9>&-
+      BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
+        BOJIN_ALERT_MAX_TIME=1 timeout -s KILL 1s "$ALERT" "$message" 9>&-
     else
       local max_allowed=$(( remaining - 1 ))
       per_call=$ALERT_MAX_TIME
@@ -130,7 +158,8 @@ run_alert_bounded() {
         per_call=$max_allowed
       fi
       (( per_call < 1 )) && per_call=1
-      BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_MAX_TIME="$per_call" timeout -k 1s "${per_call}s" "$ALERT" "$message" 9>&-
+      BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
+        BOJIN_ALERT_MAX_TIME="$per_call" timeout -k 1s "${per_call}s" "$ALERT" "$message" 9>&-
     fi
   else
     per_call=$ALERT_MAX_TIME
@@ -138,7 +167,8 @@ run_alert_bounded() {
       per_call=$remaining
     fi
     (( per_call < 1 )) && per_call=1
-    BOJIN_ALERT_MAX_TIME="$per_call" "$ALERT" "$message" 9>&-
+    BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
+      BOJIN_ALERT_MAX_TIME="$per_call" "$ALERT" "$message" 9>&-
   fi
 }
 
@@ -171,7 +201,7 @@ flush_alerts() {
       remaining=$total_rem
     fi
     if (( remaining <= 0 )); then
-      logger -t bojin-watchdog -p daemon.warning -- \
+      log_best_effort -t bojin-watchdog -p daemon.warning -- \
         "alert delivery budget (${ALERT_BUDGET_SEC}s) exhausted; deferring remaining alerts to next check"
       break
     fi
@@ -192,7 +222,7 @@ check_filesystems() {
     df_out=$(run_cmd_bounded "$CMD_TIMEOUT_SEC" df --output=pcent,ipcent,target "$path" 2>/dev/null)
     df_rc=$?
     if (( df_rc == 124 || df_rc == 137 )); then
-      logger -t bojin-watchdog -p daemon.warning -- "df timed out on $path"
+      log_best_effort -t bojin-watchdog -p daemon.warning -- "df timed out on $path"
       continue
     fi
     (( df_rc == 0 )) || continue
@@ -230,7 +260,7 @@ check_unit_lifecycle() {
   state=$(run_cmd_bounded "$CMD_TIMEOUT_SEC" systemctl is-active "$unit" 2>/dev/null)
   state_rc=$?
   if (( state_rc == 124 || state_rc == 137 )); then
-    logger -t bojin-watchdog -p daemon.warning -- "systemctl is-active timed out for $unit"
+    log_best_effort -t bojin-watchdog -p daemon.warning -- "systemctl is-active timed out for $unit"
     state=""
   fi
 
@@ -299,14 +329,14 @@ check_unit_lifecycle() {
       fi
     fi
   else
-    logger -t bojin-watchdog -p daemon.warning -- "systemctl show timed out or skipped for $unit"
+    log_best_effort -t bojin-watchdog -p daemon.warning -- "systemctl show timed out or skipped for $unit"
   fi
 
   act_file="$STATE/activating-$unit"
   if [[ "$state" == activating ]]; then
     act_count=$(( $(read_uint "$act_file" 0) + 1 ))
     printf '%s\n' "$act_count" >"$act_file"
-    logger -t bojin-watchdog -p daemon.warning -- "$unit is activating ($act_count/$ACTIVATING_LIMIT)"
+    log_best_effort -t bojin-watchdog -p daemon.warning -- "$unit is activating ($act_count/$ACTIVATING_LIMIT)"
     if (( act_count >= ACTIVATING_LIMIT )); then
       queue_alert "activating-$unit" 1800 \
         "$unit is stuck activating or crash-looping ($act_count consecutive checks); see journalctl -u $unit"
@@ -335,12 +365,12 @@ if [[ "$caddy_state" == active ]]; then
     if run_cmd_bounded "$PROBE_MAX_TIME" curl --noproxy '*' --silent --max-time "$PROBE_MAX_TIME" -o /dev/null "$CADDY_URL"; then
       if [[ -f "$STATE/failures-caddy.service" ]]; then
         rm -f "$STATE/failures-caddy.service" "$STATE/alert-unhealthy-caddy.service"
-        logger -t bojin-watchdog -- "caddy health check recovered"
+        log_best_effort -t bojin-watchdog -- "caddy health check recovered"
       fi
     else
       caddy_failures=$(( $(read_uint "$STATE/failures-caddy.service" 0) + 1 ))
       printf '%s\n' "$caddy_failures" >"$STATE/failures-caddy.service"
-      logger -t bojin-watchdog -p daemon.warning -- "caddy health check failed ($caddy_failures/$FAIL_LIMIT)"
+      log_best_effort -t bojin-watchdog -p daemon.warning -- "caddy health check failed ($caddy_failures/$FAIL_LIMIT)"
       if (( caddy_failures >= FAIL_LIMIT )); then
         rm -f "$STATE/failures-caddy.service"
         run_cmd_bounded "$CMD_TIMEOUT_SEC" systemctl restart --no-block caddy.service >/dev/null 2>&1 || true
@@ -361,12 +391,12 @@ if [[ "$state" == active ]]; then
     if run_cmd_bounded "$PROBE_MAX_TIME" curl --noproxy '*' --fail --silent --max-time "$PROBE_MAX_TIME" -o /dev/null "$HEALTH_URL"; then
       if [[ -f "$STATE/failures" ]]; then
         rm -f "$STATE/failures" "$STATE/alert-unhealthy"
-        logger -t bojin-watchdog -- "health check recovered"
+        log_best_effort -t bojin-watchdog -- "health check recovered"
       fi
     else
       failures=$(( $(read_uint "$STATE/failures" 0) + 1 ))
       printf '%s\n' "$failures" >"$STATE/failures"
-      logger -t bojin-watchdog -p daemon.warning -- "health check failed ($failures/$FAIL_LIMIT)"
+      log_best_effort -t bojin-watchdog -p daemon.warning -- "health check failed ($failures/$FAIL_LIMIT)"
       if (( failures >= FAIL_LIMIT )); then
         rm -f "$STATE/failures"
         run_cmd_bounded "$CMD_TIMEOUT_SEC" systemctl restart --no-block bojin.service >/dev/null 2>&1 || true

@@ -5,6 +5,24 @@
 # Messages are generic status lines: never pass user data, tokens or secrets.
 set -uo pipefail
 
+LOG_TIMEOUT_SEC=${BOJIN_ALERT_LOG_TIMEOUT_SEC:-2}
+if [[ ! "$LOG_TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then LOG_TIMEOUT_SEC=2; fi
+LOGGER_STALLED=${BOJIN_ALERT_SKIP_LOGGER:-0}
+
+log_best_effort() {
+  [[ "$LOGGER_STALLED" == 1 ]] && return 0
+  if command -v timeout >/dev/null 2>&1; then
+    local rc=0
+    timeout --foreground -s KILL "${LOG_TIMEOUT_SEC}s" logger "$@" >/dev/null 2>&1 || rc=$?
+    if (( rc == 124 || rc == 137 )); then
+      LOGGER_STALLED=1
+    fi
+  else
+    logger "$@" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 trim_url() {
   local val=$1
   val=${val#"${val%%[![:space:]]*}"}
@@ -25,7 +43,7 @@ trim_url() {
 }
 
 message="Lean Ritual: ${*:-alert}"
-logger -t bojin-alert -p daemon.warning -- "$message"
+log_best_effort -t bojin-alert -p daemon.warning -- "$message"
 
 env_file=${BOJIN_ALERT_ENV_FILE:-/etc/bojin-alert.env}
 url=$(trim_url "${ALERT_URL:-}")
@@ -40,7 +58,7 @@ fi
 [[ -n "$url" ]] || exit 0
 
 if [[ ! "$url" =~ ^https://[^[:space:]/]+ || "$url" =~ [[:space:]] ]]; then
-  logger -t bojin-alert -p daemon.err -- "Refusing invalid or non-HTTPS ALERT_URL"
+  log_best_effort -t bojin-alert -p daemon.err -- "Refusing invalid or non-HTTPS ALERT_URL"
   exit 1
 fi
 
@@ -66,7 +84,7 @@ else
 fi
 curl_rc=$?
 if (( curl_rc != 0 )) || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
-  logger -t bojin-alert -p daemon.err -- "Could not deliver alert to ALERT_URL (curl=$curl_rc http=${http_code:-000})"
+  log_best_effort -t bojin-alert -p daemon.err -- "Could not deliver alert to ALERT_URL (curl=$curl_rc http=${http_code:-000})"
   exit 1
 fi
 exit 0
