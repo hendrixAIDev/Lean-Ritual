@@ -8,7 +8,8 @@ StartLimitIntervalSec=0
 [Service]
 User=bojin
 WorkingDirectory=/opt/bojin
-EnvironmentFile=/opt/bojin/.env
+# Production uses the drop-in installed by ops/install-auto-deploy.py.
+EnvironmentFile=/etc/bojin/environment
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server.js
 # Restart after crashes, OOM kills and clean-but-unexpected exits alike.
 Restart=always

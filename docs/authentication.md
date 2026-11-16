@@ -1,6 +1,6 @@
 # Invitation authentication
 
-Authentication uses pinned Better Auth 1.7.15 and its maintained native `node:sqlite` adapter. Node 22.16+ is required (the adapter uses `StatementSync.columns()`); the deployment image uses Node 24. Authentication lives in `DATA_DIR/auth.sqlite`; app documents and photos keep their original IDs and database.
+Authentication uses pinned Better Auth 1.7.15 and its maintained native `node:sqlite` adapter. Local development requires Node >=22.16 (the adapter uses `StatementSync.columns()`). Production and auto-deploy require Node 24 on Linux x64; the package minimum is not the deployment requirement. Authentication lives in `DATA_DIR/auth.sqlite`; app documents and photos keep their original IDs and database.
 
 The server calls `await createAuth({ dataDir, baseURL, secret, cookieSecure, sendEmail, clientIP })` from `lib/auth.js`. Route `/api/auth/*` to `service.handle(req,res)` before the app's custom CSRF header check. Better Auth performs its own origin/CSRF checks. Other routes await `service.sessionUser(req)`, which returns only verified users as `{id,username,email,created,mustChange:false}`. `clientIP` must derive from the socket or a deliberately trusted reverse proxy; the handler overwrites its private rate-limit header.
 
