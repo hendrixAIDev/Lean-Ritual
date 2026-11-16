@@ -1667,12 +1667,12 @@ document.addEventListener("click", async ev => {
       b.disabled = true;
       try {
         await window.ritual.deleteAccount(password);
-        try { const prefix = `bj-user:${S.uid}:`; Object.keys(localStorage).filter(k => k.startsWith(prefix)).forEach(k => localStorage.removeItem(k)); } catch {}
+        clearUserLocal(S.uid);
         location.replace("/login.html?deleted=1");
       } catch (e) { b.disabled=false; toast(e?.message || "删除未完成，请重试或联系管理员",6000); }
       break;
     }
-    case "logout": try { await window.ritual.logout(); } catch {} location.href = "/login.html"; break;
+    case "logout": await logout(b); break;
     case "acc-edit": S.accEdit = true; render(); break;
     case "acc-cancel": S.accEdit = false; render(); break;
     case "acc-save": {
@@ -1801,6 +1801,155 @@ document.addEventListener("click", async ev => {
   }
 });
 function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
+let logoutSyncMs = 5000;
+function clearUserLocal(id = S.uid || storageUser){
+  if (!id) return;
+  try {
+    const prefix = `bj-user:${id}:`, keys = new Set(Object.keys(localStorage).filter(k => k.startsWith(prefix)));
+    if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(prefix)) keys.add(k); }
+    }
+    keys.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+function draftPayload(d, key = d?.key || ""){
+  return {
+    key: String(key || ""),
+    exercises: (d?.exercises || []).map(e => ({
+      name: String(e?.name || ""),
+      sets: (e?.sets || []).map(s => ({w: String(s?.w ?? ""), r: String(s?.r ?? "")}))
+    })),
+    feel: d?.feel === "" || d?.feel == null ? "" : String(d.feel),
+    pain: d?.pain || "none",
+    painArea: String(d?.painArea || ""),
+    note: String(d?.note || "")
+  };
+}
+function hasDraftData(d){
+  if (!d || typeof d !== "object") return false;
+  if (d.exercises?.some(e => e?.sets?.some(t => String(t?.r ?? "") !== "" || String(t?.w ?? "") !== ""))) return true;
+  if (d.feel !== "" && d.feel != null) return true;
+  if (d.pain && d.pain !== "none") return true;
+  return String(d.painArea || "").trim() !== "" || String(d.note || "").trim() !== "";
+}
+function sameDraft(a, aKey, b, bKey){
+  return !!aKey && aKey === bKey && JSON.stringify(draftPayload(a, aKey)) === JSON.stringify(draftPayload(b, bKey));
+}
+function isVerifiedInDay(entry, doc){
+  if (!doc || !entry.key) return false;
+  if (doc.workout?.done && sameDraft(entry.draft, entry.key, doc.workout, String(doc.workout.key || ""))) return true;
+  if (!doc.workout?.done && doc.workoutDraft && sameDraft(entry.draft, entry.key, doc.workoutDraft, String(doc.workoutDraft.key || ""))) return true;
+  return false;
+}
+function localDraftEntries(id = S.uid || storageUser){
+  let stored = {};
+  if (id) {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`bj-user:${id}:bj-drafts`) || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
+    } catch { return [{invalid: true, sig: "invalid"}]; }
+  }
+  const seen = new Set(), out = [];
+  const add = (rawKey, d) => {
+    if (!hasDraftData(d)) return;
+    const [date, kKey] = rawKey.split("|"), key = String(d.key || kKey || "");
+    const sig = `${date}|${key}|${JSON.stringify(draftPayload(d, key))}`;
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    out.push({date, key, draft: clone(d), sig});
+  };
+  for (const [k, d] of Object.entries(S.drafts || {})) add(k, d);
+  for (const [k, d] of Object.entries(stored)) add(k, d);
+  return out;
+}
+function snapshotSig(entries){
+  return entries.map(e => e.sig).sort().join("\n");
+}
+async function verifyAndSyncDrafts(entries){
+  if (!S.store) return false;
+  let allOk = true;
+  const byDate = new Map();
+  for (const e of entries) {
+    if (e.invalid || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.key) { allOk = false; continue; }
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  }
+  await Promise.all([...byDate.entries()].map(async ([date, list]) => {
+    await (locks["days/" + date] || Promise.resolve()).catch(() => {});
+    let doc = await S.store.get("days/" + date);
+    const pending = list.filter(e => !isVerifiedInDay(e, doc));
+    if (!pending.length) return;
+    if (pending.length === 1 && !doc?.workout?.done) {
+      const p = pending[0], srv = doc?.workoutDraft;
+      const srvHasOther = srv && hasDraftData(srv) && String(srv.key || "") !== p.key;
+      if (!srvHasOther && list.length === 1) {
+        doc = await mutate("days/" + date, cur => {
+          if (cur?.workout?.done) return null;
+          if (cur?.workoutDraft && hasDraftData(cur.workoutDraft) && String(cur.workoutDraft.key || "") !== p.key) return null;
+          const x = migrateDay(cur || {date, meals:[]});
+          x.workoutDraft = {...clone(p.draft), key:p.key, updatedAt:new Date().toISOString()};
+          stampTargets(x);
+          return x;
+        });
+        if (doc) S.days[date] = migrateDay(doc);
+      }
+    }
+    if (!list.every(e => isVerifiedInDay(e, doc))) allOk = false;
+  }));
+  return allOk;
+}
+async function runBoundedVerify(entries){
+  let timer;
+  try {
+    return await Promise.race([
+      verifyAndSyncDrafts(entries),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("sync_timeout")), logoutSyncMs); })
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function logout(btn){
+  if (S.busy.logout) return;
+  S.busy.logout = true;
+  if (btn) btn.disabled = true;
+  try {
+    clearTimeout(syncDraft.t);
+    const id = S.uid || storageUser;
+    let entries = localDraftEntries(id);
+    if (entries.length) {
+      let verified = await runBoundedVerify(entries);
+      if (verified) {
+        clearTimeout(syncDraft.t);
+        const afterFirst = localDraftEntries(id);
+        if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
+          entries = afterFirst;
+          verified = entries.length ? await runBoundedVerify(entries) : true;
+          if (verified) {
+            clearTimeout(syncDraft.t);
+            if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+          }
+        }
+      }
+      if (!verified) {
+        const ask = typeof confirm === "function" ? confirm : window?.confirm;
+        if (!(typeof ask === "function" && ask("本机还有未同步或未保存的训练草稿，现在退出登录会丢失本机上的这些草稿。仍要退出登录吗？"))) return;
+      }
+    }
+    clearTimeout(syncDraft.t);
+    storageUser = null;
+    S.drafts = {};
+    clearUserLocal(id);
+    try { await window.ritual?.logout?.(); } catch {}
+    const loc = typeof location !== "undefined" ? location : window?.location;
+    if (loc) loc.href = "/login.html";
+  } finally {
+    S.busy.logout = false;
+    if (btn) btn.disabled = false;
+  }
+}
 // 边填边存：停手 2 秒后把草稿存到服务器，换设备或页面被关掉也不会丢
 function syncDraft(date, key){
   clearTimeout(syncDraft.t);
