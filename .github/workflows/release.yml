@@ -98,5 +98,5 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          curl --fail --silent --show-error --max-time 30 https://leanritual.app/api/health > health.json
+          curl --fail --silent --show-error --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors https://leanritual.app/api/health > health.json
           python3 -c 'import json,os; h=json.load(open("health.json")); assert h.get("ok") is True and h.get("revision")==os.environ["RELEASE_SHA"], "Public revision does not match"'
