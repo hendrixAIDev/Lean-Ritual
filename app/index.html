@@ -235,7 +235,7 @@ function howTo(name){
   return `<details class="how" data-cue="${esc(b)}" ${open?"open":""}><summary>姿势讲解</summary>
     ${cues.length ? `<ul class="clean small">${cues.map(c => `<li>${esc(c)}</li>`).join("")}${back}</ul>` : ""}
     <div class="row small">
-      ${mine ? `<a class="chip on" href="${esc(mine)}" target="_blank" rel="noopener">我收藏的视频</a>` : ""}
+      ${safeLink(mine) ? `<a class="chip on" href="${esc(safeLink(mine))}" target="_blank" rel="noopener">我收藏的视频</a>` : ""}
       <a class="chip" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(kw + " 标准动作 教学")}" target="_blank" rel="noopener">B站教学视频</a>
       <a class="chip" href="https://www.youtube.com/results?search_query=${encodeURIComponent(kw + " 动作教学")}" target="_blank" rel="noopener">YouTube</a>
     </div>
@@ -266,6 +266,9 @@ const GUIDE_TEXT = `纲领要点（BLS 理论 + 薄肌战神计划）：
 /* ============ 工具 ============ */
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num = v => (typeof v === "number" || typeof v === "string") && String(v).trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : "";
+const safeLink = v => /^https?:\/\//i.test(String(v)) ? String(v) : "";
+const safeImage = v => /^(?:blob:|data:image\/|\/api\/)/i.test(String(v)) && !/[\\\r\n]/.test(String(v)) ? String(v) : "";
 const clone = o => o == null ? o : JSON.parse(JSON.stringify(o));
 const pad = n => String(n).padStart(2,"0");
 const ds = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -785,17 +788,17 @@ function exCard(e, i, d, date, plan){
   const s = suggest(e, date, plan.deload), de = d.exercises[i];
   const warm = i === 0 && s.w ? `<p class="small muted">热身：${r25(s.w*0.5)}kg×10、${r25(s.w*0.7)}kg×4、${r25(s.w*0.9)}kg×1，组间 1 分钟。</p>` : "";
   return `<div class="ex">
-    <div class="ex-h"><b>${esc(e.name)}</b><span class="presc">${e.sets}${e.lo!==""&&e.lo!=null?` × ${e.lo}–${e.hi}${isTimed(e.name)?" 秒":""}`:" 组"}</span></div>
+    <div class="ex-h"><b>${esc(e.name)}</b><span class="presc">${esc(e.sets)}${e.lo!==""&&e.lo!=null?` × ${esc(e.lo)}–${esc(e.hi)}${isTimed(e.name)?" 秒":""}`:" 组"}</span></div>
     ${e.why ? `<span class="small muted">${e.name !== e.orig ? `替换自「${esc(e.orig)}」· ` : ""}${esc(e.why)}</span>` : ""}
     ${e.extra ? `<div><button class="chip ${S.exDel === date + "|" + i ? "bad" : ""}" data-act="ex-del" data-v="${i}">${S.exDel === date + "|" + i ? "再点一次确认删除" : "删除这个加练"}</button></div>` : !plan.custom ? (S.ed?.date === date && S.ed.i === i ? editor(e) : `<div><button class="chip" data-act="ed-open" data-v="${i}">${plan.saved ? "改这个动作（已记录的这次）" : "编辑这个动作"}</button></div>`) : ""}
-    <p class="small">${esc(s.text)} <span class="muted">组间 ${e.rest}</span></p>
+    <p class="small">${esc(s.text)} <span class="muted">组间 ${esc(e.rest)}</span></p>
     ${s.stall ? `<p class="tip warn">连续 3 次没进步。先检查睡眠和热量，再考虑换动作变体。</p>` : ""}
     ${warm}
     ${howTo(e.name)}
     <div class="sets"><span class="small muted"></span><span class="small muted">${e.inc===0?"负重 kg（自重填 0）":"重量 kg"}</span><span class="small muted">${isTimed(e.name)?"秒":"次数"}</span>
     ${de.sets.map((st,j) => `<span class="n">${j+1}</span>
-      <input id="w-${i}-${j}-w" data-set="${i}.${j}.w" type="number" inputmode="decimal" step="0.5" value="${esc(st.w)}" placeholder="${s.w!=null?s.w:""}" aria-label="第${j+1}组重量">
-      <input id="w-${i}-${j}-r" data-set="${i}.${j}.r" type="number" inputmode="numeric" value="${esc(st.r)}" placeholder="${e.lo!==""&&e.lo!=null?e.lo+"–"+e.hi:""}" aria-label="第${j+1}组${isTimed(e.name)?"秒数":"次数"}">`).join("")}
+      <input id="w-${i}-${j}-w" data-set="${i}.${j}.w" type="number" inputmode="decimal" step="0.5" value="${esc(st.w)}" placeholder="${s.w!=null?esc(s.w):""}" aria-label="第${j+1}组重量">
+      <input id="w-${i}-${j}-r" data-set="${i}.${j}.r" type="number" inputmode="numeric" value="${esc(st.r)}" placeholder="${e.lo!==""&&e.lo!=null?esc(e.lo)+"–"+esc(e.hi):""}" aria-label="第${j+1}组${isTimed(e.name)?"秒数":"次数"}">`).join("")}
     </div></div>`;
 }
 /* ---- 动作编辑 ---- */
@@ -827,7 +830,7 @@ function editor(e){
     ${S.sample ? `<div class="stack" style="gap:6px">
       <label>想换的原因（给 AI 参考，可空）<input id="ed-why" data-ed="why" value="${esc(ed.why)}" placeholder="例如：器械被占了 / 做的时候腰不舒服 / 想练得更侧重上胸"></label>
       <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${ed.aiBusy ? "AI 思考中…" : "让 AI 推荐 3 个"}</button></div>
-      ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${ed.name===a.name?"border-color:var(--accent)":""}"><b class="small">${esc(a.name)} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
+      ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${ed.name===a.name?"border-color:var(--accent)":""}"><b class="small">${esc(a.name)} · ${esc(a.sets)}×${esc(a.lo)}–${esc(a.hi)}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
       ${ed.aiErr ? `<p class="small" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
     </div>` : ""}
     <div><span class="small muted">换多久</span><div class="row" style="margin-top:4px">
@@ -847,7 +850,7 @@ async function aiSuggest(){
   ed.aiBusy = true; ed.aiErr = null; render();
   const prompt = `你是力量训练教练。学员想替换今天课表里的一个动作，请推荐 3 个替代动作。
 今天：${plan.title}，其他动作：${plan.ex.filter((_,k)=>k!==ed.i).map(x=>x.name).join("、")}
-要替换的：${e.name}（原课表动作「${e.orig}」，${e.sets} 组 × ${e.lo}–${e.hi} 次）
+要替换的：${e.name}（原课表动作「${e.orig}」，${esc(e.sets)} 组 × ${esc(e.lo)}–${esc(e.hi)} 次）
 训练地点：${p.equipment==="home"?"在家（自重、弹力带、单杠、背包负重）":"健身房"}
 伤病：${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"}${p.injNote?"（"+p.injNote+"）":""}
 训练经验：${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]||"未知"}
@@ -946,29 +949,29 @@ function mealCard(m){
   const e = m.est || {}, busy = S.busy["meal-"+m.id];
   const pend = m.visionReq?.status === "pending" && Date.now() - Date.parse(m.visionReq.at || 0) < 10*60e3; // 10 分钟还没回来就允许再点一次
   const fb = m.thumb ? `this.onerror=null;this.src=this.dataset.fb` : `this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'照片不可用'}))`;
-  const img = m.photo ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(m.thumb||"")}" alt="${esc(m.type)}照片" onerror="${fb}">` : (S.files[m.id]?.url ? `<img class="ph" src="${S.files[m.id].url}" alt="">` : m.thumb ? `<img class="ph" src="${esc(m.thumb)}" alt="">` : `<div class="ph">无照片</div>`);
+  const img = m.photo ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(safeImage(m.thumb))}" alt="${esc(m.type)}照片" onerror="${fb}">` : (safeImage(S.files[m.id]?.url) ? `<img class="ph" src="${esc(safeImage(S.files[m.id].url))}" alt="">` : safeImage(m.thumb) ? `<img class="ph" src="${esc(safeImage(m.thumb))}" alt="">` : `<div class="ph">无照片</div>`);
   const confirm = S.confirmDel === m.id;
   return `<div class="meal">${img}<div class="body">
-    <div class="row between"><select data-mtype-of="${m.id}" aria-label="改餐次" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(x)}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
+    <div class="row between"><select data-mtype-of="${esc(m.id)}" aria-label="改餐次" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(x)}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
     ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}
-    ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">← 左边是吃之前</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${p.id ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(p.thumb||"")}" alt="${esc(MORE_TAG[p.tag] || "照片")}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb">` : `<img src="${esc(p.thumb)}" alt="">`}${MORE_TAG[p.tag] ? `<span>${esc(MORE_TAG[p.tag])}</span>` : ""}<button class="link small" data-act="del-more" data-v="${m.id}|${i}">${S.confirmDel === m.id + "|" + i ? "确认删" : "删"}</button></figure>` : "").join("")}</div>` : ""}
+    ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">← 左边是吃之前</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${p.id ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(safeImage(p.thumb))}" alt="${esc(MORE_TAG[p.tag] || "照片")}" onerror="this.onerror=null;if(this.dataset.fb)this.src=this.dataset.fb">` : safeImage(p.thumb) ? `<img src="${esc(safeImage(p.thumb))}" alt="">` : ``}${MORE_TAG[p.tag] ? `<span>${esc(MORE_TAG[p.tag])}</span>` : ""}<button class="link small" data-act="del-more" data-v="${esc(m.id)}|${i}">${S.confirmDel === m.id + "|" + i ? "确认删" : "删"}</button></figure>` : "").join("")}</div>` : ""}
     ${S.busy["more-"+m.id] ? `<p class="small muted">照片上传中…</p>` : ""}
     ${moreOf(m).length && e.kcal != null && (e.photos || 1) < photoCount(m) ? `<p class="tip small">加了新照片，点「AI 重新估算」会把几张一起看；有吃完剩下的照片就按差值算。</p>` : ""}
     ${e.items?.length ? `<p class="small muted">${e.items.map(x => esc(x.name + (x.amount?" "+x.amount:""))).join("、")}</p>` : ""}
     <div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      ${[["kcal","热量"],["protein","蛋白"],["carbs","碳水"],["fat","脂肪"]].map(([k,l]) => `<label>${l}<input id="me-${m.id}-${k}" data-meal="${m.id}" data-k="${k}" type="number" inputmode="decimal" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
+      ${[["kcal","热量"],["protein","蛋白"],["carbs","碳水"],["fat","脂肪"]].map(([k,l]) => `<label>${l}<input id="me-${esc(m.id)}-${k}" data-meal="${esc(m.id)}" data-k="${k}" type="number" inputmode="decimal" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
     </div>
     ${e.calc ? `<p class="small muted">${e.by==="label"?"成分表换算":"依据"}：${esc(e.calc)}</p>` : ""}
     ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${e.label ? "已在本地识别照片里的营养成分表，按表换算。" : "已在本地读取照片里的文字，没发现营养成分表，按文字描述估算。"}</p>` : ""}
     ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">这次估算没能看到照片，只按文字算${e.imgErr ? `（原因：${esc(e.imgErr)}）` : ""}。包装上有营养成分表的话，可以把每 100 g 的数值写进文字里再重新估算。</p>` : ""}
-    ${m.photoErr && !m.photo ? `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr))}${S.files[m.id]?.blob && S.assets && m.photoErr !== "decode" ? ` <button class="chip" data-act="retry-photo" data-v="${m.id}">重传照片</button>` : ""}</p>` : ""}
+    ${m.photoErr && !m.photo ? `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr))}${S.files[m.id]?.blob && S.assets && m.photoErr !== "decode" ? ` <button class="chip" data-act="retry-photo" data-v="${esc(m.id)}">重传照片</button>` : ""}</p>` : ""}
     ${m.visionReq?.status === "pending" ? `<p class="tip small">这是旧版尚未完成的估算请求，不会自动继续。请点「AI 重新估算」或手动填写。</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">AI 看过${photoCount(m) > 1 ? ` ${photoCount(m)} 张照片` : m.photo ? "照片" : "描述"}后估算的。数字不对可以直接改。</p>` : e.by === "manual" ? `<p class="small muted">自己填的数值。</p>` : ""}
     ${e.tip ? `<p class="tip">${esc(e.tip)}${e.confidence?` <span class="muted">（把握：${esc(e.confidence)}）</span>`:""}</p>` : ""}
     ${S.label?.id === m.id ? labelForm(m) : ""}
     <div class="row">
-      ${aiOK() ? `<button class="chip ${e.kcal==null?"on":""}" data-act="ai-meal" data-v="${m.id}" ${busy || pend ?"disabled":""}>${busy || pend ? "AI 估算中…" : e.kcal!=null ? "AI 重新估算" : "AI 估算"}</button>` : ""}
-      ${photoCount(m) < 4 ? `<label class="chip">+ 照片<input type="file" accept="image/*" data-more="${m.id}" data-tag="其他"></label>` : ""}
-      <button class="chip ${confirm?"bad":""}" data-act="del-meal" data-v="${m.id}">${confirm?"确认删除":"删除"}</button>
+      ${aiOK() ? `<button class="chip ${e.kcal==null?"on":""}" data-act="ai-meal" data-v="${esc(m.id)}" ${busy || pend ?"disabled":""}>${busy || pend ? "AI 估算中…" : e.kcal!=null ? "AI 重新估算" : "AI 估算"}</button>` : ""}
+      ${photoCount(m) < 4 ? `<label class="chip">+ 照片<input type="file" accept="image/*" data-more="${esc(m.id)}" data-tag="其他"></label>` : ""}
+      <button class="chip ${confirm?"bad":""}" data-act="del-meal" data-v="${esc(m.id)}">${confirm?"确认删除":"删除"}</button>
     </div></div></div>`;
 }
 function shrink(img, max, q){
@@ -1235,7 +1238,7 @@ function labelForm(m){
       <label>${L.base==="100"?"吃了多少 g/mL":"吃了几份"}<input id="lb-amt" data-lb="amt" type="number" inputmode="decimal" value="${esc(L.amt)}" placeholder="${L.base==="100"?"220":"1"}"></label>
     </div>
     <p class="small" id="lb-res">${res ? `= ${res.kcal} kcal，蛋白 ${res.protein} g，脂肪 ${res.fat} g，碳水 ${res.carbs} g` : "填好能量和吃了多少就能算。"}</p>
-    <button class="btn primary" data-act="label-save" data-v="${m.id}">用这个结果</button>
+    <button class="btn primary" data-act="label-save" data-v="${esc(m.id)}">用这个结果</button>
   </div>`;
 }
 function labelCalc(L){
@@ -1320,9 +1323,9 @@ function liftChart(pts, bw){
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="动作进步趋势">
     <g stroke="var(--line)" stroke-width="1">${[lo,(lo+hi)/2,hi].map(v => `<line x1="${P}" x2="${W-8}" y1="${y(v)}" y2="${y(v)}"/>`).join("")}</g>
     <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">${[lo,(lo+hi)/2,hi].map(v => `<text x="2" y="${y(v)+3}">${lab(v)}</text>`).join("")}
-    <text x="${P}" y="${H-4}">${pts[0].date.slice(5)}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${pts[pts.length-1].date.slice(5)}</text></g>
+    <text x="${P}" y="${H-4}">${esc(pts[0].date.slice(5))}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${esc(pts[pts.length-1].date.slice(5))}</text></g>
     <polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
-    ${vs.map((v,i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="var(--accent)"><title>${pts[i].date} ${pts[i].w>0?pts[i].w+"kg":"自重"}×${pts[i].r}</title></circle>`).join("")}
+    ${vs.map((v,i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="var(--accent)"><title>${esc(pts[i].date)} ${pts[i].w>0?pts[i].w+"kg":"自重"}×${esc(pts[i].r)}</title></circle>`).join("")}
   </svg>`;
 }
 /* ---- 热量收支（只读：吃进的估算热量 − 当天消耗估算 TDEE） ---- */
@@ -1380,11 +1383,11 @@ function balanceChart(ser, planBal){
   const bars = ser.map((d,i) => { if (d.none) return "";
     const y0 = y(0), y1 = y(d.bal), top = Math.min(y0,y1), h = Math.max(1, Math.abs(y1-y0));
     const col = d.bal >= 0 ? "var(--warn)" : "var(--accent)";
-    return `<rect x="${(x(i)+bw*0.18).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${col}" opacity="${d.partial||d.today?0.35:1}"><title>${d.date} 吃 ${d.kcal} − 消耗 ${d.tdee} = ${d.bal>0?"+":""}${d.bal} kcal${d.partial?"（没记全）":d.today?"（今天）":""}</title></rect>`; }).join("");
+    return `<rect x="${(x(i)+bw*0.18).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${col}" opacity="${d.partial||d.today?0.35:1}"><title>${esc(d.date)} 吃 ${esc(d.kcal)} − 消耗 ${esc(d.tdee)} = ${d.bal>0?"+":""}${esc(d.bal)} kcal${d.partial?"（没记全）":d.today?"（今天）":""}</title></rect>`; }).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="近两周每日热量收支">
     <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">
       <text x="2" y="${y(0)+3}">0</text>${hi-pad > 60 ? `<text x="2" y="${y(hi-pad)+3}">+${Math.round(hi-pad)}</text>` : ""}${lo+pad < -60 ? `<text x="2" y="${y(lo+pad)+3}">${Math.round(lo+pad)}</text>` : ""}
-      <text x="${P}" y="${H-4}">${ser[0].date.slice(5)}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${ser[n-1].date.slice(5)}</text></g>
+      <text x="${P}" y="${H-4}">${esc(ser[0].date.slice(5))}</text><text x="${W-8}" y="${H-4}" text-anchor="end">${esc(ser[n-1].date.slice(5))}</text></g>
     <line x1="${P}" x2="${W-8}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-width="1"/>
     ${planBal !== 0 ? `<line x1="${P}" x2="${W-8}" y1="${y(planBal)}" y2="${y(planBal)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>` : ""}
     ${bars}
@@ -1420,10 +1423,10 @@ function dayRow(d){
   if (w?.done) tags.push(`<span class="chip on">${PROGRAM[w.key]?.label||"训练"}${w.feel?" · "+FEEL[w.feel]:""}</span>`);
   if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${w.pain==="pain"?"疼痛":"不适"}</span>`);
   if (m.n) tags.push(`<span class="chip">${m.n} 餐${m.est?` · ${m.kcal} kcal · 蛋白 ${m.protein} g`:""}</span>`);
-  if (d.checkin?.sleep) tags.push(`<span class="chip">睡 ${d.checkin.sleep} h</span>`);
-  return `<button class="day" data-act="goto" data-v="${d.date}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
+  if (d.checkin?.sleep) tags.push(`<span class="chip">睡 ${esc(d.checkin.sleep)} h</span>`);
+  return `<button class="day" data-act="goto" data-v="${esc(d.date)}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
     <div class="stack" style="gap:4px;min-width:0"><b class="small">${fmtDate(d.date)}</b><div class="row">${tags.join("")||`<span class="small muted">只有打卡</span>`}</div></div>
-    <span class="num" style="font-size:20px">${d.checkin?.weight ?? ""}</span></button>`;
+    <span class="num" style="font-size:20px">${esc(d.checkin?.weight ?? "")}</span></button>`;
 }
 
 /* ---- 反馈 ---- */
@@ -1472,7 +1475,7 @@ function insights(){
 function viewFeedback(){
   const ins = insights(), p = S.profile, ai = S.ai;
   return `<div class="stack"><div class="hero"><span class="eyebrow">反馈</span><h1>按纲领自动检查</h1><p class="muted small">根据你的打卡、训练和饮食记录，每次打开都会重新算。</p></div>
-  <section class="card">${ins.map(x => `<div class="ins ${x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${x.text}</p>${actionBtn(x.action, "rule")}</div></div>`).join("")}</section>
+  <section class="card">${ins.map(x => `<div class="ins ${x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${esc(x.text)}</p>${actionBtn(x.action, "rule")}</div></div>`).join("")}</section>
   <section class="card"><div class="row between"><h2>让 AI 看看</h2>${ai?.running?`<button class="chip" data-act="ai-stop">停止</button>`:""}</div>
     <p class="small muted">写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），AI 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。</p>
     <label>我的反馈（可选）<textarea id="fb-text" rows="3" placeholder="例如：深蹲到第三组膝盖有点酸；引体一个都拉不起来；这周睡得不好，训练很吃力" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
@@ -1481,15 +1484,16 @@ function viewFeedback(){
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
   ${S.feedback.slice(0,5).map(fbCard).join("")}
-  ${(p.adjustLog||[]).length ? `<section class="card"><h3>已采纳的调整</h3><ul class="clean small">${p.adjustLog.slice(-8).reverse().map(a => `<li>${a.date.slice(5)} ${esc(a.text)}</li>`).join("")}</ul></section>` : ""}
+  ${(p.adjustLog||[]).length ? `<section class="card"><h3>已采纳的调整</h3><ul class="clean small">${p.adjustLog.slice(-8).reverse().map(a => `<li>${esc(a.date.slice(5))} ${esc(a.text)}</li>`).join("")}</ul></section>` : ""}
   </div>`;
 }
 function actionBtn(a, src, fid, idx){
   if (!a) return "";
+  a = {...a, delta:num(a.delta), sets:num(a.sets), lo:num(a.lo), hi:num(a.hi)};
   const applied = fid && (S.feedback.find(f => f.id === fid)?.applied || []).includes(idx);
-  const label = a.kind === "kcal" ? `采纳：每日 ${a.delta>0?"+":""}${a.delta} kcal` : a.kind === "deload" ? "采纳：本周开始减载" : a.kind === "swap" ? `采纳：${a.from} 换成 ${a.to}` : a.kind === "edit" ? `采纳：${a.to && a.to !== a.from ? `${a.from} 换成 ${a.to}` : a.from} 改为 ${a.sets}×${a.lo}–${a.hi}` : null;
+  const label = a.kind === "kcal" ? `采纳：每日 ${a.delta>0?"+":""}${a.delta} kcal` : a.kind === "deload" ? "采纳：本周开始减载" : a.kind === "swap" ? `采纳：${a.from} 换成 ${a.to}` : a.kind === "edit" ? `采纳：${a.to && a.to !== a.from ? `${a.from} 换成 ${a.to}` : a.from} 改为 ${esc(a.sets)}×${esc(a.lo)}–${esc(a.hi)}` : null;
   if (!label) return "";
-  return `<div><button class="chip ${applied?"":"on"}" data-act="apply" data-v='${esc(JSON.stringify({a, fid:fid||null, idx:idx??null}))}' ${applied?"disabled":""}>${applied ? "已采纳" : label}</button></div>`;
+  return `<div><button class="chip ${applied?"":"on"}" data-act="apply" data-v='${esc(JSON.stringify({a, fid:fid||null, idx:idx??null}))}' ${applied?"disabled":""}>${applied ? "已采纳" : esc(label)}</button></div>`;
 }
 function fbCard(f){
   return `<section class="card"><div class="row between"><span class="eyebrow">AI 反馈 · ${esc((f.createdAt||"").slice(0,10))}</span></div>
@@ -1513,13 +1517,13 @@ function dataDigest(){
     lines.push(s);
   }
   const plan = planFor(today);
-  return `个人资料：${p.sex==="f"?"女":"男"} ${p.age}岁 ${p.height}cm 当前7日均重${t.w?.toFixed?.(1)}kg 体脂${t.bf??"未知"}%${t.bfAvg?"(体脂秤14日均)":""} 训练经验:${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]} 阶段:${STAGE[t.st]} 地点:${p.equipment==="home"?"在家":"健身房"} 训练日:${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("")} 时段:${SLOT[p.slot]} 伤病:${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"} ${p.injNote?"("+p.injNote+")":""} 补剂:${(p.supps||[]).join(",")||"无"}
+  return `个人资料：${p.sex==="f"?"女":"男"} ${esc(p.age)}岁 ${esc(p.height)}cm 当前7日均重${t.w?.toFixed?.(1)}kg 体脂${t.bf??"未知"}%${t.bfAvg?"(体脂秤14日均)":""} 训练经验:${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]} 阶段:${STAGE[t.st]} 地点:${p.equipment==="home"?"在家":"健身房"} 训练日:${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("")} 时段:${SLOT[p.slot]} 伤病:${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"} ${p.injNote?"("+p.injNote+")":""} 补剂:${(p.supps||[]).join(",")||"无"}
 当前目标：${t.kcal} kcal（含已采纳调整 ${p.kcalAdjust||0}），蛋白${t.protein}g 碳水${t.carbs}g 脂肪${t.fat}g；TDEE约${t.tdee}。计划第${weekIndex(today)+1}周。
 热量收支：${balanceText()}
 今天计划：${plan.key ? plan.title + "：" + plan.ex.map(e=>e.name).join("、") : "休息"}
 当前课表动作名（可用于 swap/edit 的 from）：${[...new Set(ORDER.flatMap(k => PROGRAM[k].ex.map(e => e.name)))].join("、")}
 当前实际执行（from 原动作名 → 现在的动作 组数×次数）：
-${ORDER.map(k => PROGRAM[k].title + "：" + PROGRAM[k].ex.map(resolveEx).map(e => `${e.orig}${e.name!==e.orig?" → "+e.name:""} ${e.sets}×${e.lo}–${e.hi}`).join("；")).join("\n")}
+${ORDER.map(k => PROGRAM[k].title + "：" + PROGRAM[k].ex.map(resolveEx).map(e => `${e.orig}${e.name!==e.orig?" → "+e.name:""} ${esc(e.sets)}×${esc(e.lo)}–${esc(e.hi)}`).join("；")).join("\n")}
 最近 14 天记录：
 ${lines.join("\n") || "（还没有记录）"}`;
 }
@@ -1561,7 +1565,7 @@ async function applyAction(payload){
       else if (a.kind === "edit") {
         const cur = (p.exEdits||{})[a.from], name = a.to || cur?.name || a.from, meta = exMeta(name);
         const val = {...(cur||{}), name, sets:a.sets, lo:a.lo, hi:a.hi, inc: cur && name === cur.name ? cur.inc : (meta?.inc ?? (a.hi <= 8 ? 2.5 : 1)), rest: cur && name === cur.name ? cur.rest : (meta?.rest || (a.hi <= 8 ? "2–3 分钟" : "1–2 分钟"))};
-        p.exEdits = {...(p.exEdits||{}), [a.from]:val}; p.adjustLog.push({date, text:`「${a.from}」长期换成 ${name} ${a.sets}×${a.lo}–${a.hi}（根据反馈）`});
+        p.exEdits = {...(p.exEdits||{}), [a.from]:val}; p.adjustLog.push({date, text:`「${a.from}」长期换成 ${name} ${esc(a.sets)}×${esc(a.lo)}–${esc(a.hi)}（根据反馈）`});
       }
     });
     toast("已采纳，计划已更新");
@@ -1594,17 +1598,17 @@ function viewMe(){
   return `<div class="stack"><div class="hero"><span class="eyebrow">我的</span><h1>${STAGE[t.st]}阶段 · 每日 ${t.kcal} kcal</h1></div>
   <section class="card"><h2>每日目标</h2>
     <div class="kpis"><div class="kpi"><span class="v">${t.kcal}</span><span class="k">热量 kcal</span></div><div class="kpi"><span class="v">${t.protein}</span><span class="k">蛋白 g</span></div><div class="kpi"><span class="v">${t.carbs}</span><span class="k">碳水 g</span></div><div class="kpi"><span class="v">${t.fat}</span><span class="k">脂肪 g</span></div></div>
-    <p class="small muted">算法：BMR 用 ${t.formula} 算得 ${t.bmr} kcal，乘活动系数 ${t.af} 得 TDEE ${t.tdee} kcal，${t.st==="cut"?"减脂取 ×0.775":t.st==="bulk"?"增肌取 ×1.075":"维持取 ×1"}${p.kcalAdjust?`，再加已采纳的调整 ${p.kcalAdjust>0?"+":""}${p.kcalAdjust} kcal`:""}。体重用 ${avgWeight(todayStr())?"最近 7 日均值":"建档体重"} ${t.w.toFixed(1)} kg${t.bf!=null?`，体脂用${t.bfAvg?"体脂秤最近 14 日均值":"资料里填的"} ${t.bf}%`:""}。</p>
+    <p class="small muted">算法：BMR 用 ${t.formula} 算得 ${t.bmr} kcal，乘活动系数 ${t.af} 得 TDEE ${t.tdee} kcal，${t.st==="cut"?"减脂取 ×0.775":t.st==="bulk"?"增肌取 ×1.075":"维持取 ×1"}${p.kcalAdjust?`，再加已采纳的调整 ${p.kcalAdjust>0?"+":""}${esc(p.kcalAdjust)} kcal`:""}。体重用 ${avgWeight(todayStr())?"最近 7 日均值":"建档体重"} ${t.w.toFixed(1)} kg${t.bf!=null?`，体脂用${t.bfAvg?"体脂秤最近 14 日均值":"资料里填的"} ${t.bf}%`:""}。</p>
   </section>
   <section class="card"><div class="row between"><h2>我的资料</h2><button class="btn" data-act="edit">修改</button></div>
     <div class="grid2 small">
-      <span class="muted">身体</span><span>${p.sex==="f"?"女":"男"} · ${p.age} 岁 · ${p.height} cm · ${p.weight} kg${p.bf!=null?` · 体脂 ${p.bf}%`:""}</span>
+      <span class="muted">身体</span><span>${p.sex==="f"?"女":"男"} · ${esc(p.age)} 岁 · ${esc(p.height)} cm · ${esc(p.weight)} kg${p.bf!=null?` · 体脂 ${esc(p.bf)}%`:""}</span>
       <span class="muted">训练日</span><span>${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("、")} · ${SLOT[p.slot]} · ${p.equipment==="home"?"在家":"健身房"}</span>
       <span class="muted">伤病</span><span>${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"}${p.injNote?`（${esc(p.injNote)}）`:""}</span>
-      <span class="muted">开始日期</span><span>${p.startDate} · 第 ${weekIndex(todayStr())+1} 周</span>
-      <span class="muted">减载</span><span>${isDeload(todayStr()) ? "本周减载中" : `每 ${p.deloadEvery||9} 周减载一周`}</span>
+      <span class="muted">开始日期</span><span>${esc(p.startDate)} · 第 ${weekIndex(todayStr())+1} 周</span>
+      <span class="muted">减载</span><span>${isDeload(todayStr()) ? "本周减载中" : `每 ${esc(p.deloadEvery||9)} 周减载一周`}</span>
     </div>
-    ${Object.keys(p.exEdits||{}).length ? `<p class="small">课表长期调整：${Object.entries(p.exEdits).map(([a,b]) => `${esc(a)} → ${esc(b.name)} ${b.sets}×${b.lo}–${b.hi}`).join("；")} <button class="link" data-act="clear-exedits">全部恢复默认</button></p>` : ""}
+    ${Object.keys(p.exEdits||{}).length ? `<p class="small">课表长期调整：${Object.entries(p.exEdits).map(([a,b]) => `${esc(a)} → ${esc(b.name)} ${esc(b.sets)}×${esc(b.lo)}–${esc(b.hi)}`).join("；")} <button class="link" data-act="clear-exedits">全部恢复默认</button></p>` : ""}
     ${Object.keys(p.swaps||{}).length ? `<p class="small">已换动作：${Object.entries(p.swaps).map(([a,b]) => `${esc(a)} → ${esc(b)}`).join("；")} <button class="link" data-act="clear-swaps">恢复原动作</button></p>` : ""}
     <div class="row">${isDeload(todayStr())==="manual" ? `<button class="btn" data-act="stop-deload">结束减载</button>` : `<button class="btn" data-act="start-deload">从今天开始减载一周</button>`}
     ${p.kcalAdjust ? `<button class="btn" data-act="reset-kcal">热量调整归零</button>` : ""}</div>
