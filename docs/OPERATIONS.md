@@ -13,7 +13,7 @@ These commands are prepared, not deployed. Run as the configured service user un
 
 Every supported data-writing entry point (server.js and auth-admin.js) holds a shared filesystem lease. Backup takes an exclusive lease and refuses if any writer is running. It does not pretend that independently copying SQLite files and photos during writes is consistent. The current single-server beta uses a short maintenance window.
 
-1. Stop the service and finish admin commands. Do not edit the databases with external tools during backup.
+1. Coordinate under the root-owned transition maintenance wrapper (`sudo /usr/local/sbin/bojin-maintenance-lock -- ...`, installed from `ops/maintenance-lock.sh`), stop the service, and finish admin commands. Never run `flock` without `sudo`, against world-writable `/run/lock`, or on `/run/bojin/maintenance.lock` alone until all legacy lock participants are retired. Do not edit the databases with external tools during backup.
 2. With DATA_DIR set, run `node scripts/data-backup.js backup /private/backups/NEW-SNAPSHOT`.
 3. Run `node scripts/data-backup.js ledger /private/backups/NEW-deletions.json` to preserve the latest deletion requests.
 4. Restart the service, then copy both the snapshot directory and deletion ledger to private off-server storage over authenticated encrypted transport. Verify the copy using `node scripts/data-backup.js verify SNAPSHOT`.
@@ -28,8 +28,10 @@ rollback target, and newest five others. Pruning runs after successful publicati
 under the maintenance lock; failures fail the backup unit without removing the new
 snapshot. Only recognized names are pruned, never symlink entries.
 
-Upgrade the receiver with `sudo install -o root -g root -m 0755 ops/deploy-release.py /usr/local/sbin/lean-ritual-deploy`.
-Install from a trusted checkout as root with `sudo bash ops/install-backup.sh`.
+Upgrade the `systemd-tmpfiles` directory rule, transition lock wrapper, and receiver together under the dual-lock wrapper:
+`sudo install -d -o root -g root -m 0755 /etc/tmpfiles.d /usr/local/sbin && sudo install -o root -g root -m 0644 ops/bojin-tmpfiles.conf /etc/tmpfiles.d/bojin.conf && sudo systemd-tmpfiles --create /etc/tmpfiles.d/bojin.conf && sudo install -o root -g root -m 0755 ops/maintenance-lock.sh /usr/local/sbin/bojin-maintenance-lock && sudo /usr/local/sbin/bojin-maintenance-lock -- install -o root -g root -m 0755 ops/deploy-release.py /usr/local/sbin/lean-ritual-deploy`
+(`ops/install-auto-deploy.py` also installs `/etc/tmpfiles.d/bojin.conf` and `/usr/local/sbin/bojin-maintenance-lock`).
+Install from a trusted checkout as root with `sudo /usr/local/sbin/bojin-maintenance-lock -- bash ops/install-backup.sh` (which also installs `/etc/tmpfiles.d/bojin.conf` and `/usr/local/sbin/bojin-maintenance-lock`, and ensures `/run/bojin` is `0755 root:root`).
 This preserves existing environment configuration, disables the old local timer,
 and enables the single daily bojin-backup.timer without restarting the app.
 Verify with `systemctl list-timers bojin-backup.timer` and
@@ -38,9 +40,15 @@ An empty OFFSITE_DEST logs "offsite disabled"; configured rsync retains bounded
 timeouts and failures fail the unit. Offsite backup remains a known gap:
 loss of the host can lose all server data.
 
+### Shared maintenance lock (`/run/bojin/maintenance.lock`) and transition removal
+
+Deploys (`/usr/local/sbin/lean-ritual-deploy`), scheduled backups (`/usr/local/libexec/bojin-backup`), the health watchdog (`/usr/local/libexec/bojin-watchdog`), and manual host maintenance coordinate through `/run/bojin/maintenance.lock` inside `root:root` `0755` `/run/bojin` (recreated across reboots via `/etc/tmpfiles.d/bojin.conf` from `ops/bojin-tmpfiles.conf`, and created defensively with `install -d -o root -g root -m 0755 /run/bojin` if missing). Every root helper refuses to use the lock if `/run/bojin` or `/run/bojin/maintenance.lock` is a symlink or not root-owned.
+
+For one transition release, each updated root helper — and the manual operator wrapper `/usr/local/sbin/bojin-maintenance-lock` (`ops/maintenance-lock.sh -- <command>`) — acquires `/run/bojin/maintenance.lock` first and then `/run/lock/bojin-maintenance.lock` (using the same blocking or non-blocking mode) so no upgraded helper or manual operation can overlap an un-upgraded participant. All manual maintenance (helper replacement, manual backup, manual code rollback, and data restore) MUST use `sudo /usr/local/sbin/bojin-maintenance-lock -- <command>` (or `sudo bash ops/maintenance-lock.sh -- <command>` from a reviewed checkout) until all legacy participants are retired; taking only `/run/bojin/maintenance.lock` during the mixed-version window would miss an old process holding `/run/lock/bojin-maintenance.lock`. If `open(..., O_CREAT)` on `/run/lock/bojin-maintenance.lock` fails with `EACCES` under Ubuntu 24.04 `fs.protected_regular=2`, each script logs a warning and retries opening the existing legacy file **without `O_CREAT`** (`O_NOFOLLOW` + `fstat` regular-file validation) and acquires `flock` on that existing inode, failing closed if the retry also fails. Never `rm` `/run/lock/bojin-maintenance.lock` while any process might hold or open it (unlinking a held `flock` file lets new openers lock a fresh inode concurrently). Legacy `/run/lock/bojin-maintenance.lock` compatibility can be removed in the next release once `/etc/tmpfiles.d/bojin.conf`, `/usr/local/sbin/bojin-maintenance-lock`, `/usr/local/sbin/lean-ritual-deploy`, `/usr/local/libexec/bojin-backup`, and `/usr/local/libexec/bojin-watchdog` are all upgraded and hash-verified on the production host; only after deploying that post-transition release (quiescing all legacy entrants) and confirming no active process holds `/run/lock/bojin-maintenance.lock` (`sudo fuser -v /run/lock/bojin-maintenance.lock` / `sudo lsof /run/lock/bojin-maintenance.lock`, draining any running maintenance first) may `/run/lock/bojin-maintenance.lock` be unlinked, after which operators may use `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` or `sudo flock /run/bojin/maintenance.lock ...` directly.
+
 ## Restore and rollback
 
-Never restore over the live directory. Stop all writers, preserve the current directory for investigation, then restore into a new empty path:
+Never restore over the live directory. Under `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` (until all legacy lock participants are retired), stop all writers, preserve the current directory for investigation, then restore into a new empty path:
 
 ```sh
 node scripts/data-backup.js restore /private/backups/SNAPSHOT /var/lib/bojin-restored --deletions /private/backups/LATEST-deletions.json

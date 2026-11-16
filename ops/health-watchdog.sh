@@ -25,7 +25,11 @@ ALERT_BUDGET_SEC=${BOJIN_WATCHDOG_ALERT_BUDGET_SEC:-22}
 ALERT_MAX_TIME=${BOJIN_WATCHDOG_ALERT_MAX_TIME:-8}
 STATE=${BOJIN_WATCHDOG_STATE_DIR:-/run/bojin-watchdog}
 ALERT=${BOJIN_WATCHDOG_ALERT_BIN:-/usr/local/libexec/bojin-alert}
-LOCK_FILE=${BOJIN_WATCHDOG_LOCK_FILE:-/run/lock/bojin-maintenance.lock}
+LOCK_FILE=${BOJIN_WATCHDOG_LOCK_FILE:-/run/bojin/maintenance.lock}
+# Transition compatibility (one release): also check the legacy lock path after
+# LOCK_FILE so an un-upgraded helper or manual command cannot race the watchdog.
+# Remove in the next release once all host helpers and runbooks use LOCK_FILE.
+LEGACY_LOCK_FILE=${BOJIN_WATCHDOG_LEGACY_LOCK_FILE:-/run/lock/bojin-maintenance.lock}
 UPTIME_FILE=${BOJIN_WATCHDOG_UPTIME_FILE:-/proc/uptime}
 HAS_TIMEOUT=0
 if command -v timeout >/dev/null 2>&1; then HAS_TIMEOUT=1; fi
@@ -52,12 +56,12 @@ log_best_effort() {
     fi
     (( limit < 1 )) && limit=1
     local rc=0
-    timeout -s KILL "${limit}s" logger "$@" 9>&- >/dev/null 2>&1 || rc=$?
+    timeout -s KILL "${limit}s" logger "$@" 8>&- 9>&- >/dev/null 2>&1 || rc=$?
     if (( rc == 124 || rc == 137 )); then
       LOGGER_STALLED=1
     fi
   else
-    logger "$@" 9>&- >/dev/null 2>&1 || true
+    logger "$@" 8>&- 9>&- >/dev/null 2>&1 || true
   fi
   return 0
 }
@@ -78,17 +82,17 @@ run_cmd_bounded() {
   fi
   if (( HAS_TIMEOUT == 1 )); then
     if (( remaining == 1 )); then
-      timeout -s KILL 1s "$@" 9>&-
+      timeout -s KILL 1s "$@" 8>&- 9>&-
     else
       local limit=$(( remaining - 1 ))
       if (( desired < limit )); then
         limit=$desired
       fi
       (( limit < 1 )) && limit=1
-      timeout -k 1s "${limit}s" "$@" 9>&-
+      timeout -k 1s "${limit}s" "$@" 8>&- 9>&-
     fi
   else
-    "$@" 9>&-
+    "$@" 8>&- 9>&-
   fi
 }
 
@@ -150,7 +154,7 @@ run_alert_bounded() {
   if (( HAS_TIMEOUT == 1 )); then
     if (( remaining <= 1 )); then
       BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
-        BOJIN_ALERT_MAX_TIME=1 timeout -s KILL 1s "$ALERT" "$message" 9>&-
+        BOJIN_ALERT_MAX_TIME=1 timeout -s KILL 1s "$ALERT" "$message" 8>&- 9>&-
     else
       local max_allowed=$(( remaining - 1 ))
       per_call=$ALERT_MAX_TIME
@@ -159,7 +163,7 @@ run_alert_bounded() {
       fi
       (( per_call < 1 )) && per_call=1
       BOJIN_ALERT_WRAPPED=1 BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
-        BOJIN_ALERT_MAX_TIME="$per_call" timeout -k 1s "${per_call}s" "$ALERT" "$message" 9>&-
+        BOJIN_ALERT_MAX_TIME="$per_call" timeout -k 1s "${per_call}s" "$ALERT" "$message" 8>&- 9>&-
     fi
   else
     per_call=$ALERT_MAX_TIME
@@ -168,7 +172,7 @@ run_alert_bounded() {
     fi
     (( per_call < 1 )) && per_call=1
     BOJIN_ALERT_SKIP_LOGGER="$LOGGER_STALLED" BOJIN_ALERT_LOG_TIMEOUT_SEC=1 \
-      BOJIN_ALERT_MAX_TIME="$per_call" "$ALERT" "$message" 9>&-
+      BOJIN_ALERT_MAX_TIME="$per_call" "$ALERT" "$message" 8>&- 9>&-
   fi
 }
 
@@ -348,10 +352,101 @@ check_unit_lifecycle() {
   UNIT_STATE=$state
 }
 
+path_uid() {
+  if stat -c '%u' / >/dev/null 2>&1; then
+    stat -c '%u' -- "$1"
+  else
+    stat -f '%u' "$1"
+  fi
+}
+
+refuse_lock() {
+  log_best_effort -t bojin-watchdog -p daemon.err -- "$1"
+  echo "$1" >&2
+  exit 1
+}
+
 # Deploys, backups and manual restores hold this lock and stop the app on
 # purpose. Never interfere with them: skip this round instead.
-exec 9>>"$LOCK_FILE"
+LOCK_DIR=$(dirname -- "$LOCK_FILE")
+[[ ! -L "$LOCK_DIR" ]] || refuse_lock "Refusing symlink maintenance lock directory: $LOCK_DIR"
+if [[ ! -e "$LOCK_DIR" ]]; then
+  install -d -o root -g root -m 0755 "$LOCK_DIR" || refuse_lock "Failed to create maintenance lock directory: $LOCK_DIR"
+fi
+if [[ -L "$LOCK_DIR" || ! -d "$LOCK_DIR" ]] || [[ "$(path_uid "$LOCK_DIR" 2>/dev/null)" != 0 ]]; then
+  refuse_lock "Refusing non-root or invalid maintenance lock directory: $LOCK_DIR"
+fi
+[[ ! -L "$LOCK_FILE" ]] || refuse_lock "Refusing symlink maintenance lock: $LOCK_FILE"
+if [[ -e "$LOCK_FILE" ]]; then
+  if [[ ! -f "$LOCK_FILE" ]] || [[ "$(path_uid "$LOCK_FILE" 2>/dev/null)" != 0 ]]; then
+    refuse_lock "Refusing non-root or non-regular maintenance lock: $LOCK_FILE"
+  fi
+fi
+{ exec 9>>"$LOCK_FILE"; } 2>/dev/null || refuse_lock "Failed to open maintenance lock: $LOCK_FILE"
+if [[ -L "$LOCK_FILE" || ! -f "$LOCK_FILE" ]] || [[ "$(path_uid "$LOCK_FILE" 2>/dev/null)" != 0 ]]; then
+  exec 9>&-
+  refuse_lock "Refusing unsafe maintenance lock: $LOCK_FILE"
+fi
 flock -n 9 || exit 0
+
+[[ ! -L "$LEGACY_LOCK_FILE" ]] || refuse_lock "Refusing symlink legacy maintenance lock: $LEGACY_LOCK_FILE"
+if [[ -e "$LEGACY_LOCK_FILE" && ! -f "$LEGACY_LOCK_FILE" ]]; then
+  refuse_lock "Refusing non-regular legacy maintenance lock: $LEGACY_LOCK_FILE"
+fi
+if { exec 8>>"$LEGACY_LOCK_FILE"; } 2>/dev/null; then
+  if ! python3 -c 'import os, stat, sys; sys.exit(0 if stat.S_ISREG(os.fstat(8).st_mode) and not os.path.islink(sys.argv[1]) else 1)' "$LEGACY_LOCK_FILE" 9>&-; then
+    exec 8>&-
+    refuse_lock "Refusing unsafe legacy maintenance lock: $LEGACY_LOCK_FILE"
+  fi
+  flock -n 8 || exit 0
+elif legacy_meta=$(python3 -c '
+import errno, os, stat, sys
+path = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+try:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK | nofollow, 0o600)
+except OSError as exc:
+    if exc.errno != errno.EACCES:
+        sys.exit(1)
+    try:
+        rfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | nofollow)
+    except OSError:
+        sys.exit(1)
+    try:
+        st = os.fstat(rfd)
+        if not stat.S_ISREG(st.st_mode):
+            sys.exit(1)
+        print(f"{st.st_dev} {st.st_ino}")
+        sys.exit(0)
+    finally:
+        os.close(rfd)
+else:
+    os.close(fd)
+    sys.exit(1)
+' "$LEGACY_LOCK_FILE" 8>&- 9>&-); then
+  { exec 8<"$LEGACY_LOCK_FILE"; } 2>/dev/null || refuse_lock "Failed to open existing legacy maintenance lock without O_CREAT: $LEGACY_LOCK_FILE"
+  read -r exp_dev exp_ino <<<"$legacy_meta"
+  if ! python3 -c '
+import os, stat, sys
+st = os.fstat(8)
+lst = os.lstat(sys.argv[1])
+ok = (
+    stat.S_ISREG(st.st_mode)
+    and not stat.S_ISLNK(lst.st_mode)
+    and (st.st_dev, st.st_ino) == (lst.st_dev, lst.st_ino) == (int(sys.argv[2]), int(sys.argv[3]))
+)
+sys.exit(0 if ok else 1)
+' "$LEGACY_LOCK_FILE" "$exp_dev" "$exp_ino" 9>&-; then
+    exec 8>&-
+    refuse_lock "Refusing unsafe legacy maintenance lock fd: $LEGACY_LOCK_FILE"
+  fi
+  warn_msg="legacy maintenance lock $LEGACY_LOCK_FILE failed O_CREAT with EACCES (fs.protected_regular); opened existing regular file without O_CREAT for flock"
+  log_best_effort -t bojin-watchdog -p daemon.warning -- "$warn_msg"
+  echo "Warning: $warn_msg" >&2
+  flock -n 8 || exit 0
+else
+  refuse_lock "Failed to open legacy maintenance lock: $LEGACY_LOCK_FILE"
+fi
 
 # Run all disk/inode checks, unit lifecycle checks, and local HTTP probes FIRST
 # under CHECKS_BUDGET_SEC; deliver queued alerts afterwards with >=22s budget.

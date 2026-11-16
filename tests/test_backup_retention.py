@@ -61,6 +61,8 @@ class RetentionTests(unittest.TestCase):
     def test_optional_offsite_and_publication_before_pruning(self):
         script = pathlib.Path("ops/backup-service.sh").read_text()
         self.assertIn('if [[ -z "${OFFSITE_DEST:-}" ]]', script)
+        self.assertIn('/run/bojin/maintenance.lock', script)
+        self.assertLess(script.index('/run/bojin/maintenance.lock'), script.index('/run/lock/bojin-maintenance.lock'))
         self.assertLess(script.index('publishing=0\nrmdir'), script.index("<<'PYRET'"))
         self.assertLess(script.index("<<'PYRET'"), script.index('flock -u 9'))
         result = subprocess.run(["bash", "-c",
@@ -70,16 +72,32 @@ class RetentionTests(unittest.TestCase):
         self.assertIn("offsite disabled", result.stdout)
 
     def test_installer_preserves_existing_environment(self):
+        tmpfiles_src = pathlib.Path("ops/bojin-tmpfiles.conf")
+        self.assertTrue(tmpfiles_src.is_file())
+        self.assertEqual(tmpfiles_src.read_text().strip(), "d /run/bojin 0755 root root -")
         script = pathlib.Path("ops/install-backup.sh").read_text()
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            for name in ("backup-service.sh", "bojin-backup.service", "bojin-backup.timer"):
+            for name in ("backup-service.sh", "bojin-backup.service", "bojin-backup.timer", "maintenance-lock.sh"):
                 (root / name).write_text("fixture")
+            (root / "bojin-tmpfiles.conf").write_text(tmpfiles_src.read_text())
+            bindir = root / "bin"
+            bindir.mkdir()
+            stat_stub = bindir / "stat"
+            stat_stub.write_text("#!/usr/bin/env python3\nimport os,sys\nif sys.argv[1:3]==['-c','%u']:\n os.lstat(sys.argv[-1]); print(0); sys.exit(0)\nsys.exit(1)\n")
+            stat_stub.chmod(0o755)
+            tmpfiles_stub = bindir / "systemd-tmpfiles"
+            tmpfiles_stub.write_text("#!/usr/bin/env bash\nexit 0\n")
+            tmpfiles_stub.chmod(0o755)
+            run_env = {**os.environ, "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
             env = root / "env"
             env.write_text("BACKUP_RETENTION_DAYS=11\n")
             script = script.replace('[[ $EUID == 0 ]]', '[[ 1 == 1 ]]')
             script = script.replace("/etc/bojin-backup.env", str(env))
+            script = script.replace("/etc/tmpfiles.d", str(root / "tmpfiles.d"))
+            script = script.replace("/run/bojin", str(root / "run-bojin"))
             script = script.replace("/usr/local/libexec", str(root / "libexec"))
+            script = script.replace("/usr/local/sbin", str(root / "sbin"))
             (root / "units").mkdir()
             script = script.replace("/etc/systemd/system", str(root / "units"))
             script = script.replace("install -o root -g root", "install")
@@ -89,22 +107,33 @@ class RetentionTests(unittest.TestCase):
             installer = root / "installer"
             installer.write_text(script)
             for _ in range(2):
-                subprocess.run(["bash", str(installer)], check=True)
+                subprocess.run(["bash", str(installer)], env=run_env, check=True)
             self.assertEqual(env.read_text(), "BACKUP_RETENTION_DAYS=11\n")
             self.assertEqual(env.stat().st_mode & 0o777, 0o600)
             self.assertEqual((root / "libexec/bojin-backup").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((root / "sbin/bojin-maintenance-lock").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((root / "tmpfiles.d/bojin.conf").read_text().strip(), "d /run/bojin 0755 root root -")
+            self.assertEqual((root / "tmpfiles.d/bojin.conf").stat().st_mode & 0o777, 0o644)
+            self.assertTrue((root / "run-bojin").is_dir())
+            self.assertEqual((root / "run-bojin").stat().st_mode & 0o777, 0o755)
             env.unlink()
-            subprocess.run(["bash", str(installer)], check=True)
+            subprocess.run(["bash", str(installer)], env=run_env, check=True)
             self.assertIn("BACKUP_RETENTION_DAYS=7", env.read_text())
+            # Refuse symlinked /run/bojin
+            (root / "run-bojin").rmdir()
+            (root / "run-bojin").symlink_to(root / "units")
+            self.assertNotEqual(subprocess.run(["bash", str(installer)], env=run_env,
+                                capture_output=True).returncode, 0)
+            (root / "run-bojin").unlink()
             env.unlink()
             env.symlink_to(root / "missing")
-            self.assertNotEqual(subprocess.run(["bash", str(installer)],
+            self.assertNotEqual(subprocess.run(["bash", str(installer)], env=run_env,
                                 capture_output=True).returncode, 0)
             env.unlink()
             env.touch()
             installer.write_text(script.replace("false --quiet bojin-backup-local.service",
                                                 "true --quiet bojin-backup-local.service"))
-            self.assertNotEqual(subprocess.run(["bash", str(installer)],
+            self.assertNotEqual(subprocess.run(["bash", str(installer)], env=run_env,
                                 capture_output=True).returncode, 0)
 
     def test_pruning_failure_preserves_new_snapshot(self):

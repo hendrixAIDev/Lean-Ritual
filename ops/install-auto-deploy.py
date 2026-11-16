@@ -9,6 +9,7 @@ from pathlib import Path
 import pwd
 import shlex
 import shutil
+import stat
 import subprocess
 import time
 
@@ -85,6 +86,7 @@ def main():
         raise ValueError("Existing authorized_keys differs; review instead of overwriting")
     keys.write_text(key_line); os.chown(keys, 0, 0); keys.chmod(0o644)
     for source, target in [(ROOT / "deploy-release.py", Path("/usr/local/sbin/lean-ritual-deploy")),
+                           (ROOT / "maintenance-lock.sh", Path("/usr/local/sbin/bojin-maintenance-lock")),
                            (ROOT / "backup-service.sh", Path("/usr/local/libexec/bojin-backup"))]:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target); os.chown(target, 0, 0); target.chmod(0o755)
@@ -101,8 +103,24 @@ def main():
     # Root-operated services execute only root-installed wrappers, never release scripts.
     shutil.copyfile(ROOT / "bojin-backup.service", "/etc/systemd/system/bojin-backup.service")
     Path("/etc/systemd/system/bojin-backup.service").chmod(0o644)
-    with deploy.LOCK.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    tmpfiles_dir = Path("/etc/tmpfiles.d")
+    if tmpfiles_dir.is_symlink():
+        raise ValueError("Refusing symlink /etc/tmpfiles.d")
+    tmpfiles_dir.mkdir(mode=0o755, exist_ok=True)
+    tmpfiles_conf = tmpfiles_dir / "bojin.conf"
+    if tmpfiles_conf.is_symlink():
+        raise ValueError("Refusing symlink /etc/tmpfiles.d/bojin.conf")
+    shutil.copyfile(ROOT / "bojin-tmpfiles.conf", tmpfiles_conf)
+    os.chown(tmpfiles_conf, 0, 0)
+    tmpfiles_conf.chmod(0o644)
+    tmpfiles_bin = shutil.which("systemd-tmpfiles") or ("/usr/bin/systemd-tmpfiles" if Path("/usr/bin/systemd-tmpfiles").is_file() else None)
+    if tmpfiles_bin:
+        if deploy.LOCK.parent.exists() or deploy.LOCK.parent.is_symlink():
+            st = os.lstat(deploy.LOCK.parent)
+            if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != 0:
+                raise ValueError(f"Refusing unsafe {deploy.LOCK.parent}")
+        run(tmpfiles_bin, "--create", str(tmpfiles_conf))
+    with deploy.maintenance_lock():
         deploy.RELEASES.mkdir(mode=0o755, exist_ok=True)
         if not deploy.CURRENT.is_symlink():
             run("/usr/bin/systemctl", "stop", "bojin.service")

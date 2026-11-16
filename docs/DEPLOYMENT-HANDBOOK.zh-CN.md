@@ -31,11 +31,12 @@
 | 历史代码 | `/opt/bojin-releases/` | 独立版本目录，保留供代码回滚；目前无自动清理 |
 | 配置 | `/etc/bojin/environment` | 预期 root:bojin 0640；systemd 注入应用；不要输出内容 |
 | 数据 | `/var/lib/bojin` | bojin 所有、0700；bojin.db、auth.sqlite、blobs/ |
-| 特权接收器 | `/usr/local/sbin/lean-ritual-deploy` | root 安装与维护；发布产物不能自行替换它 |
+| 特权接收器 | `/usr/local/sbin/lean-ritual-deploy` | root 安装与维护（手动升级时同步安装 `ops/bojin-tmpfiles.conf` 至 `/etc/tmpfiles.d/bojin.conf`、`ops/maintenance-lock.sh` 至 `/usr/local/sbin/bojin-maintenance-lock` 并执行 `systemd-tmpfiles --create`）；发布产物不能自行替换它 |
 | 特权备份包装器 | `/usr/local/libexec/bojin-backup` | root 安装；不能从可发布目录执行 root 脚本 |
+| 人工维护锁包装器 | `/usr/local/sbin/bojin-maintenance-lock` | 由 `ops/maintenance-lock.sh` 以 root 安装；过渡期人工回滚/恢复/升级一律通过 `sudo /usr/local/sbin/bojin-maintenance-lock -- <command>` 执行 |
 | 部署前备份 | `/var/backups/bojin-deploy/` | 每次切换前一致性快照与删除台账；不是异地备份 |
 | 每日本地备份 | `/var/backups/bojin` | 交接报告保留 7 份，具体实现待审查 |
-| 维护锁 | `/run/lock/bojin-maintenance.lock` | 部署、备份、人工恢复应统一协调；仍须结束其他数据写入命令 |
+| 维护锁 | `/run/bojin/maintenance.lock` | 位于 `root:root 0755` 的 `/run/bojin`（由 `/etc/tmpfiles.d/bojin.conf` 重启自动创建，脚本缺失时也会以 `0755 root:root` 防御性创建，拒绝符号链接与非 root 归属）；一版过渡期内所有组件与 `bojin-maintenance-lock` 均按“先新锁、后旧锁 `/run/lock/bojin-maintenance.lock`”取锁（旧锁 `O_CREAT` 遇 `fs.protected_regular` `EACCES` 时以无 `O_CREAT` + `O_NOFOLLOW` + `fstat` 常规文件校验打开现有 inode 再 `flock`，重试仍失败则拒绝执行）；升级期间切勿删除可能被持有的旧锁文件，须待下一版移除旧锁打开逻辑并确认无活跃持有者后再清理 |
 
 不同 Agent 的 vm、Mac、Codex 环境完全独立。之前环境的工作目录、SSH 密钥和登录态不能当作当前环境可用；也不要因交接记载某操作执行过就再次执行。先核对结果，再决定是否需要操作。
 
@@ -102,7 +103,7 @@ SMTP、AUTH_SECRET、AI 凭证留在主机，不上传到 GitHub 变量或文档
 
 ### 人工代码回滚
 
-先暂停后续自动部署并确认当前运行已结束；保持管理员会话，结束备份/管理员写入，获取同一维护锁。确认目标历史 release 的来源和数据库兼容性，保存当前状态，停 bojin，原子切换 `/opt/bojin`，再启动并核对本机/公网健康及一次性测试账号。不要在应用运行时随意替换目录。回退后记录目标 SHA，并通过新的 main 提交修正，避免下次自动发布再次覆盖。
+先暂停后续自动部署并确认当前运行已结束；保持管理员会话，结束备份/管理员写入，通过 `sudo /usr/local/sbin/bojin-maintenance-lock -- ...`（在所有旧锁参与方彻底下线前必须使用双锁包装器，不要只锁新路径）获取同一维护锁。确认目标历史 release 的来源和数据库兼容性，保存当前状态，停 bojin，原子切换 `/opt/bojin`，再启动并核对本机/公网健康及一次性测试账号。不要在应用运行时随意替换目录。回退后记录目标 SHA，并通过新的 main 提交修正，避免下次自动发布再次覆盖。
 
 ### 数据恢复（受控维护流程）
 
@@ -110,7 +111,7 @@ SMTP、AUTH_SECRET、AI 凭证留在主机，不上传到 GitHub 变量或文档
 2. 在新的空目录恢复，保留当前数据供调查。避免先把生产目录移走后才发现备份不可读。
 3. 准备仅恢复身份可读的快照与台账副本、bojin 可写的新目录。以 bojin 运行 `scripts/data-backup.js verify` 和 `restore SNAPSHOT EMPTY_TARGET --deletions LATEST_LEDGER`；不要输出数据或密钥。
 4. 工具校验哈希/SQLite 并重放删除记录；再验证恢复文件所有权、权限、数据库、照片、账号隔离和已删除账号不可恢复访问。
-5. 用隔离监听及适当邮件/AI控制完成验证，再在维护锁内切换数据路径、启动正式服务。配置与 AUTH_SECRET 需要从独立安全存储恢复，数据库快照不包含它们。
+5. 用隔离监听及适当邮件/AI控制完成验证，再在 `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` 维护锁包装器内切换数据路径、启动正式服务。配置与 AUTH_SECRET 需要从独立安全存储恢复，数据库快照不包含它们。
 6. 记录快照标识、台账时间、恢复版本、验证结果与未覆盖范围；成功演练才算恢复能力完成。
 
 具体工具约束见 [OPERATIONS.md](OPERATIONS.md)。不能将“备份命令成功”当作“完整恢复演练成功”。

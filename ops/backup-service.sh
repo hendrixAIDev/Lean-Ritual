@@ -5,8 +5,115 @@ set -euo pipefail
 : "${BACKUP_RETENTION_DAYS:=7}"
 [[ "$BACKUP_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid BACKUP_RETENTION_DAYS" >&2; exit 1; }
 # Install this wrapper root-owned outside the deployable application tree.
-exec 9>/run/lock/bojin-maintenance.lock
+LOCK_DIR=/run/bojin
+LOCK_FILE=/run/bojin/maintenance.lock
+# Transition compatibility (one release): also lock the legacy path after LOCK_FILE
+# so an un-upgraded host helper or manual command cannot run maintenance concurrently.
+# Remove in the next release once /etc/tmpfiles.d/bojin.conf, lean-ritual-deploy,
+# bojin-backup, bojin-watchdog and operator runbooks on the host all use LOCK_FILE.
+LEGACY_LOCK_FILE=/run/lock/bojin-maintenance.lock
+
+path_uid() {
+  if stat -c '%u' / >/dev/null 2>&1; then
+    stat -c '%u' -- "$1"
+  else
+    stat -f '%u' "$1"
+  fi
+}
+
+[[ ! -L "$LOCK_DIR" ]] || { echo "Refusing symlink maintenance lock directory: $LOCK_DIR" >&2; exit 1; }
+if [[ ! -e "$LOCK_DIR" ]]; then
+  install -d -o root -g root -m 0755 "$LOCK_DIR"
+fi
+[[ ! -L "$LOCK_DIR" && -d "$LOCK_DIR" && "$(path_uid "$LOCK_DIR")" == 0 ]] || {
+  echo "Refusing non-root or invalid maintenance lock directory: $LOCK_DIR" >&2
+  exit 1
+}
+[[ ! -L "$LOCK_FILE" ]] || { echo "Refusing symlink maintenance lock: $LOCK_FILE" >&2; exit 1; }
+if [[ -e "$LOCK_FILE" ]]; then
+  [[ -f "$LOCK_FILE" && "$(path_uid "$LOCK_FILE")" == 0 ]] || {
+    echo "Refusing non-root or non-regular maintenance lock: $LOCK_FILE" >&2
+    exit 1
+  }
+fi
+exec 9>>"$LOCK_FILE"
+[[ ! -L "$LOCK_FILE" && -f "$LOCK_FILE" && "$(path_uid "$LOCK_FILE")" == 0 ]] || {
+  exec 9>&-
+  echo "Refusing unsafe maintenance lock: $LOCK_FILE" >&2
+  exit 1
+}
 flock -x 9
+
+legacy_locked=0
+[[ ! -L "$LEGACY_LOCK_FILE" ]] || { echo "Refusing symlink legacy maintenance lock: $LEGACY_LOCK_FILE" >&2; exit 1; }
+if [[ -e "$LEGACY_LOCK_FILE" && ! -f "$LEGACY_LOCK_FILE" ]]; then
+  echo "Refusing non-regular legacy maintenance lock: $LEGACY_LOCK_FILE" >&2
+  exit 1
+fi
+if { exec 8>>"$LEGACY_LOCK_FILE"; } 2>/dev/null; then
+  python3 -c 'import os, stat, sys; sys.exit(0 if stat.S_ISREG(os.fstat(8).st_mode) and not os.path.islink(sys.argv[1]) else 1)' "$LEGACY_LOCK_FILE" 9>&- || {
+    exec 8>&-
+    echo "Refusing unsafe legacy maintenance lock: $LEGACY_LOCK_FILE" >&2
+    exit 1
+  }
+  flock -x 8
+  legacy_locked=1
+elif legacy_meta=$(python3 -c '
+import errno, os, stat, sys
+path = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+try:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK | nofollow, 0o600)
+except OSError as exc:
+    if exc.errno != errno.EACCES:
+        sys.exit(1)
+    try:
+        rfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | nofollow)
+    except OSError:
+        sys.exit(1)
+    try:
+        st = os.fstat(rfd)
+        if not stat.S_ISREG(st.st_mode):
+            sys.exit(1)
+        print(f"{st.st_dev} {st.st_ino}")
+        sys.exit(0)
+    finally:
+        os.close(rfd)
+else:
+    os.close(fd)
+    sys.exit(1)
+' "$LEGACY_LOCK_FILE" 9>&-); then
+  { exec 8<"$LEGACY_LOCK_FILE"; } 2>/dev/null || {
+    echo "Failed to open existing legacy maintenance lock without O_CREAT: $LEGACY_LOCK_FILE" >&2
+    exit 1
+  }
+  read -r exp_dev exp_ino <<<"$legacy_meta"
+  python3 -c '
+import os, stat, sys
+st = os.fstat(8)
+lst = os.lstat(sys.argv[1])
+ok = (
+    stat.S_ISREG(st.st_mode)
+    and not stat.S_ISLNK(lst.st_mode)
+    and (st.st_dev, st.st_ino) == (lst.st_dev, lst.st_ino) == (int(sys.argv[2]), int(sys.argv[3]))
+)
+sys.exit(0 if ok else 1)
+' "$LEGACY_LOCK_FILE" "$exp_dev" "$exp_ino" 9>&- || {
+    exec 8>&-
+    echo "Refusing unsafe legacy maintenance lock fd: $LEGACY_LOCK_FILE" >&2
+    exit 1
+  }
+  warn_msg="legacy maintenance lock $LEGACY_LOCK_FILE failed O_CREAT with EACCES (fs.protected_regular); opened existing regular file without O_CREAT for flock"
+  echo "Warning: $warn_msg" >&2
+  if command -v logger >/dev/null 2>&1; then
+    logger -t bojin-backup -p daemon.warning -- "$warn_msg" 8>&- 9>&- || true
+  fi
+  flock -x 8
+  legacy_locked=1
+else
+  echo "Failed to open legacy maintenance lock: $LEGACY_LOCK_FILE" >&2
+  exit 1
+fi
 cd /opt/bojin
 read -r start_epoch stamp < <(python3 -c 'import time; t = int(time.time()); print(t, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t)))')
 snapshot="$BACKUP_ROOT/snapshot-$stamp"
@@ -67,7 +174,7 @@ chown -- bojin:bojin "$work"
 chmod -- 700 "$work"
 run_backup() {
   runuser -u bojin -- env -i PATH=/usr/bin:/bin DATA_DIR="$DATA_DIR" \
-    /usr/bin/node /opt/bojin/scripts/data-backup.js "$@"
+    /usr/bin/node /opt/bojin/scripts/data-backup.js "$@" 8>&- 9>&-
 }
 # Application-supplied JS must never run as root, including during backups.
 run_backup backup "$work/snapshot"
@@ -209,6 +316,10 @@ if rel_base is not None:
             shutil.rmtree(p)
             print("pruned " + p.name, flush=True)
 PYRET
+if [[ "$legacy_locked" == 1 ]]; then
+  flock -u 8
+  exec 8>&-
+fi
 flock -u 9
 exec 9>&-
 # SSH keys and destination permissions are configured by the operator. No deletion

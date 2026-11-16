@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WATCHDOG_SH = ROOT / "ops/health-watchdog.sh"
 ALERT_SH = ROOT / "ops/alert.sh"
 INSTALL_SH = ROOT / "ops/install-reliability.sh"
+BACKUP_SH = ROOT / "ops/backup-service.sh"
+INSTALL_BACKUP_SH = ROOT / "ops/install-backup.sh"
+MAINT_LOCK_SH = ROOT / "ops/maintenance-lock.sh"
+TMPFILES_CONF = ROOT / "ops/bojin-tmpfiles.conf"
 WATCHDOG_SERVICE = ROOT / "ops/bojin-watchdog.service"
 WATCHDOG_TIMER = ROOT / "ops/bojin-watchdog.timer"
 ALERT_SERVICE = ROOT / "ops/bojin-alert@.service"
@@ -38,8 +42,15 @@ class OpsHarness:
 
         self.config_file = self.mock_dir / "config.json"
         self.events_file = self.mock_dir / "events.jsonl"
+        self.install_file = self.mock_dir / "install.jsonl"
+        self.flock_file = self.mock_dir / "flock.jsonl"
         self.alert_env_file = self.mock_dir / "bojin-alert.env"
-        self.lock_file = self.mock_dir / "bojin-maintenance.lock"
+        self.lock_dir = self.mock_dir / "run-bojin"
+        self.lock_dir.mkdir(mode=0o755)
+        self.lock_file = self.lock_dir / "maintenance.lock"
+        self.legacy_lock_dir = self.mock_dir / "run-lock"
+        self.legacy_lock_dir.mkdir(mode=0o755)
+        self.legacy_lock_file = self.legacy_lock_dir / "bojin-maintenance.lock"
         self.uptime_file = self.mock_dir / "uptime"
 
         self.alert_env_file.write_text("ALERT_URL=https://ntfy.sh/test-secret-topic\n", encoding="utf-8")
@@ -60,6 +71,7 @@ class OpsHarness:
                 "https://ntfy.sh/test-secret-topic": 0,
             },
             "systemctl_delays": {},
+            "non_root_paths": [],
             "hostname": "bojin-prod",
         }
         self._save_config()
@@ -85,6 +97,18 @@ class OpsHarness:
 
     def clear_events(self) -> None:
         self.events_file.unlink(missing_ok=True)
+        self.install_file.unlink(missing_ok=True)
+        self.flock_file.unlink(missing_ok=True)
+
+    def install_calls(self) -> list[list[str]]:
+        if not self.install_file.exists():
+            return []
+        return [json.loads(line)["args"] for line in self.install_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def flock_calls(self) -> list[dict]:
+        if not self.flock_file.exists():
+            return []
+        return [json.loads(line) for line in self.flock_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def _install_stubs(self) -> None:
         stub_prelude = (
@@ -305,17 +329,62 @@ sys.exit(0)
         )
 
         write_executable(
+            self.bin_dir / "install",
+            """#!/usr/bin/env python3
+import json, os, shutil, subprocess, sys
+args = sys.argv[1:]
+log_path = os.environ.get("OPS_TEST_INSTALL_LOG")
+if log_path:
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"args": args}) + "\\n")
+filtered = []
+i = 0
+while i < len(args):
+    if args[i] in ("-o", "-g"):
+        i += 2
+    else:
+        filtered.append(args[i])
+        i += 1
+real_install = "/usr/bin/install"
+sys.exit(subprocess.call([real_install, *filtered]))
+""",
+        )
+
+        write_executable(
+            self.bin_dir / "stat",
+            stub_prelude
+            + """
+args = sys.argv[1:]
+if args[:2] == ["-c", "%u"]:
+    target = args[-1]
+    os.lstat(target)
+    non_root = set(CFG.get("non_root_paths", []))
+    print(1001 if target in non_root else 0)
+    sys.exit(0)
+sys.exit(1)
+""",
+        )
+
+        write_executable(
             self.bin_dir / "flock",
             """#!/usr/bin/env python3
-import fcntl, sys
+import fcntl, json, os, sys
 args = sys.argv[1:]
 nonblock = "-n" in args
 fd = int(args[-1])
 flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if nonblock else 0)
+ino = os.fstat(fd).st_ino
+log_path = os.environ.get("OPS_TEST_FLOCK_LOG")
 try:
     fcntl.flock(fd, flags)
 except BlockingIOError:
+    if log_path:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"fd": fd, "ino": ino, "nonblock": nonblock, "acquired": False}) + "\\n")
     sys.exit(1)
+if log_path:
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"fd": fd, "ino": ino, "nonblock": nonblock, "acquired": True}) + "\\n")
 sys.exit(0)
 """,
         )
@@ -326,10 +395,13 @@ sys.exit(0)
         env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '/usr/bin:/bin')}"
         env["OPS_TEST_CONFIG"] = str(self.config_file)
         env["OPS_TEST_EVENTS"] = str(self.events_file)
+        env["OPS_TEST_INSTALL_LOG"] = str(self.install_file)
+        env["OPS_TEST_FLOCK_LOG"] = str(self.flock_file)
         env["BOJIN_ALERT_ENV_FILE"] = str(self.alert_env_file)
         env["BOJIN_WATCHDOG_STATE_DIR"] = str(self.state_dir)
         env["BOJIN_WATCHDOG_ALERT_BIN"] = str(ALERT_SH)
         env["BOJIN_WATCHDOG_LOCK_FILE"] = str(self.lock_file)
+        env["BOJIN_WATCHDOG_LEGACY_LOCK_FILE"] = str(self.legacy_lock_file)
         env["BOJIN_WATCHDOG_UPTIME_FILE"] = str(self.uptime_file)
         if extra:
             for k, v in extra.items():
@@ -367,7 +439,7 @@ class OpsScriptsTests(unittest.TestCase):
         self.h = OpsHarness(Path(self._tmp.name))
 
     def test_bash_syntax_all_ops_scripts(self) -> None:
-        for script in (WATCHDOG_SH, ALERT_SH, INSTALL_SH):
+        for script in (WATCHDOG_SH, ALERT_SH, INSTALL_SH, BACKUP_SH, INSTALL_BACKUP_SH, MAINT_LOCK_SH):
             with self.subTest(script=script.name):
                 res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True, timeout=5)
                 self.assertEqual(res.returncode, 0, res.stderr)
@@ -1073,6 +1145,293 @@ class OpsScriptsTests(unittest.TestCase):
         ]
         self.assertTrue(any("/opt" in m and "96%" in m for m in delivered), delivered)
         self.assertTrue(any("app stopped answering health checks" in m for m in delivered), delivered)
+
+    def test_watchdog_lock_path_creation_symlink_ownership_transition_and_eacces(self) -> None:
+        script_text = WATCHDOG_SH.read_text(encoding="utf-8")
+        self.assertIn("LOCK_FILE=${BOJIN_WATCHDOG_LOCK_FILE:-/run/bojin/maintenance.lock}", script_text)
+        self.assertIn("LEGACY_LOCK_FILE=${BOJIN_WATCHDOG_LEGACY_LOCK_FILE:-/run/lock/bojin-maintenance.lock}", script_text)
+
+        # 1. Missing lock directory is created via install -d -o root -g root -m 0755,
+        #    and both locks are acquired non-blocking in exact order: new first, then legacy.
+        missing_dir = self.h.root / "missing-run-bojin"
+        missing_lock = missing_dir / "maintenance.lock"
+        self.h.clear_events()
+        res = self.h.run_watchdog(env_extra={"BOJIN_WATCHDOG_LOCK_FILE": str(missing_lock)})
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(missing_dir.is_dir())
+        self.assertTrue(missing_lock.is_file())
+        self.assertTrue(self.h.legacy_lock_file.is_file())
+        lock_install = [
+            args for args in self.h.install_calls()
+            if args == ["-d", "-o", "root", "-g", "root", "-m", "0755", str(missing_dir)]
+        ]
+        self.assertEqual(len(lock_install), 1, self.h.install_calls())
+        flocks = self.h.flock_calls()
+        self.assertEqual(len(flocks), 2, flocks)
+        self.assertTrue(all(f["nonblock"] and f["acquired"] for f in flocks), flocks)
+        self.assertEqual(
+            [f["ino"] for f in flocks],
+            [missing_lock.lstat().st_ino, self.h.legacy_lock_file.lstat().st_ino],
+        )
+
+        # 2. Watchdog skips round when EITHER new lock OR legacy lock is held.
+        self.h.config["df"]["/var/lib/bojin"]["pcent"] = "99%"
+        for label, held_path in [("new", self.h.lock_file), ("legacy", self.h.legacy_lock_file)]:
+            with self.subTest(held=label):
+                self.h.clear_events()
+                with open(held_path, "a+", encoding="utf-8") as fh:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    try:
+                        res_skip = self.h.run_watchdog()
+                    finally:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                self.assertEqual(res_skip.returncode, 0, res_skip.stderr)
+                self.assertEqual(self.h.events(), [])
+
+        # 3. Symlinked lock dir or symlinked lock file is refused (non-zero exit, target untouched).
+        sym_target_dir = self.h.root / "sym-target-dir"
+        sym_target_dir.mkdir(mode=0o700)
+        sym_dir = self.h.root / "sym-run-bojin"
+        sym_dir.symlink_to(sym_target_dir)
+        self.h.clear_events()
+        res_sym_dir = self.h.run_watchdog(env_extra={"BOJIN_WATCHDOG_LOCK_FILE": str(sym_dir / "maintenance.lock")})
+        self.assertNotEqual(res_sym_dir.returncode, 0)
+        self.assertEqual(sym_target_dir.stat().st_mode & 0o777, 0o700)
+        self.assertEqual([e for e in self.h.events() if e["kind"] in ("df", "systemctl", "curl")], [])
+
+        sym_target_file = self.h.root / "sym-target-file"
+        sym_target_file.write_text("untouched", encoding="utf-8")
+        sym_file = self.h.lock_dir / "sym-maintenance.lock"
+        sym_file.symlink_to(sym_target_file)
+        self.h.clear_events()
+        res_sym_file = self.h.run_watchdog(env_extra={"BOJIN_WATCHDOG_LOCK_FILE": str(sym_file)})
+        self.assertNotEqual(res_sym_file.returncode, 0)
+        self.assertEqual(sym_target_file.read_text(encoding="utf-8"), "untouched")
+        self.assertEqual([e for e in self.h.events() if e["kind"] in ("df", "systemctl", "curl")], [])
+
+        # 4. Non-root lock dir and non-root lock file are refused.
+        for bad_path in (self.h.lock_dir, self.h.lock_file):
+            with self.subTest(non_root=bad_path.name):
+                self.h.lock_file.touch()
+                self.h.config["non_root_paths"] = [str(bad_path)]
+                self.h.clear_events()
+                res_non_root = self.h.run_watchdog()
+                self.assertNotEqual(res_non_root.returncode, 0)
+                self.assertEqual([e for e in self.h.events() if e["kind"] in ("df", "systemctl", "curl")], [])
+        self.h.config["non_root_paths"] = []
+
+        # 5a. If O_CREAT fails with EACCES AND retry without O_CREAT also fails (0000), watchdog MUST fail closed.
+        self.h.legacy_lock_file.write_text("", encoding="utf-8")
+        self.h.legacy_lock_file.chmod(0o000)
+        try:
+            self.h.clear_events()
+            res_unreadable = self.h.run_watchdog()
+            self.assertNotEqual(res_unreadable.returncode, 0)
+            self.assertEqual([e for e in self.h.events() if e["kind"] in ("df", "systemctl", "curl")], [])
+        finally:
+            self.h.legacy_lock_file.chmod(0o600)
+
+        # 5b. Held legacy inode + EACCES on O_CREAT (0444 read-only file locked by legacy participant):
+        #     watchdog must retry without O_CREAT, see the held flock, and SKIP the round (not run checks!).
+        holder_fd = os.open(self.h.legacy_lock_file, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(holder_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.h.legacy_lock_file.chmod(0o444)
+            self.h.clear_events()
+            self.h.set_uptime(3000.0)
+            res_held_eacces = self.h.run_watchdog()
+            self.assertEqual(res_held_eacces.returncode, 0, res_held_eacces.stderr)
+            self.assertEqual([e for e in self.h.events() if e["kind"] in ("df", "systemctl", "curl")], [])
+            flocks_held = self.h.flock_calls()
+            self.assertEqual(len(flocks_held), 2, flocks_held)
+            self.assertTrue(flocks_held[0]["acquired"] and not flocks_held[1]["acquired"], flocks_held)
+
+            # Once legacy holder releases flock (still 0444 so O_CREAT gets EACCES), watchdog acquires
+            # both locks via read-only retry and runs checks normally!
+            fcntl.flock(holder_fd, fcntl.LOCK_UN)
+            self.h.clear_events()
+            self.h.set_uptime(3030.0)
+            res_free_eacces = self.h.run_watchdog()
+            self.assertEqual(res_free_eacces.returncode, 0, res_free_eacces.stderr)
+            self.assertIn("eacces", res_free_eacces.stderr.lower())
+            flocks_free = self.h.flock_calls()
+            self.assertEqual(len(flocks_free), 2, flocks_free)
+            self.assertTrue(all(f["acquired"] for f in flocks_free), flocks_free)
+            alert_curls = [e for e in self.h.events() if e["kind"] == "curl" and "ntfy.sh" in e["url"]]
+            self.assertEqual(len(alert_curls), 1)
+        finally:
+            self.h.legacy_lock_file.chmod(0o600)
+            os.close(holder_fd)
+
+    def test_maintenance_lock_wrapper_blocks_against_legacy_and_new_holders(self) -> None:
+        self.assertTrue(MAINT_LOCK_SH.is_file())
+        self.assertTrue(os.access(MAINT_LOCK_SH, os.X_OK), "ops/maintenance-lock.sh must be executable")
+        wrapper_env = self.h.base_env({
+            "BOJIN_LOCK_TEST_MODE": "1",
+            "BOJIN_MAINTENANCE_LOCK_FILE": str(self.h.lock_file),
+            "BOJIN_MAINTENANCE_LEGACY_LOCK_FILE": str(self.h.legacy_lock_file),
+        })
+
+        # 1. Contrast new-only manual flock vs transition wrapper while an old participant holds ONLY
+        #    the legacy lock (and legacy file is 0444 causing EACCES on O_CREAT):
+        #    - New-only flock runs immediately (demonstrating the bug without the wrapper);
+        #    - ops/maintenance-lock.sh -n fails immediately without running the command;
+        #    - ops/maintenance-lock.sh -- <cmd> BLOCKS until the old participant releases the legacy lock!
+        timeline = self.h.root / "manual-timeline.log"
+        old_holder = subprocess.Popen(
+            [
+                os.environ.get("PYTHON", "python3"),
+                "-c",
+                f"""
+import fcntl, os, pathlib, time
+p = pathlib.Path({str(self.h.legacy_lock_file)!r})
+tl = pathlib.Path({str(timeline)!r})
+fd = os.open(p, os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.chmod(p, 0o444)
+with tl.open("a") as fh: fh.write("OLD_PARTICIPANT_HELD\\n")
+print("READY", flush=True)
+time.sleep(1.5)
+with tl.open("a") as fh: fh.write("OLD_PARTICIPANT_RELEASED\\n")
+os.chmod(p, 0o644)
+os.close(fd)
+""",
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            self.assertEqual(old_holder.stdout.readline().strip(), "READY")
+            # New-only flock acquires immediately even while old_holder is inside maintenance (the bug without wrapper):
+            with open(self.h.lock_file, "a+", encoding="utf-8") as new_only_fh:
+                fcntl.flock(new_only_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(new_only_fh.fileno(), fcntl.LOCK_UN)
+
+            # Non-blocking wrapper must refuse to run while old participant holds legacy lock.
+            marker_nb = self.h.root / "ran-nb"
+            res_nb = subprocess.run(
+                [str(MAINT_LOCK_SH), "-n", "--", "touch", str(marker_nb)],
+                env=wrapper_env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertNotEqual(res_nb.returncode, 0)
+            self.assertFalse(marker_nb.exists())
+
+            # Blocking wrapper must wait for old participant to release legacy lock before running manual cmd.
+            started = time.monotonic()
+            res_blk = subprocess.run(
+                [str(MAINT_LOCK_SH), "--", "bash", "-c", f'echo MANUAL_MAINT_RAN >> "{timeline}"'],
+                env=wrapper_env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            elapsed = time.monotonic() - started
+            old_holder.wait(timeout=5)
+            self.assertEqual(res_blk.returncode, 0, res_blk.stderr)
+            self.assertIn("eacces", res_blk.stderr.lower())
+            self.assertGreaterEqual(elapsed, 0.5, f"Wrapper did not wait for old participant ({elapsed:.2f}s)")
+            self.assertEqual(
+                timeline.read_text(encoding="utf-8").splitlines(),
+                ["OLD_PARTICIPANT_HELD", "OLD_PARTICIPANT_RELEASED", "MANUAL_MAINT_RAN"],
+            )
+        finally:
+            if old_holder.stdout is not None:
+                old_holder.stdout.close()
+            if old_holder.poll() is None:
+                old_holder.kill()
+                old_holder.wait()
+
+        # 2. Wrapper creates missing lock dir, closes lock fds in child, preserves child exit code,
+        #    and refuses symlink/non-root/unreadable locks.
+        missing_lock = self.h.root / "wrapper-missing-dir/maintenance.lock"
+        env_missing = self.h.base_env({
+            "BOJIN_LOCK_TEST_MODE": "1",
+            "BOJIN_MAINTENANCE_LOCK_FILE": str(missing_lock),
+            "BOJIN_MAINTENANCE_LEGACY_LOCK_FILE": str(self.h.legacy_lock_file),
+        })
+        res_exit = subprocess.run(
+            [str(MAINT_LOCK_SH), "--", "python3", "-c", "import os, sys; assert len(os.listdir('/dev/fd')) < 10; sys.exit(17)"],
+            env=env_missing,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(res_exit.returncode, 17, res_exit.stderr)
+        self.assertTrue(missing_lock.parent.is_dir())
+
+        # Symlink lock dir refused
+        sym_dir = self.h.root / "wrapper-sym-dir"
+        sym_dir.symlink_to(self.h.state_dir)
+        res_sym = subprocess.run(
+            [str(MAINT_LOCK_SH), "--", "true"],
+            env=self.h.base_env({
+                "BOJIN_LOCK_TEST_MODE": "1",
+                "BOJIN_MAINTENANCE_LOCK_FILE": str(sym_dir / "maintenance.lock"),
+                "BOJIN_MAINTENANCE_LEGACY_LOCK_FILE": str(self.h.legacy_lock_file),
+            }),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertNotEqual(res_sym.returncode, 0)
+
+        # Unreadable 0000 legacy lock fails closed
+        self.h.legacy_lock_file.chmod(0o000)
+        try:
+            res_000 = subprocess.run(
+                [str(MAINT_LOCK_SH), "--", "true"],
+                env=wrapper_env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertNotEqual(res_000.returncode, 0)
+        finally:
+            self.h.legacy_lock_file.chmod(0o600)
+
+    def test_install_reliability_installs_tmpfiles_and_refuses_symlink(self) -> None:
+        self.assertTrue(TMPFILES_CONF.is_file())
+        self.assertEqual(TMPFILES_CONF.read_text(encoding="utf-8").strip(), "d /run/bojin 0755 root root -")
+        root = self.h.root / "rel-install"
+        src = root / "src"
+        src.mkdir(parents=True)
+        for asset in (
+            "alert.sh", "health-watchdog.sh", "maintenance-lock.sh", "bojin-alert@.service",
+            "bojin-watchdog.service", "bojin-watchdog.timer",
+            "bojin-reliability.conf", "caddy-reliability.conf",
+            "backup-alert.conf", "alert.env.example", "bojin-tmpfiles.conf",
+        ):
+            (src / asset).write_text((ROOT / "ops" / asset).read_text(encoding="utf-8"), encoding="utf-8")
+
+        write_executable(self.h.bin_dir / "systemd-tmpfiles", "#!/usr/bin/env bash\nexit 0\n")
+        script = INSTALL_SH.read_text(encoding="utf-8")
+        script = script.replace("[[ $EUID -eq 0 ]]", "[[ 1 -eq 1 ]]")
+        script = script.replace("/usr/local/libexec", str(root / "libexec"))
+        script = script.replace("/usr/local/sbin", str(root / "sbin"))
+        script = script.replace("/etc/systemd/system", str(root / "systemd"))
+        script = script.replace("/etc/tmpfiles.d", str(root / "tmpfiles.d"))
+        script = script.replace("/etc/bojin-alert.env", str(root / "bojin-alert.env"))
+        script = script.replace("/run/bojin", str(root / "run-bojin"))
+        (root / "libexec").mkdir(parents=True)
+        (root / "sbin").mkdir(parents=True)
+        (root / "systemd").mkdir(parents=True)
+        harness = src / "install-reliability.sh"
+        harness.write_text(script, encoding="utf-8")
+
+        res = subprocess.run(["bash", str(harness)], env=self.h.base_env(), capture_output=True, text=True, timeout=10)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual((root / "tmpfiles.d/bojin.conf").read_text(encoding="utf-8").strip(), "d /run/bojin 0755 root root -")
+        self.assertTrue((root / "run-bojin").is_dir())
+        self.assertTrue((root / "sbin/bojin-maintenance-lock").is_file())
+
+        # Refuse symlinked /run/bojin
+        (root / "run-bojin").rmdir()
+        (root / "run-bojin").symlink_to(root / "systemd")
+        res_sym = subprocess.run(["bash", str(harness)], env=self.h.base_env(), capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(res_sym.returncode, 0)
 
 
 if __name__ == "__main__":
