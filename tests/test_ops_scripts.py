@@ -8,6 +8,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,8 +46,8 @@ class OpsHarness:
         self.set_uptime(1000.0)
         self.config = {
             "units": {
-                "bojin.service": {"active": "active", "nrestarts": 0},
-                "caddy.service": {"active": "active", "nrestarts": 0},
+                "bojin.service": {"active": "active", "nrestarts": 0, "invocation": "inv-bojin-0"},
+                "caddy.service": {"active": "active", "nrestarts": 0, "invocation": "inv-caddy-0"},
             },
             "df": {
                 "/var/lib/bojin": {"pcent": "42%", "ipcent": "10%", "target": "/"},
@@ -106,10 +107,14 @@ if len(args) >= 2 and args[0] == "is-active":
     if "--quiet" not in args:
         print(state)
     sys.exit(0 if state == "active" else 3)
-if len(args) >= 4 and args[0] == "show" and "-p" in args and "NRestarts" in args:
+if len(args) >= 4 and args[0] == "show" and "-p" in args:
+    prop = args[args.index("-p") + 1]
     unit = args[-1]
-    val = CFG["units"].get(unit, {}).get("nrestarts", 0)
-    print(val)
+    unit_cfg = CFG["units"].get(unit, {})
+    if prop == "NRestarts":
+        print(unit_cfg.get("nrestarts", 0))
+    elif prop == "InvocationID":
+        print(unit_cfg.get("invocation", ""))
     sys.exit(0)
 sys.exit(0)
 """,
@@ -138,13 +143,92 @@ sys.exit(0)
             self.bin_dir / "curl",
             stub_prelude
             + """
+import time
 args = sys.argv[1:]
 url = args[-1]
 record("curl", args=args, url=url)
-rc = CFG["curl"].get(url, 0)
-if rc != 0:
-    sys.stderr.write(f"curl: ({rc}) simulated failure\\n")
-sys.exit(rc)
+
+max_time = None
+if "--max-time" in args:
+    max_time = float(args[args.index("--max-time") + 1])
+retries = 0
+if "--retry" in args:
+    retries = int(args[args.index("--retry") + 1])
+follow = "-L" in args or "--location" in args
+proto_redir_https = "--proto-redir" in args and args[args.index("--proto-redir") + 1] == "=https"
+
+def resolve_spec(u):
+    raw = CFG["curl"].get(u, 0)
+    if isinstance(raw, int):
+        return {"rc": raw, "http_code": "200" if raw == 0 else "000", "delay": 0.0}
+    return {
+        "rc": int(raw.get("rc", 0)),
+        "http_code": str(raw.get("http_code", "200" if raw.get("rc", 0) == 0 else "000")),
+        "delay": float(raw.get("delay", 0.0)),
+        "redirect_to": raw.get("redirect_to"),
+    }
+
+spec = resolve_spec(url)
+attempts = 1 + (retries if spec["rc"] != 0 or spec["delay"] > (max_time or 9999) else 0)
+for _ in range(attempts):
+    delay = spec["delay"]
+    if delay > 0:
+        if max_time is not None and delay > max_time:
+            time.sleep(max_time)
+            spec = {"rc": 28, "http_code": "000", "delay": 0.0}
+        else:
+            time.sleep(delay)
+
+if spec["rc"] == 0 and spec.get("redirect_to") and follow:
+    target = spec["redirect_to"]
+    code = spec["http_code"]
+    if proto_redir_https and not target.startswith("https://"):
+        spec = {"rc": 1, "http_code": code, "delay": 0.0}
+    else:
+        post_preserved = (
+            code in ("307", "308")
+            or (code == "301" and "--post301" in args)
+            or (code == "302" and "--post302" in args)
+            or (code == "303" and "--post303" in args)
+        )
+        record("curl_redirect", from_url=url, to_url=target, status=code, post_preserved=post_preserved)
+        spec = resolve_spec(target)
+        if not post_preserved and CFG["curl"].get(target, {}).get("require_post"):
+            spec = {"rc": 22, "http_code": "405", "delay": 0.0}
+
+if "-w" in args:
+    fmt = args[args.index("-w") + 1]
+    sys.stdout.write(fmt.replace("%{http_code}", spec["http_code"]))
+
+if spec["rc"] != 0:
+    sys.stderr.write(f"curl: ({spec['rc']}) simulated failure\\n")
+sys.exit(spec["rc"])
+""",
+        )
+
+        write_executable(
+            self.bin_dir / "timeout",
+            """#!/usr/bin/env python3
+import os, signal, subprocess, sys
+args = sys.argv[1:]
+while args and args[0].startswith("-"):
+    flag = args.pop(0)
+    if flag in ("-k", "-s"):
+        args.pop(0)
+limit = float(args.pop(0).rstrip("s"))
+proc = subprocess.Popen(args, start_new_session=True)
+try:
+    sys.exit(proc.wait(timeout=limit))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.wait(timeout=0.5)
+    except Exception:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+    sys.exit(124)
 """,
         )
 
@@ -527,6 +611,184 @@ class OpsScriptsTests(unittest.TestCase):
         crash_msgs = [m for m in delivered if "app crashed and systemd restarted it" in m]
         self.assertEqual(len(disk_msgs), 1, delivered)
         self.assertEqual(len(crash_msgs), 1, delivered)
+
+    def test_watchdog_checks_and_restarts_are_not_starved_by_hanging_alerts(self) -> None:
+        # Three distinct full mountpoints + both services at their 3rd consecutive probe failure,
+        # while ntfy.sh hangs (10s per attempt). Lifecycle checks and restarts MUST happen first
+        # and total alert delivery must stay within the bounded budget.
+        self.h.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.h.state_dir / "failures-caddy.service").write_text("2\n", encoding="utf-8")
+        (self.h.state_dir / "failures").write_text("2\n", encoding="utf-8")
+        self.h.config["df"] = {
+            "/var/lib/bojin": {"pcent": "95%", "ipcent": "10%", "target": "/mnt/data"},
+            "/var/backups": {"pcent": "96%", "ipcent": "10%", "target": "/mnt/backups"},
+            "/opt": {"pcent": "97%", "ipcent": "10%", "target": "/"},
+        }
+        self.h.config["curl"]["http://127.0.0.1:80/"] = 28
+        self.h.config["curl"]["http://127.0.0.1:8080/api/health"] = 28
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = {"rc": 0, "delay": 10.0}
+
+        started = time.monotonic()
+        res = self.h.run_watchdog(
+            env_extra={
+                "BOJIN_WATCHDOG_ALERT_BUDGET_SEC": "2",
+                "BOJIN_WATCHDOG_ALERT_MAX_TIME": "1",
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLess(elapsed, 4.5, f"Watchdog exceeded alert budget ({elapsed:.2f}s)")
+
+        events = self.h.events()
+        restart_indices = [
+            idx for idx, e in enumerate(events)
+            if e["kind"] == "systemctl" and e["args"] in (["restart", "caddy.service"], ["restart", "bojin.service"])
+        ]
+        alert_indices = [
+            idx for idx, e in enumerate(events)
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(restart_indices), 2, f"Expected both restarts in {events}")
+        self.assertTrue(alert_indices, "Expected at least one bounded alert delivery attempt")
+        self.assertLess(max(restart_indices), min(alert_indices), "Service restarts must run BEFORE external alert webhooks")
+
+        # Next tick: services recovered and ntfy is fast again -> all queued alerts flush cleanly.
+        self.h.clear_events()
+        self.h.config["df"] = {
+            "/var/lib/bojin": {"pcent": "40%", "ipcent": "10%", "target": "/mnt/data"},
+            "/var/backups": {"pcent": "40%", "ipcent": "10%", "target": "/mnt/backups"},
+            "/opt": {"pcent": "40%", "ipcent": "10%", "target": "/"},
+        }
+        self.h.config["curl"]["http://127.0.0.1:80/"] = 0
+        self.h.config["curl"]["http://127.0.0.1:8080/api/health"] = 0
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = 0
+        self.h.set_uptime(1030.0)
+        res2 = self.h.run_watchdog()
+        self.assertEqual(res2.returncode, 0, res2.stderr)
+        flushed = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(flushed), 5, f"Expected 3 disk + 2 unhealthy deferred alerts, got {flushed}")
+
+    def test_nrestarts_tracks_invocation_id_on_first_observation_and_counter_reset(self) -> None:
+        # 1. First observation when unit already crashed (NRestarts=2) must alert, not silently baseline.
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 2,
+            "invocation": "inv-initial-crash",
+        }
+        res1 = self.h.run_watchdog()
+        self.assertEqual(res1.returncode, 0, res1.stderr)
+        delivered1 = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(any("app crashed and systemd restarted it (2x" in m for m in delivered1), delivered1)
+
+        # 2. Sample at NRestarts=10 (after cooldown), followed by deploy/manual restart + 1 crash (current=1 < previous=10).
+        self.h.set_uptime(3000.0)
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 10,
+            "invocation": "inv-before-deploy",
+        }
+        self.h.run_watchdog()
+        self.h.clear_events()
+
+        # Clean deploy (NRestarts=0, new InvocationID) -> must NOT alert.
+        self.h.set_uptime(5000.0)
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 0,
+            "invocation": "inv-clean-deploy",
+        }
+        self.h.run_watchdog()
+        self.assertEqual([e for e in self.h.events() if e["kind"] == "curl" and "ntfy.sh" in e["url"]], [])
+
+        # Re-establish NRestarts=10, then reset between samples + 1 crash before next tick (current=1 < 10).
+        self.h.set_uptime(7000.0)
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 10,
+            "invocation": "inv-ten",
+        }
+        self.h.run_watchdog()
+        self.h.clear_events()
+
+        self.h.set_uptime(9000.0)
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 1,
+            "invocation": "inv-reset-then-crash",
+        }
+        res_reset = self.h.run_watchdog()
+        self.assertEqual(res_reset.returncode, 0, res_reset.stderr)
+        delivered_reset = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(
+            any("app crashed and systemd restarted it (1x" in m for m in delivered_reset),
+            f"Expected crash alert after counter reset (10 -> 0 -> 1), got {delivered_reset}",
+        )
+
+        # 3. Equal nonzero NRestarts (1 -> 0 -> 1) across a new InvocationID must also alert.
+        self.h.clear_events()
+        self.h.set_uptime(11000.0)
+        self.h.config["units"]["bojin.service"] = {
+            "active": "active",
+            "nrestarts": 1,
+            "invocation": "inv-second-reset-crash",
+        }
+        self.h.run_watchdog()
+        delivered_equal = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertTrue(
+            any("app crashed and systemd restarted it (1x" in m for m in delivered_equal),
+            f"Expected crash alert on new InvocationID with NRestarts=1, got {delivered_equal}",
+        )
+
+    def test_alert_follows_https_post_redirects_and_rejects_unfollowed_3xx(self) -> None:
+        # 1. Bare 302 (no Location / non-2xx final response) must fail and NOT write a cooldown stamp.
+        self.h.config["df"]["/var/lib/bojin"]["pcent"] = "95%"
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = {"rc": 0, "http_code": "302"}
+        res_bare_302 = self.h.run_alert("bare redirect")
+        self.assertNotEqual(res_bare_302.returncode, 0, "Unfollowed 302 must not succeed")
+
+        self.h.run_watchdog()
+        self.assertEqual(list(self.h.state_dir.glob("alert-disk*")), [], "302 without 2xx delivery must not write stamp")
+
+        # 2. HTTPS 301/302 redirect to an HTTPS endpoint that requires POST succeeds when followed safely.
+        self.h.clear_events()
+        target_url = "https://ntfy2.example.com/test-secret-topic"
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = {
+            "rc": 0,
+            "http_code": "301",
+            "redirect_to": target_url,
+        }
+        self.h.config["curl"][target_url] = {"rc": 0, "http_code": "200", "require_post": True}
+        res_ok = self.h.run_watchdog()
+        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+        redirects = [e for e in self.h.events() if e["kind"] == "curl_redirect"]
+        self.assertEqual(len(redirects), 1)
+        self.assertTrue(redirects[0]["post_preserved"])
+        self.assertEqual(len(list(self.h.state_dir.glob("alert-disk*"))), 1)
+
+        # 3. Redirect from HTTPS to HTTP downgrade must be rejected.
+        self.h.config["curl"]["https://ntfy.sh/test-secret-topic"] = {
+            "rc": 0,
+            "http_code": "302",
+            "redirect_to": "http://ntfy2.example.com/leaked",
+        }
+        res_downgrade = self.h.run_alert("downgrade redirect")
+        self.assertNotEqual(res_downgrade.returncode, 0)
 
 
 if __name__ == "__main__":

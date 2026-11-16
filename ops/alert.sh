@@ -44,11 +44,20 @@ if [[ ! "$url" =~ ^https://[^[:space:]/]+ || "$url" =~ [[:space:]] ]]; then
   exit 1
 fi
 
-if ! curl --proto '=https' --proto-redir '=https' --fail --silent --show-error \
-     --max-time 15 --retry 2 \
-     -H "Title: Lean Ritual" -H "Tags: warning" \
-     --data-binary "$message" -- "$url" >/dev/null; then
-  logger -t bojin-alert -p daemon.err -- "Could not deliver alert to ALERT_URL"
+max_time=${BOJIN_ALERT_MAX_TIME:-10}
+if [[ ! "$max_time" =~ ^[1-9][0-9]*$ ]]; then max_time=10; fi
+connect_timeout=5
+if (( max_time < connect_timeout )); then connect_timeout=$max_time; fi
+
+http_code=$(curl --proto '=https' --proto-redir '=https' \
+  --location --max-redirs 5 --post301 --post302 --post303 \
+  --fail --silent --show-error \
+  --connect-timeout "$connect_timeout" --max-time "$max_time" \
+  -H "Title: Lean Ritual" -H "Tags: warning" \
+  --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+curl_rc=$?
+if (( curl_rc != 0 )) || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+  logger -t bojin-alert -p daemon.err -- "Could not deliver alert to ALERT_URL (curl=$curl_rc http=${http_code:-000})"
   exit 1
 fi
 exit 0

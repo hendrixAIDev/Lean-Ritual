@@ -12,6 +12,8 @@ FAIL_LIMIT=${BOJIN_WATCHDOG_FAIL_LIMIT:-3}
 ACTIVATING_LIMIT=${BOJIN_WATCHDOG_ACTIVATING_LIMIT:-3}
 DISK_WARN_PERCENT=${BOJIN_WATCHDOG_DISK_WARN_PERCENT:-90}
 INODE_WARN_PERCENT=${BOJIN_WATCHDOG_INODE_WARN_PERCENT:-90}
+ALERT_BUDGET_SEC=${BOJIN_WATCHDOG_ALERT_BUDGET_SEC:-20}
+ALERT_MAX_TIME=${BOJIN_WATCHDOG_ALERT_MAX_TIME:-8}
 STATE=${BOJIN_WATCHDOG_STATE_DIR:-/run/bojin-watchdog}
 ALERT=${BOJIN_WATCHDOG_ALERT_BIN:-/usr/local/libexec/bojin-alert}
 LOCK_FILE=${BOJIN_WATCHDOG_LOCK_FILE:-/run/lock/bojin-maintenance.lock}
@@ -22,7 +24,7 @@ else
   DISK_PATHS=(/var/lib/bojin /var/backups /opt)
 fi
 
-install -d -m 0700 "$STATE"
+install -d -m 0700 "$STATE" "$STATE/pending"
 
 now_seconds() {
   local raw int_part
@@ -48,24 +50,83 @@ read_uint() {
   fi
 }
 
-# Send each kind of alert at most once per window, so a crash loop is one message.
-# Stamp is written only after successful delivery so transient errors retry next tick.
-alert_once() {
-  local key=$1 window=$2; shift 2
-  local stamp="$STATE/alert-$key" now last=""
+is_cooled_down() {
+  local safe_key=$1 window=$2 stamp="$STATE/alert-$1" now last=""
   now=$(now_seconds)
   if [[ ! "$now" =~ ^[0-9]+$ ]]; then now=0; fi
   if [[ -r "$stamp" ]]; then
     IFS= read -r last <"$stamp" || true
   fi
-  if [[ "$last" =~ ^[0-9]+$ ]] && (( now >= last && now - last < window )); then
+  [[ "$last" =~ ^[0-9]+$ ]] && (( now >= last && now - last < window ))
+}
+
+# Persist pending alerts during checks so all service checks and restarts finish
+# before any external webhook call can block or time out.
+queue_alert() {
+  local key=$1 window=$2; shift 2
+  local safe_key pending_file tmp_file msg_single
+  safe_key=$(printf '%s' "$key" | tr -c 'a-zA-Z0-9._-' '_')
+  pending_file="$STATE/pending/$safe_key"
+  if is_cooled_down "$safe_key" "$window"; then
+    rm -f "$pending_file"
     return 0
   fi
-  if "$ALERT" "$@"; then
-    printf '%s\n' "$now" >"$stamp"
-    return 0
+  msg_single=$(printf '%s' "$*" | tr '\n' ' ')
+  tmp_file="$pending_file.tmp.$$"
+  printf '%s\n%s\n' "$window" "$msg_single" >"$tmp_file"
+  mv -f "$tmp_file" "$pending_file"
+}
+
+run_alert_bounded() {
+  local limit=$1 message=$2
+  if command -v timeout >/dev/null 2>&1; then
+    BOJIN_ALERT_MAX_TIME="$limit" timeout -k 2 "${limit}s" "$ALERT" "$message" 9>&-
+  else
+    BOJIN_ALERT_MAX_TIME="$limit" "$ALERT" "$message" 9>&-
   fi
-  return 1
+}
+
+# Deliver queued alerts within a bounded total time budget well under
+# TimeoutStartSec=60; undelivered items stay in $STATE/pending for the next tick.
+flush_alerts() {
+  local start_sec=$SECONDS pending_file safe_key window message elapsed remaining per_call now
+  for pending_file in "$STATE/pending/"*; do
+    [[ -f "$pending_file" ]] || continue
+    safe_key=${pending_file##*/}
+    [[ "$safe_key" == *.tmp.* ]] && continue
+    window=""
+    message=""
+    {
+      IFS= read -r window || true
+      IFS= read -r message || true
+    } <"$pending_file"
+    if [[ ! "$window" =~ ^[0-9]+$ || -z "$message" ]]; then
+      rm -f "$pending_file"
+      continue
+    fi
+    if is_cooled_down "$safe_key" "$window"; then
+      rm -f "$pending_file" "$STATE/pending-crashes-${safe_key#crash-}"
+      continue
+    fi
+    elapsed=$(( SECONDS - start_sec ))
+    if (( elapsed >= ALERT_BUDGET_SEC )); then
+      logger -t bojin-watchdog -p daemon.warning -- \
+        "alert delivery budget (${ALERT_BUDGET_SEC}s) exhausted; deferring remaining alerts to next check"
+      break
+    fi
+    remaining=$(( ALERT_BUDGET_SEC - elapsed ))
+    per_call=$ALERT_MAX_TIME
+    if (( remaining < per_call )); then
+      per_call=$remaining
+    fi
+    (( per_call < 1 )) && per_call=1
+    if run_alert_bounded "$per_call" "$message"; then
+      now=$(now_seconds)
+      if [[ ! "$now" =~ ^[0-9]+$ ]]; then now=0; fi
+      printf '%s\n' "$now" >"$STATE/alert-$safe_key"
+      rm -f "$pending_file" "$STATE/pending-crashes-${safe_key#crash-}"
+    fi
+  done
 }
 
 check_filesystems() {
@@ -85,46 +146,83 @@ check_filesystems() {
 
     used=${pcent%%%}
     if [[ "$used" =~ ^[0-9]+$ ]] && (( used >= DISK_WARN_PERCENT )); then
-      alert_once "disk-$mount_key" 21600 \
-        "disk holding $path ($mount_id) is ${used}% full; free space before writes start failing" || true
+      queue_alert "disk-$mount_key" 21600 \
+        "disk holding $path ($mount_id) is ${used}% full; free space before writes start failing"
     fi
 
     iused=${ipcent%%%}
     if [[ "$iused" =~ ^[0-9]+$ ]] && (( iused >= INODE_WARN_PERCENT )); then
-      alert_once "inodes-$mount_key" 21600 \
-        "inodes on disk holding $path ($mount_id) are ${iused}% full; free inodes before writes start failing" || true
+      queue_alert "inodes-$mount_key" 21600 \
+        "inodes on disk holding $path ($mount_id) are ${iused}% full; free inodes before writes start failing"
     fi
   done
 }
 
 UNIT_STATE=""
 check_unit_lifecycle() {
-  local unit=$1 label=$2 state restarts prev_file previous act_file act_count
+  local unit=$1 label=$2 state restarts invocation prev_file has_prev prev_restarts prev_inv
+  local raw_restarts raw_inv delta pending_crashes act_file act_count
   state=$(systemctl is-active "$unit" 2>/dev/null || true)
 
   if [[ "$state" == failed ]]; then
-    alert_once "failed-$unit" 1800 "$unit was in failed state on $(hostname); starting it again" || true
+    queue_alert "failed-$unit" 1800 "$unit was in failed state on $(hostname); starting it again"
     systemctl reset-failed "$unit"
     systemctl start --no-block "$unit"
   fi
 
-  # Automatic restarts done by systemd itself mean the unit crashed, even when
-  # Restart=always + StartLimitIntervalSec=0 keeps it in "activating".
+  # Track InvocationID alongside NRestarts so first-observation crashes and
+  # crashes after a deploy/manual restart counter reset are never missed.
   restarts=$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || echo 0)
   if [[ ! "$restarts" =~ ^[0-9]+$ ]]; then restarts=0; fi
+  invocation=$(systemctl show -p InvocationID --value "$unit" 2>/dev/null || true)
+  invocation=${invocation//[[:space:]]/}
+
   prev_file="$STATE/restarts-$unit"
+  has_prev=0
+  prev_restarts=0
+  prev_inv=""
   if [[ -r "$prev_file" ]]; then
-    previous=$(read_uint "$prev_file" "$restarts")
-  else
-    previous=$restarts
+    IFS=' ' read -r raw_restarts raw_inv <"$prev_file" || true
+    if [[ "${raw_restarts:-}" =~ ^[0-9]+$ && ! "${raw_inv:-}" =~ [[:space:]] ]]; then
+      has_prev=1
+      prev_restarts=$raw_restarts
+      prev_inv=${raw_inv:-}
+    fi
   fi
-  if (( restarts > previous )); then
-    if alert_once "crash-$unit" 1800 \
-      "$label crashed and systemd restarted it ($((restarts - previous))x since last check); see journalctl -u $unit"; then
-      printf '%s\n' "$restarts" >"$prev_file"
+
+  delta=0
+  if (( has_prev == 0 )); then
+    if (( restarts > 0 )); then
+      delta=$restarts
+    fi
+  elif [[ -n "$invocation" && "$invocation" == "$prev_inv" ]]; then
+    if (( restarts > prev_restarts )); then
+      delta=$(( restarts - prev_restarts ))
+    fi
+  elif [[ -n "$invocation" && "$invocation" != "$prev_inv" ]]; then
+    if (( restarts > prev_restarts )); then
+      delta=$(( restarts - prev_restarts ))
+    elif (( restarts > 0 )); then
+      delta=$restarts
     fi
   else
-    printf '%s\n' "$restarts" >"$prev_file"
+    if (( restarts > prev_restarts )); then
+      delta=$(( restarts - prev_restarts ))
+    elif (( restarts > 0 && restarts < prev_restarts )); then
+      delta=$restarts
+    fi
+  fi
+  printf '%s %s\n' "$restarts" "$invocation" >"$prev_file"
+
+  if (( delta > 0 )); then
+    pending_crashes=$(( $(read_uint "$STATE/pending-crashes-$unit" 0) + delta ))
+    if is_cooled_down "crash-$unit" 1800; then
+      rm -f "$STATE/pending-crashes-$unit" "$STATE/pending/crash-$unit"
+    else
+      printf '%s\n' "$pending_crashes" >"$STATE/pending-crashes-$unit"
+      queue_alert "crash-$unit" 1800 \
+        "$label crashed and systemd restarted it (${pending_crashes}x since last check); see journalctl -u $unit"
+    fi
   fi
 
   act_file="$STATE/activating-$unit"
@@ -133,8 +231,8 @@ check_unit_lifecycle() {
     printf '%s\n' "$act_count" >"$act_file"
     logger -t bojin-watchdog -p daemon.warning -- "$unit is activating ($act_count/$ACTIVATING_LIMIT)"
     if (( act_count >= ACTIVATING_LIMIT )); then
-      alert_once "activating-$unit" 1800 \
-        "$unit is stuck activating or crash-looping ($act_count consecutive checks); see journalctl -u $unit" || true
+      queue_alert "activating-$unit" 1800 \
+        "$unit is stuck activating or crash-looping ($act_count consecutive checks); see journalctl -u $unit"
     fi
   else
     rm -f "$act_file"
@@ -148,8 +246,8 @@ check_unit_lifecycle() {
 exec 9>>"$LOCK_FILE"
 flock -n 9 || exit 0
 
-# Always check disks/inodes and unit crash counters BEFORE any early exit so a
-# full disk or startup crash loop cannot hide behind a non-active unit state.
+# Run all disk/inode checks, unit lifecycle checks, and local HTTP probes FIRST;
+# deliver queued alerts afterwards within a bounded time budget.
 check_filesystems
 
 check_unit_lifecycle caddy.service caddy.service
@@ -168,7 +266,7 @@ if [[ "$caddy_state" == active ]]; then
     if (( caddy_failures >= FAIL_LIMIT )); then
       rm -f "$STATE/failures-caddy.service"
       systemctl restart caddy.service
-      alert_once "unhealthy-caddy.service" 1800 "caddy.service stopped answering local HTTP checks; watchdog restarted it" || true
+      queue_alert "unhealthy-caddy.service" 1800 "caddy.service stopped answering local HTTP checks; watchdog restarted it"
     fi
   fi
 else
@@ -179,26 +277,27 @@ fi
 
 check_unit_lifecycle bojin.service app
 state=$UNIT_STATE
-if [[ "$state" != active ]]; then
+if [[ "$state" == active ]]; then
+  if curl --noproxy '*' --fail --silent --max-time 5 -o /dev/null "$HEALTH_URL"; then
+    if [[ -f "$STATE/failures" ]]; then
+      rm -f "$STATE/failures" "$STATE/alert-unhealthy"
+      logger -t bojin-watchdog -- "health check recovered"
+    fi
+  else
+    failures=$(( $(read_uint "$STATE/failures" 0) + 1 ))
+    printf '%s\n' "$failures" >"$STATE/failures"
+    logger -t bojin-watchdog -p daemon.warning -- "health check failed ($failures/$FAIL_LIMIT)"
+    if (( failures >= FAIL_LIMIT )); then
+      rm -f "$STATE/failures"
+      systemctl restart bojin.service
+      queue_alert unhealthy 1800 "app stopped answering health checks; watchdog restarted it"
+    fi
+  fi
+else
   # "activating" = systemd is already restarting it; "inactive" = an operator
   # stopped it deliberately. Either way, do not fight it.
   rm -f "$STATE/failures"
-  exit 0
 fi
 
-if curl --noproxy '*' --fail --silent --max-time 5 -o /dev/null "$HEALTH_URL"; then
-  if [[ -f "$STATE/failures" ]]; then
-    rm -f "$STATE/failures" "$STATE/alert-unhealthy"
-    logger -t bojin-watchdog -- "health check recovered"
-  fi
-else
-  failures=$(( $(read_uint "$STATE/failures" 0) + 1 ))
-  printf '%s\n' "$failures" >"$STATE/failures"
-  logger -t bojin-watchdog -p daemon.warning -- "health check failed ($failures/$FAIL_LIMIT)"
-  if (( failures >= FAIL_LIMIT )); then
-    rm -f "$STATE/failures"
-    systemctl restart bojin.service
-    alert_once unhealthy 1800 "app stopped answering health checks; watchdog restarted it" || true
-  fi
-fi
+flush_alerts
 exit 0
