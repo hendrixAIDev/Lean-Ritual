@@ -394,7 +394,7 @@ class DeploymentTests(unittest.TestCase):
         return events, releases, backups, current, old, alert_log, syslog_messages, flag_lstat_calls[0]
 
     def test_service_states_evaluated_under_lock_and_stopped_gate(self):
-        # active, failed, activating, reloading are allowed without flag; unpack precedes flock.
+        # active, failed, activating, reloading are allowed without flag; flock precedes unpack.
         for state in ("active", "failed", "activating", "reloading"):
             with self.subTest(allowed=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
