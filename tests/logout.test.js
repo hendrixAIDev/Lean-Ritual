@@ -6,7 +6,22 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
-const pageScript = source.match(/<script>([\s\S]*?)<\/script>/)[1].split('/* ============ 启动 ============ */')[0];
+const fullScript = source.match(/<script>([\s\S]*?)<\/script>/)[1];
+const pageScript = fullScript.split('/* ============ 启动 ============ */')[0];
+
+function extractFunction(src, signature) {
+  const start = src.indexOf(signature);
+  assert.notEqual(start, -1, `missing ${signature}`);
+  let depth = 0, opened = false;
+  for (let i = start; i < src.length; i++) {
+    if (src[i] === '{') { depth++; opened = true; }
+    else if (src[i] === '}') {
+      depth--;
+      if (opened && depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error(`unclosed ${signature}`);
+}
 
 function makeStorage(initial = {}, events = null) {
   const map = new Map(Object.entries(initial));
@@ -29,27 +44,33 @@ function makeStorage(initial = {}, events = null) {
   });
 }
 
-function createPage({storage = {}, confirmImpl, logoutImpl, storeImpl} = {}) {
+function createPage({storage = {}, confirmImpl, logoutImpl, deleteAccountImpl, storeImpl, elements = {}} = {}) {
   const events = [];
   const localStorage = makeStorage(storage, events);
   const listeners = {};
-  const location = {href: '/'};
+  const location = {
+    href: '/',
+    replaced: null,
+    replace(url) { location.replaced = url; location.href = url; }
+  };
   const prompts = [];
   const window = {
     location,
     scrollTo() {},
     ritual: {
       hosted: true,
-      logout: logoutImpl || (async () => { events.push('signout'); })
+      logout: logoutImpl || (async () => { events.push('signout'); }),
+      deleteAccount: deleteAccountImpl || (async pw => { events.push(`delete:${pw}`); })
     }
   };
+  const toastEl = {innerHTML: '', hidden: true, textContent: ''};
   const ctx = vm.createContext({
     window,
     location,
     document: {
       addEventListener(type, fn) { listeners[type] = fn; },
-      querySelector() { return {innerHTML: '', hidden: true, textContent: ''}; },
-      getElementById() { return null; }
+      querySelector(sel) { return elements[sel] || toastEl; },
+      getElementById(id) { return elements['#' + id] || null; }
     },
     localStorage,
     confirm: confirmImpl === undefined ? undefined : (msg => { prompts.push(msg); return confirmImpl(msg); }),
@@ -69,14 +90,43 @@ function createPage({storage = {}, confirmImpl, logoutImpl, storeImpl} = {}) {
   `, ctx);
   if (storeImpl) ctx.SStore = storeImpl;
   vm.runInContext('S.store = typeof SStore !== "undefined" ? SStore : null;', ctx);
-  const clickLogout = () => {
-    const btn = {dataset: {act: 'logout'}, disabled: false, closest(sel) { return sel === '[data-act]' ? btn : null; }};
-    return listeners.click({target: btn});
+  const clickAct = act => {
+    const btn = {dataset: {act}, disabled: false, closest(sel) { return sel === '[data-act]' ? btn : null; }};
+    return listeners.click({target: btn}).then(() => btn);
   };
-  return {ctx, localStorage, location, events, prompts, clickLogout};
+  return {ctx, localStorage, location, events, prompts, clickLogout: () => clickAct('logout'), clickAct};
 }
 
-test('normal logout clears only current user bj-user:<uid>:* keys without unnecessary sync', async () => {
+test('syncDraft and rescueDrafts remain byte-identical to origin/main', () => {
+  const expectedSyncDraft = [
+    'function syncDraft(date, key){',
+    '  clearTimeout(syncDraft.t);',
+    '  syncDraft.t = setTimeout(() => {',
+    '    const d = S.drafts[draftKey(date, key)]; if (!d) return;',
+    '    if (S.days[date]?.workout?.done && S.days[date].workout.key === key) return;',
+    '    updateDay(date, x => { x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});',
+    '  }, 2000);',
+    '}'
+  ].join('\n');
+  const expectedRescueDrafts = [
+    'function rescueDrafts(){',
+    '  if (!S.profile) return;',
+    '  const found = [];',
+    '  for (const [k, d] of Object.entries(S.drafts || {})) {',
+    '    if (!d?.exercises?.some(e => e.sets?.some(t => t.r !== "" || t.w !== ""))) continue;',
+    '    const date = k.split("|")[0];',
+    '    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;',
+    '    found.push(date);',
+    '    updateDay(date, x => { if (!x.workout?.done && !x.workoutDraft) x.workoutDraft = {...clone(d), key:d.key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});',
+    '  }',
+    '  if (found.length) toast(`找到 ${[...new Set(found)].map(d => fmtDate(d).split(" ")[0]).join("、")} 填了但没保存的训练，打开那天点“完成训练，保存”即可`, 8000);',
+    '}'
+  ].join('\n');
+  assert.equal(extractFunction(fullScript, 'function syncDraft('), expectedSyncDraft);
+  assert.equal(extractFunction(fullScript, 'function rescueDrafts('), expectedRescueDrafts);
+});
+
+test('normal logout with blank drafts clears only current user bj-user:<uid>:* keys with zero store calls', async () => {
   let storeCalls = 0;
   const {ctx, localStorage, location, events, prompts, clickLogout} = createPage({
     storage: {
@@ -98,15 +148,7 @@ test('normal logout clears only current user bj-user:<uid>:* keys without unnece
     }
   });
   assert.equal(vm.runInContext('logoutSyncMs', ctx), 5000);
-  // Viewing Today populates an empty in-memory draft; completed or already-synced days must also stay fast.
-  vm.runInContext(`
-    S.date = "2026-11-16";
-    viewToday();
-    S.days["2026-11-14"] = {date:"2026-11-14", meals:[], workout:{done:true, key:"A", exercises:[{name:"平板杠铃卧推", sets:[{w:"60", r:"8"}]}]}};
-    S.drafts["2026-11-14|A"] = JSON.parse(JSON.stringify(S.days["2026-11-14"].workout));
-    S.days["2026-11-13"] = {date:"2026-11-13", meals:[], workoutDraft:{key:"B", exercises:[{name:"引体向上", sets:[{w:"0", r:"8"}]}], feel:3, pain:"none", painArea:"", note:"已同步"}};
-    S.drafts["2026-11-13|B"] = JSON.parse(JSON.stringify(S.days["2026-11-13"].workoutDraft));
-  `, ctx);
+  vm.runInContext('S.date = "2026-11-16"; viewToday();', ctx);
 
   await clickLogout();
 
@@ -126,7 +168,45 @@ test('normal logout clears only current user bj-user:<uid>:* keys without unnece
   assert.equal(location.href, '/login.html');
 });
 
-test('unsynced workout drafts sync before clearing local keys and signing out', async () => {
+test('all-synced drafts (matching cloud saved workout or cloud workoutDraft) clear silently without writes', async () => {
+  let setCalls = 0;
+  const cloudDocs = new Map([
+    ['days/2026-11-14', {
+      date: '2026-11-14',
+      meals: [],
+      workout: {done: true, key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}], feel: 4, pain: 'none', painArea: '', note: ''}
+    }],
+    ['days/2026-11-16', {
+      date: '2026-11-16',
+      meals: [],
+      workoutDraft: {key: 'B', exercises: [{name: '引体向上', sets: [{w: '0', r: '8'}]}], feel: 3, pain: 'none', painArea: '', note: '已同步'}
+    }]
+  ]);
+  const {localStorage, location, prompts, clickLogout} = createPage({
+    storage: {
+      'bj-user:u1:bj-drafts': JSON.stringify({
+        '2026-11-14|A': {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}], feel: 4, pain: 'none', painArea: '', note: ''},
+        '2026-11-16|B': {key: 'B', exercises: [{name: '引体向上', sets: [{w: '0', r: '8'}]}], feel: 3, pain: 'none', painArea: '', note: '已同步'}
+      }),
+      'bj-user:u2:bj-drafts': '{"keep":true}'
+    },
+    confirmImpl: () => { throw new Error('confirm should not run when all drafts match cloud'); },
+    storeImpl: {
+      async get(p) { return cloudDocs.get(p) || null; },
+      async set() { setCalls++; }
+    }
+  });
+
+  await clickLogout();
+
+  assert.equal(setCalls, 0);
+  assert.equal(prompts.length, 0);
+  assert.equal(localStorage.getItem('bj-user:u1:bj-drafts'), null);
+  assert.equal(localStorage.getItem('bj-user:u2:bj-drafts'), '{"keep":true}');
+  assert.equal(location.href, '/login.html');
+});
+
+test('single representable unsynced workout draft syncs before clearing local keys and signing out', async () => {
   const savedDocs = new Map();
   const {localStorage, location, events, clickLogout} = createPage({
     storage: {
@@ -143,13 +223,13 @@ test('unsynced workout drafts sync before clearing local keys and signing out', 
       'bj-user:u1:bj-wbackup': '{"2026-11-14":{"done":true}}',
       'bj-user:u2:bj-mtext': '"保留其他账号"'
     },
+    confirmImpl: () => { throw new Error('confirm should not run when single draft sync succeeds'); },
     storeImpl: {
       async get(docPath) {
         events.push(`get:${docPath}`);
         return savedDocs.get(docPath) || null;
       },
       async set(docPath, data) {
-        // Local data and session must still exist while syncing to authenticated backend.
         assert.ok(localStorage.getItem('bj-user:u1:bj-drafts'));
         assert.ok(!events.includes('signout'));
         events.push(`set:${docPath}`);
@@ -173,37 +253,124 @@ test('unsynced workout drafts sync before clearing local keys and signing out', 
   assert.equal(location.href, '/login.html');
 });
 
-test('failed or timed-out draft sync prompts in Chinese and cancelling keeps local data and session', async () => {
+test('completed workout A plus unsaved workout B on the same day prompts and cancel preserves everything', async () => {
+  let setCalls = 0, logoutCalled = 0;
+  const savedDay = {
+    date: '2026-11-16',
+    meals: [],
+    workout: {done: true, key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]}
+  };
+  const draftsRaw = JSON.stringify({
+    '2026-11-16|A': {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]},
+    '2026-11-16|B': {key: 'B', exercises: [{name: '引体向上', sets: [{w: '0', r: '10'}]}]}
+  });
+  const {ctx, localStorage, location, prompts, clickLogout} = createPage({
+    storage: {'bj-user:u1:bj-drafts': draftsRaw, 'bj-user:u1:bj-wbackup': '{"2026-11-16":{"done":true}}'},
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get(p) { return p === 'days/2026-11-16' ? savedDay : null; },
+      async set() { setCalls++; }
+    }
+  });
+  vm.runInContext(`S.days["2026-11-16"] = ${JSON.stringify(savedDay)};`, ctx);
+
+  const btn = await clickLogout();
+
+  assert.equal(setCalls, 0);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /训练草稿.*丢失/);
+  assert.equal(logoutCalled, 0);
+  assert.equal(location.href, '/');
+  assert.equal(btn.disabled, false);
+  assert.equal(vm.runInContext('S.busy.logout', ctx), false);
+  assert.equal(vm.runInContext('storageUser', ctx), 'u1');
+  assert.equal(localStorage.getItem('bj-user:u1:bj-drafts'), draftsRaw);
+  assert.equal(localStorage.getItem('bj-user:u1:bj-wbackup'), '{"2026-11-16":{"done":true}}');
+});
+
+test('edited-but-unsaved completed workout prompts instead of silently discarding edits', async () => {
+  let setCalls = 0, logoutCalled = 0;
+  const savedDay = {
+    date: '2026-11-16',
+    meals: [],
+    workout: {done: true, key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}], note: ''}
+  };
+  const editedDraftRaw = JSON.stringify({
+    '2026-11-16|A': {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '65', r: '8'}]}], note: '加了 5kg 未点保存'}
+  });
+  const {ctx, localStorage, location, prompts, clickLogout} = createPage({
+    storage: {'bj-user:u1:bj-drafts': editedDraftRaw},
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get(p) { return p === 'days/2026-11-16' ? savedDay : null; },
+      async set() { setCalls++; }
+    }
+  });
+  vm.runInContext(`S.days["2026-11-16"] = ${JSON.stringify(savedDay)};`, ctx);
+
+  await clickLogout();
+
+  assert.equal(setCalls, 0);
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /训练草稿.*丢失/);
+  assert.equal(logoutCalled, 0);
+  assert.equal(location.href, '/');
+  assert.equal(localStorage.getItem('bj-user:u1:bj-drafts'), editedDraftRaw);
+});
+
+test('two unsaved plan keys on the same day never overwrite each other in workoutDraft and prompt before clearing', async () => {
+  let setCalls = 0, logoutCalled = 0;
+  const twoKeysRaw = JSON.stringify({
+    '2026-11-16|A': {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]},
+    '2026-11-16|B': {key: 'B', exercises: [{name: '深蹲', sets: [{w: '80', r: '5'}]}]}
+  });
+  // Case 1: cloud is empty; neither pending draft may overwrite the other.
+  const emptyCloud = createPage({
+    storage: {'bj-user:u1:bj-drafts': twoKeysRaw},
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get() { return null; },
+      async set() { setCalls++; }
+    }
+  });
+  await emptyCloud.clickLogout();
+  assert.equal(setCalls, 0);
+  assert.equal(emptyCloud.prompts.length, 1);
+  assert.equal(logoutCalled, 0);
+  assert.equal(emptyCloud.localStorage.getItem('bj-user:u1:bj-drafts'), twoKeysRaw);
+
+  // Case 2: cloud already has workoutDraft for A; local pending B must not overwrite cloud A.
+  const cloudWithA = {
+    date: '2026-11-16',
+    meals: [],
+    workoutDraft: {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]}
+  };
+  const existingCloud = createPage({
+    storage: {'bj-user:u1:bj-drafts': twoKeysRaw},
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get() { return cloudWithA; },
+      async set() { setCalls++; }
+    }
+  });
+  await existingCloud.clickLogout();
+  assert.equal(setCalls, 0);
+  assert.equal(existingCloud.prompts.length, 1);
+  assert.equal(logoutCalled, 0);
+  assert.equal(existingCloud.localStorage.getItem('bj-user:u1:bj-drafts'), twoKeysRaw);
+});
+
+test('sync timeout defaults to cancel when confirm is absent, keeps everything on cancel, and clears on confirm', async () => {
   let logoutCalled = 0;
   const draftRaw = JSON.stringify({
     '2026-11-16|A': {key: 'A', exercises: [{name: '深蹲', sets: [{w: '80', r: '5'}]}]}
   });
-  const {ctx, localStorage, location, prompts, clickLogout} = createPage({
-    storage: {
-      'bj-user:u1:bj-drafts': draftRaw,
-      'bj-user:u1:bj-mtext': '"晚饭草稿"',
-      'theme': 'light'
-    },
-    confirmImpl: () => false,
-    logoutImpl: async () => { logoutCalled++; },
-    storeImpl: {
-      async get() { throw new Error('network down'); },
-      async set() { throw new Error('network down'); }
-    }
-  });
-
-  await clickLogout();
-
-  assert.equal(prompts.length, 1);
-  assert.match(prompts[0], /未同步.*草稿/);
-  assert.equal(logoutCalled, 0);
-  assert.equal(location.href, '/');
-  assert.equal(localStorage.getItem('bj-user:u1:bj-drafts'), draftRaw);
-  assert.equal(localStorage.getItem('bj-user:u1:bj-mtext'), '"晚饭草稿"');
-  assert.equal(localStorage.getItem('theme'), 'light');
-
-  // Timed-out sync with missing confirm also defaults to cancel, then confirming proceeds to clear & sign out.
-  const noConfirm = createPage({
+  const prompts = [];
+  const page = createPage({
     storage: {'bj-user:u1:bj-drafts': draftRaw, 'bj-user:u2:bj-drafts': '{"keep":true}', 'theme': 'light'},
     logoutImpl: async () => { logoutCalled++; },
     storeImpl: {
@@ -211,21 +378,57 @@ test('failed or timed-out draft sync prompts in Chinese and cancelling keeps loc
       set() { return new Promise(() => {}); }
     }
   });
-  vm.runInContext('logoutSyncMs = 20;', noConfirm.ctx);
-  await noConfirm.clickLogout();
-  assert.equal(logoutCalled, 0);
-  assert.equal(noConfirm.location.href, '/');
-  assert.equal(noConfirm.localStorage.getItem('bj-user:u1:bj-drafts'), draftRaw);
+  vm.runInContext('logoutSyncMs = 20;', page.ctx);
 
-  noConfirm.ctx.confirm = msg => { prompts.push(msg); return true; };
-  await noConfirm.clickLogout();
+  // Missing confirm defaults to cancel.
+  await page.clickLogout();
+  assert.equal(logoutCalled, 0);
+  assert.equal(page.location.href, '/');
+  assert.equal(page.localStorage.getItem('bj-user:u1:bj-drafts'), draftRaw);
+
+  // Explicit cancel keeps everything and leaves nothing destructive armed.
+  page.ctx.confirm = msg => { prompts.push(msg); return false; };
+  await page.clickLogout();
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /训练草稿.*丢失/);
+  assert.equal(logoutCalled, 0);
+  assert.equal(page.location.href, '/');
+  assert.equal(page.localStorage.getItem('bj-user:u1:bj-drafts'), draftRaw);
+  assert.equal(vm.runInContext('storageUser', page.ctx), 'u1');
+
+  // Explicit confirm clears current user's keys only and signs out.
+  page.ctx.confirm = msg => { prompts.push(msg); return true; };
+  await page.clickLogout();
   assert.equal(prompts.length, 2);
   assert.equal(logoutCalled, 1);
-  assert.equal(noConfirm.localStorage.getItem('bj-user:u1:bj-drafts'), null);
-  assert.equal(noConfirm.localStorage.getItem('bj-user:u2:bj-drafts'), '{"keep":true}');
-  assert.equal(noConfirm.localStorage.getItem('theme'), 'light');
-  assert.equal(noConfirm.location.href, '/login.html');
-  void ctx;
+  assert.equal(page.localStorage.getItem('bj-user:u1:bj-drafts'), null);
+  assert.equal(page.localStorage.getItem('bj-user:u2:bj-drafts'), '{"keep":true}');
+  assert.equal(page.localStorage.getItem('theme'), 'light');
+  assert.equal(page.location.href, '/login.html');
+});
+
+test('account deletion still clears only deleted user localStorage keys', async () => {
+  const {localStorage, location, events, clickAct} = createPage({
+    storage: {
+      'bj-user:u1:bj-drafts': '{"2026-11-16|A":{"key":"A"}}',
+      'bj-user:u1:bj-wbackup': '{"2026-11-15":{"done":true}}',
+      'bj-user:u2:bj-drafts': '{"other":true}',
+      'theme': 'dark'
+    },
+    elements: {
+      '#delete-password': {value: 'correct-horse-battery-staple'},
+      '#delete-confirm': {checked: true}
+    }
+  });
+
+  await clickAct('delete-account');
+
+  assert.deepEqual(events.filter(e => e.startsWith('delete:')), ['delete:correct-horse-battery-staple']);
+  assert.equal(localStorage.getItem('bj-user:u1:bj-drafts'), null);
+  assert.equal(localStorage.getItem('bj-user:u1:bj-wbackup'), null);
+  assert.equal(localStorage.getItem('bj-user:u2:bj-drafts'), '{"other":true}');
+  assert.equal(localStorage.getItem('theme'), 'dark');
+  assert.equal(location.replaced, '/login.html?deleted=1');
 });
 
 test('privacy page documents logout draft sync, local cleanup and shared-device advice', () => {

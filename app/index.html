@@ -1667,9 +1667,7 @@ document.addEventListener("click", async ev => {
       b.disabled = true;
       try {
         await window.ritual.deleteAccount(password);
-        clearTimeout(syncDraft.t);
-        const id = S.uid || storageUser; storageUser = null; S.drafts = {};
-        clearUserLocal(id);
+        clearUserLocal(S.uid);
         location.replace("/login.html?deleted=1");
       } catch (e) { b.disabled=false; toast(e?.message || "删除未完成，请重试或联系管理员",6000); }
       break;
@@ -1816,15 +1814,15 @@ function clearUserLocal(id = S.uid || storageUser){
 }
 function draftPayload(d, key = d?.key || ""){
   return {
-    key,
+    key: String(key || ""),
     exercises: (d?.exercises || []).map(e => ({
-      name: e?.name || "",
+      name: String(e?.name || ""),
       sets: (e?.sets || []).map(s => ({w: String(s?.w ?? ""), r: String(s?.r ?? "")}))
     })),
-    feel: d?.feel ?? "",
+    feel: d?.feel === "" || d?.feel == null ? "" : String(d.feel),
     pain: d?.pain || "none",
-    painArea: d?.painArea || "",
-    note: d?.note || ""
+    painArea: String(d?.painArea || ""),
+    note: String(d?.note || "")
   };
 }
 function hasDraftData(d){
@@ -1834,39 +1832,70 @@ function hasDraftData(d){
   if (d.pain && d.pain !== "none") return true;
   return String(d.painArea || "").trim() !== "" || String(d.note || "").trim() !== "";
 }
-function unsyncedDrafts(id = S.uid || storageUser){
+function sameDraft(a, aKey, b, bKey){
+  return !!aKey && aKey === bKey && JSON.stringify(draftPayload(a, aKey)) === JSON.stringify(draftPayload(b, bKey));
+}
+function isVerifiedInDay(entry, doc){
+  if (!doc || !entry.key) return false;
+  if (doc.workout?.done && sameDraft(entry.draft, entry.key, doc.workout, String(doc.workout.key || ""))) return true;
+  if (!doc.workout?.done && doc.workoutDraft && sameDraft(entry.draft, entry.key, doc.workoutDraft, String(doc.workoutDraft.key || ""))) return true;
+  return false;
+}
+function localDraftEntries(id = S.uid || storageUser){
   let stored = {};
   if (id) {
     try {
       const parsed = JSON.parse(localStorage.getItem(`bj-user:${id}:bj-drafts`) || "{}");
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
-    } catch {}
+    } catch { return [{invalid: true}]; }
   }
-  const all = {...stored}, out = [];
-  for (const [k, d] of Object.entries(S.drafts || {})) {
-    if (hasDraftData(d) || !hasDraftData(all[k])) all[k] = d;
-  }
-  for (const [k, d] of Object.entries(all)) {
-    if (!hasDraftData(d)) continue;
-    const [date, kKey] = k.split("|"), key = d.key || kKey || "";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;
-    const srv = S.days[date]?.workoutDraft;
-    if (srv && JSON.stringify(draftPayload(d, key)) === JSON.stringify(draftPayload(srv, srv.key || ""))) continue;
+  const seen = new Set(), out = [];
+  const add = (rawKey, d) => {
+    if (!hasDraftData(d)) return;
+    const [date, kKey] = rawKey.split("|"), key = String(d.key || kKey || "");
+    const sig = `${date}|${key}|${JSON.stringify(draftPayload(d, key))}`;
+    if (seen.has(sig)) return;
+    seen.add(sig);
     out.push({date, key, draft: clone(d)});
+  };
+  for (const [k, d] of Object.entries(S.drafts || {})) add(k, d);
+  for (const [k, d] of Object.entries(stored)) {
+    if (!(k in (S.drafts || {})) || !hasDraftData(S.drafts[k])) add(k, d);
   }
   return out;
 }
-async function syncDraftEntry(date, key, d, onlyIfMissing = false){
-  const next = await mutate("days/" + date, cur => {
-    if (cur?.workout?.done && (!key || cur.workout.key === key || onlyIfMissing)) return null;
-    if (onlyIfMissing && cur?.workoutDraft) return null;
-    const x = migrateDay(cur || {date, meals:[]});
-    x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()};
-    stampTargets(x);
-    return x;
-  });
-  if (next) S.days[date] = migrateDay(next);
-  return next;
+async function verifyAndSyncDrafts(entries){
+  if (!S.store) return false;
+  let allOk = true;
+  const byDate = new Map();
+  for (const e of entries) {
+    if (e.invalid || !/^\d{4}-\d{2}-\d{2}$/.test(e.date) || !e.key) { allOk = false; continue; }
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  }
+  await Promise.all([...byDate.entries()].map(async ([date, list]) => {
+    await (locks["days/" + date] || Promise.resolve()).catch(() => {});
+    let doc = await S.store.get("days/" + date);
+    const pending = list.filter(e => !isVerifiedInDay(e, doc));
+    if (!pending.length) return;
+    if (pending.length === 1 && !doc?.workout?.done) {
+      const p = pending[0], srv = doc?.workoutDraft;
+      const srvHasOther = srv && hasDraftData(srv) && String(srv.key || "") !== p.key;
+      if (!srvHasOther && list.length === 1) {
+        doc = await mutate("days/" + date, cur => {
+          if (cur?.workout?.done) return null;
+          if (cur?.workoutDraft && hasDraftData(cur.workoutDraft) && String(cur.workoutDraft.key || "") !== p.key) return null;
+          const x = migrateDay(cur || {date, meals:[]});
+          x.workoutDraft = {...clone(p.draft), key:p.key, updatedAt:new Date().toISOString()};
+          stampTargets(x);
+          return x;
+        });
+        if (doc) S.days[date] = migrateDay(doc);
+      }
+    }
+    if (!list.every(e => isVerifiedInDay(e, doc))) allOk = false;
+  }));
+  return allOk;
 }
 async function logout(btn){
   if (S.busy.logout) return;
@@ -1874,22 +1903,22 @@ async function logout(btn){
   if (btn) btn.disabled = true;
   try {
     clearTimeout(syncDraft.t);
-    const id = S.uid || storageUser, pending = unsyncedDrafts(id);
-    if (pending.length) {
-      if (S.profile && pending.length > 1) {
-        try { pending.sort((a, b) => a.date === b.date ? (a.key === planFor(a.date)?.key) - (b.key === planFor(b.date)?.key) : 0); } catch {}
-      }
-      let timer;
+    const id = S.uid || storageUser, entries = localDraftEntries(id);
+    if (entries.length) {
+      let timer, verified = false;
       try {
-        await Promise.race([
-          Promise.all(pending.map(p => syncDraftEntry(p.date, p.key, p.draft))),
+        verified = await Promise.race([
+          verifyAndSyncDrafts(entries),
           new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("sync_timeout")), logoutSyncMs); })
         ]);
       } catch {
-        const ask = typeof confirm === "function" ? confirm : window?.confirm;
-        if (!(typeof ask === "function" && ask("还有未同步到云端的训练草稿，现在退出会清除本机未同步的内容。仍要退出登录吗？"))) return;
+        verified = false;
       } finally {
         clearTimeout(timer);
+      }
+      if (!verified) {
+        const ask = typeof confirm === "function" ? confirm : window?.confirm;
+        if (!(typeof ask === "function" && ask("本机还有未同步或未保存的训练草稿，现在退出登录会丢失本机上的这些草稿。仍要退出登录吗？"))) return;
       }
     }
     storageUser = null;
@@ -1909,7 +1938,7 @@ function syncDraft(date, key){
   syncDraft.t = setTimeout(() => {
     const d = S.drafts[draftKey(date, key)]; if (!d) return;
     if (S.days[date]?.workout?.done && S.days[date].workout.key === key) return;
-    syncDraftEntry(date, key, d).catch(() => {});
+    updateDay(date, x => { x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
   }, 2000);
 }
 document.addEventListener("input", ev => {
@@ -1993,7 +2022,7 @@ function rescueDrafts(){
     const date = k.split("|")[0];
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;
     found.push(date);
-    syncDraftEntry(date, d.key, d, true).catch(() => {});
+    updateDay(date, x => { if (!x.workout?.done && !x.workoutDraft) x.workoutDraft = {...clone(d), key:d.key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
   }
   if (found.length) toast(`找到 ${[...new Set(found)].map(d => fmtDate(d).split(" ")[0]).join("、")} 填了但没保存的训练，打开那天点“完成训练，保存”即可`, 8000);
 }
