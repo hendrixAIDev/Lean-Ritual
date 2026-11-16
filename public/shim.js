@@ -14,7 +14,7 @@
     if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject({ code: "cancelled" }); }, { once: true });
   });
   async function api(method, url, body, rawType, signal) {
-    let r;
+    let r, rateRetries = 0;
     const retry = RETRY_METHODS.has(method) && !url.startsWith("/api/auth/") && !url.startsWith("/api/ai");
     for (let attempt = 0; ; attempt++) {
       let failed = null;
@@ -23,6 +23,14 @@
           headers: rawType ? { ...H, "Content-Type": rawType } : body !== undefined ? { ...H, "Content-Type": "application/json" } : H,
           body: rawType ? body : body !== undefined ? JSON.stringify(body) : undefined });
       } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; failed = { code: "network", message: "连不上服务器" }; }
+      if (!failed && r.status === 429 && retry && rateRetries < 2) {
+        if (signal && signal.aborted) throw { code: "cancelled" };
+        const header = r.headers.get("Retry-After");
+        const seconds = header && header.trim() !== "" ? Number(header) : NaN;
+        rateRetries++;
+        await wait(Math.min(65, Math.max(1, Number.isFinite(seconds) ? seconds : 5)) * 1000, signal);
+        continue;
+      }
       const transient = failed || RETRY_STATUS.has(r.status);
       if (!transient || !retry || attempt >= RETRY_DELAYS.length) { if (failed) throw failed; break; }
       if (signal && signal.aborted) throw { code: "cancelled" };

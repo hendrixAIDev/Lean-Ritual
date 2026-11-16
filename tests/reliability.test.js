@@ -61,3 +61,24 @@ test('shim retries safe requests through a restart but never repeats POSTs',asyn
  await assert.rejects(db.doc('data/users/alice/app/days/x').get(),e=>e.code==='http_502');
  assert.equal(calls.length,6);
 });
+
+test('shim retries 429 twice with bounded Retry-After and never retries 413',async()=>{
+ const delays=[];let status=429,header='90',calls=0;
+ const ctx=vm.createContext({window:{},location:{},URLSearchParams,fetch:async(url)=>{if(url==='/api/me')return {ok:true,status:200,json:async()=>({id:'alice'})};calls++;return {ok:false,status,headers:{get:()=>header},json:async()=>({error:'doc_quota',message:'空间不足'})};},setTimeout:(f,ms)=>{delays.push(ms);f();return 0;},clearTimeout(){}});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../public/shim.js'),'utf8'),ctx);
+ const db=await ctx.window.ritual.use('db');calls=0;delays.length=0;
+ await assert.rejects(db.doc('x').set({}),e=>e.message==='空间不足');assert.equal(calls,3);assert.deepEqual(delays,[65000,65000]);
+ status=413;calls=0;delays.length=0;await assert.rejects(db.doc('x').set({}));assert.equal(calls,1);assert.deepEqual(delays,[]);
+ status=429;header=null;delays.length=0;await assert.rejects(db.doc('x').set({}));assert.deepEqual(delays,[5000,5000]);
+});
+
+test('429 wait can be aborted and clamps short Retry-After',async()=>{
+ let cancel,delay,calls=0;
+ const signal={aborted:false,addEventListener:(_,fn)=>{cancel=fn;}};
+ const ctx=vm.createContext({window:{},location:{},URLSearchParams,fetch:async(url)=>{if(url==='/api/me')return {ok:true,status:200,json:async()=>({id:'alice'})};calls++;return {status:429,headers:{get:()=>'-5'}};},setTimeout:(_,ms)=>{delay=ms;return 1;},clearTimeout(){}});
+ const source=fs.readFileSync(path.join(__dirname,'../public/shim.js'),'utf8').replace('  const enc = encodeURIComponent;','  window.testApi = api;\n  const enc = encodeURIComponent;');
+ vm.runInContext(source,ctx);
+ const pending=ctx.window.testApi('PATCH','/api/doc',{},null,signal);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(delay,1000);signal.aborted=true;cancel();
+ await assert.rejects(pending,e=>e.code==='cancelled');assert.equal(calls,1);
+});
