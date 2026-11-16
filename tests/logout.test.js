@@ -94,7 +94,7 @@ function createPage({storage = {}, confirmImpl, logoutImpl, deleteAccountImpl, s
     const btn = {dataset: {act}, disabled: false, closest(sel) { return sel === '[data-act]' ? btn : null; }};
     return listeners.click({target: btn}).then(() => btn);
   };
-  return {ctx, localStorage, location, events, prompts, clickLogout: () => clickAct('logout'), clickAct};
+  return {ctx, localStorage, location, events, prompts, listeners, clickLogout: () => clickAct('logout'), clickAct};
 }
 
 test('syncDraft and rescueDrafts remain byte-identical to origin/main', () => {
@@ -405,6 +405,116 @@ test('sync timeout defaults to cancel when confirm is absent, keeps everything o
   assert.equal(page.localStorage.getItem('bj-user:u2:bj-drafts'), '{"keep":true}');
   assert.equal(page.localStorage.getItem('theme'), 'light');
   assert.equal(page.location.href, '/login.html');
+});
+
+test('divergent in-memory S.drafts and localStorage payloads for the same date|key prompt instead of silent clear', async () => {
+  let setCalls = 0, logoutCalled = 0;
+  const draftX = {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}], feel: 3, pain: 'none', painArea: '', note: ''};
+  const draftYRaw = JSON.stringify({
+    '2026-11-16|A': {key: 'A', exercises: [{name: '平板杠铃卧推', sets: [{w: '65', r: '10'}]}], feel: 4, pain: 'none', painArea: '', note: '另一标签页新改'}
+  });
+  const cloudWithX = {date: '2026-11-16', meals: [], workoutDraft: draftX};
+  const page = createPage({
+    storage: {'bj-user:u1:bj-drafts': JSON.stringify({'2026-11-16|A': draftX})},
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get(p) { return p === 'days/2026-11-16' ? cloudWithX : null; },
+      async set() { setCalls++; }
+    }
+  });
+  // Simulate Tab B persisting newer unsynced payload Y to localStorage while Tab A still holds X in memory.
+  page.localStorage.setItem('bj-user:u1:bj-drafts', draftYRaw);
+
+  await page.clickLogout();
+
+  assert.equal(setCalls, 0);
+  assert.equal(page.prompts.length, 1);
+  assert.match(page.prompts[0], /训练草稿.*丢失/);
+  assert.equal(logoutCalled, 0);
+  assert.equal(page.location.href, '/');
+  assert.equal(page.localStorage.getItem('bj-user:u1:bj-drafts'), draftYRaw);
+});
+
+test('edits made during awaited verification are caught before clearing (re-verified once or prompted)', async () => {
+  // Part 1: user edits a completed workout day while cloud parity read is in flight -> cannot safely sync, must prompt.
+  let logoutCalled = 0;
+  const completedDay = {
+    date: '2026-11-16',
+    meals: [],
+    workout: {done: true, key: 'push', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]}
+  };
+  let editedRaw = '';
+  const unverifiedEdit = createPage({
+    storage: {
+      'bj-user:u1:bj-drafts': JSON.stringify({
+        '2026-11-16|push': {key: 'push', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}]}]}
+      })
+    },
+    confirmImpl: () => false,
+    logoutImpl: async () => { logoutCalled++; },
+    storeImpl: {
+      async get() {
+        await new Promise(r => setTimeout(r, 5));
+        vm.runInContext(`
+          S.drafts["2026-11-16|push"].exercises[0].sets[0].w = "65";
+          persistDrafts();
+        `, unverifiedEdit.ctx);
+        editedRaw = unverifiedEdit.localStorage.getItem('bj-user:u1:bj-drafts');
+        return completedDay;
+      },
+      async set() { throw new Error('must not overwrite completed workout day'); }
+    }
+  });
+  vm.runInContext(`S.days["2026-11-16"] = ${JSON.stringify(completedDay)};`, unverifiedEdit.ctx);
+
+  await unverifiedEdit.clickLogout();
+
+  assert.equal(unverifiedEdit.prompts.length, 1);
+  assert.match(unverifiedEdit.prompts[0], /训练草稿.*丢失/);
+  assert.equal(logoutCalled, 0);
+  assert.equal(unverifiedEdit.location.href, '/');
+  assert.equal(unverifiedEdit.localStorage.getItem('bj-user:u1:bj-drafts'), editedRaw);
+  assert.match(editedRaw, /"65"/);
+
+  // Part 2: user types into an active draft via real input handler during initial cloud parity read -> re-verifies once and syncs 65kg before clearing.
+  const cloudDocs = new Map([
+    ['days/2026-11-16', {
+      date: '2026-11-16',
+      meals: [],
+      workoutDraft: {key: 'push', exercises: [{name: '平板杠铃卧推', sets: [{w: '60', r: '8'}, {w: '', r: ''}, {w: '', r: ''}]}]}
+    }]
+  ]);
+  let getCount = 0;
+  const syncableEdit = createPage({
+    storage: {},
+    confirmImpl: () => { throw new Error('confirm should not run when single re-verify syncs new edit'); },
+    storeImpl: {
+      async get(p) {
+        getCount++;
+        if (getCount === 1) {
+          await new Promise(r => setTimeout(r, 5));
+          // Fire real DOM input event on set 0 weight during the awaited initial verification.
+          syncableEdit.listeners.input({target: {dataset: {set: '0.0.w'}, value: '65'}});
+        }
+        return cloudDocs.get(p) || null;
+      },
+      async set(p, data) { cloudDocs.set(p, data); }
+    }
+  });
+  vm.runInContext(`
+    S.date = "2026-11-16";
+    S.days["2026-11-16"] = ${JSON.stringify(cloudDocs.get('days/2026-11-16'))};
+    getDraft("2026-11-16", planFor("2026-11-16"));
+    S.drafts["2026-11-16|push"].exercises[0].sets[0] = {w: "60", r: "8"};
+    persistDrafts();
+  `, syncableEdit.ctx);
+
+  await syncableEdit.clickLogout();
+
+  assert.equal(cloudDocs.get('days/2026-11-16').workoutDraft.exercises[0].sets[0].w, '65');
+  assert.equal(syncableEdit.localStorage.getItem('bj-user:u1:bj-drafts'), null);
+  assert.equal(syncableEdit.location.href, '/login.html');
 });
 
 test('account deletion still clears only deleted user localStorage keys', async () => {

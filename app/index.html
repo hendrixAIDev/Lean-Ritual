@@ -1847,7 +1847,7 @@ function localDraftEntries(id = S.uid || storageUser){
     try {
       const parsed = JSON.parse(localStorage.getItem(`bj-user:${id}:bj-drafts`) || "{}");
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
-    } catch { return [{invalid: true}]; }
+    } catch { return [{invalid: true, sig: "invalid"}]; }
   }
   const seen = new Set(), out = [];
   const add = (rawKey, d) => {
@@ -1856,13 +1856,14 @@ function localDraftEntries(id = S.uid || storageUser){
     const sig = `${date}|${key}|${JSON.stringify(draftPayload(d, key))}`;
     if (seen.has(sig)) return;
     seen.add(sig);
-    out.push({date, key, draft: clone(d)});
+    out.push({date, key, draft: clone(d), sig});
   };
   for (const [k, d] of Object.entries(S.drafts || {})) add(k, d);
-  for (const [k, d] of Object.entries(stored)) {
-    if (!(k in (S.drafts || {})) || !hasDraftData(S.drafts[k])) add(k, d);
-  }
+  for (const [k, d] of Object.entries(stored)) add(k, d);
   return out;
+}
+function snapshotSig(entries){
+  return entries.map(e => e.sig).sort().join("\n");
 }
 async function verifyAndSyncDrafts(entries){
   if (!S.store) return false;
@@ -1897,30 +1898,47 @@ async function verifyAndSyncDrafts(entries){
   }));
   return allOk;
 }
+async function runBoundedVerify(entries){
+  let timer;
+  try {
+    return await Promise.race([
+      verifyAndSyncDrafts(entries),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("sync_timeout")), logoutSyncMs); })
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function logout(btn){
   if (S.busy.logout) return;
   S.busy.logout = true;
   if (btn) btn.disabled = true;
   try {
     clearTimeout(syncDraft.t);
-    const id = S.uid || storageUser, entries = localDraftEntries(id);
+    const id = S.uid || storageUser;
+    let entries = localDraftEntries(id);
     if (entries.length) {
-      let timer, verified = false;
-      try {
-        verified = await Promise.race([
-          verifyAndSyncDrafts(entries),
-          new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("sync_timeout")), logoutSyncMs); })
-        ]);
-      } catch {
-        verified = false;
-      } finally {
-        clearTimeout(timer);
+      let verified = await runBoundedVerify(entries);
+      if (verified) {
+        clearTimeout(syncDraft.t);
+        const afterFirst = localDraftEntries(id);
+        if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
+          entries = afterFirst;
+          verified = entries.length ? await runBoundedVerify(entries) : true;
+          if (verified) {
+            clearTimeout(syncDraft.t);
+            if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+          }
+        }
       }
       if (!verified) {
         const ask = typeof confirm === "function" ? confirm : window?.confirm;
         if (!(typeof ask === "function" && ask("本机还有未同步或未保存的训练草稿，现在退出登录会丢失本机上的这些草稿。仍要退出登录吗？"))) return;
       }
     }
+    clearTimeout(syncDraft.t);
     storageUser = null;
     S.drafts = {};
     clearUserLocal(id);
