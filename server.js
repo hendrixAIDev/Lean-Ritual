@@ -89,8 +89,8 @@ function ownPath(p, user, wantDoc){
 const parentOf = p => p.split("/").slice(0, -1).join("/");
 function getDoc(p){ const r = db.prepare("SELECT data FROM docs WHERE path = ?").get(p); return r ? JSON.parse(r.data) : null; }
 function putDoc(p, uid, data){
-  docQuota.write(uid, p, data, () => db.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET data = excluded.data, updated = excluded.updated")
-    .run(p, uid, parentOf(p), JSON.stringify(data), new Date().toISOString()));
+  docQuota.write(uid, p, data, serialized => db.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET data = excluded.data, updated = excluded.updated")
+    .run(p, uid, parentOf(p), serialized, new Date().toISOString()));
 }
 // 和 Firestore 一样的 update：顶层字段合并，值为 {"__delete__":true} 时删掉
 function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] of Object.entries(patch || {})) { if (v && typeof v === "object" && v.__delete__ === true) delete o[k]; else o[k] = v; } return o; }
