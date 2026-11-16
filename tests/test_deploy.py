@@ -353,7 +353,7 @@ class DeploymentTests(unittest.TestCase):
             with self.subTest(allowed=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
                 events, _, _, current, old, _, _, _ = self.run_mock_deploy(root, service_state=state)
-                self.assertLess(events.index("unpack"), events.index("flock"))
+                self.assertLess(events.index("flock"), events.index("unpack"))
                 self.assertNotEqual(current.resolve(), old)
 
         # Transient inactive before lock (e.g. during backup-service.sh) becoming active under lock must succeed.

@@ -136,6 +136,10 @@ class RetentionTests(unittest.TestCase):
                       "snapshot-20260229T000000Z"]
             recent = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             names.append("snapshot-" + recent)
+            deploy_dir = root / "deploy"
+            deploy_dir.mkdir()
+            for suffix in ("aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"):
+                (deploy_dir / (recent + "-" + suffix)).mkdir()
             for name in names:
                 (daily / name).mkdir()
                 os.utime(daily / name, (1, 1))
@@ -159,6 +163,7 @@ class RetentionTests(unittest.TestCase):
             result = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(list(releases.iterdir())), 11)  # Missing pointer fails closed.
+            self.assertEqual(len(list(deploy_dir.iterdir())), 4)
             previous.symlink_to(releases / ("a" * 40 + "-1-1"))
             result = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
