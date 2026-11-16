@@ -62,7 +62,7 @@ def unpack_release(stream, destination):
                 with target.open("xb") as output:
                     shutil.copyfileobj(archive.extractfile(member), output)
                 target.chmod(0o755 if member.mode & 0o111 else 0o644)
-    for required in ["server.js", "package.json", "package-lock.json", "public/index.html",
+    for required in ["server.js", "package.json", "package-lock.json", "public/index.html", "public/csp-hashes.json",
                      "scripts/data-backup.js", "lib/snapshots.js", "node_modules/sharp/package.json"]:
         if not (destination / required).is_file():
             raise ValueError("Incomplete release")
