@@ -215,18 +215,22 @@ async function handle(req, res){
     if (p === "/api/assets" && m === "POST") {
       const type = String(req.headers["content-type"] || "").split(";")[0].trim();
       if (!/^image\/(jpeg|png|webp|gif|heic|heif)$/.test(type)) throw httpErr(415, "bad_type", "只能传图片");
+      const key = uploads.parseKey(req.headers["idempotency-key"]);
+      const hit = key && uploads.lookup(user.id, key);
+      if (hit) { await readBody(req, 15 * 1024 * 1024); return send(res, 200, hit); }
       const release = uploads.begin(user.id);
       try {
         const buf = await readBody(req, 15 * 1024 * 1024);
         const normalized = await uploads.normalize(buf);
         accountData.ensureActive(user.id);
-        return send(res, 200, uploads.save(user.id, normalized));
+        return send(res, 200, uploads.save(user.id, normalized, key));
       } finally { release(); }
     }
     const am = p.match(/^\/api\/assets\/([0-9a-f]{32})$/);
     if (am && m === "DELETE") {
       const b = db.prepare("SELECT uid FROM blobs WHERE id = ?").get(am[1]);
       if (!b || b.uid !== user.id) throw httpErr(404, "not_found");
+      db.prepare("DELETE FROM upload_keys WHERE uid = ? AND blob_id = ?").run(user.id, am[1]);
       db.prepare("DELETE FROM blobs WHERE id = ?").run(am[1]); fs.rmSync(path.join(CFG.dataDir, "blobs", am[1]), { force: true });
       return send(res, 200, { ok: true });
     }

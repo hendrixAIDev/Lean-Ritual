@@ -345,20 +345,26 @@ function mutate(path, fn){
   return p;
 }
 const saveErr = e => toast(e?.message ? "保存失败：" + e.message : "保存失败（" + (e?.code || "网络问题") + "），请稍后再试");
+const daySeq = {};
 async function updateDay(date, fn, opt = {}){
-  const local = migrateDay(S.days[date] || {date, meals:[]}); fn(local); stampTargets(local); S.days[date] = local;
-  if (!opt.quiet) render();
+  const seq = (daySeq[date] = (daySeq[date] || 0) + 1);
   try {
     const next = await mutate("days/" + date, cur => { const d = migrateDay(cur || {date, meals:[]}); fn(d); stampTargets(d); return d; });
-    S.days[date] = migrateDay(next);
-    if (!opt.quiet) render();
+    if (seq === daySeq[date]) {
+      S.days[date] = migrateDay(next);
+      if (!opt.quiet) render();
+    }
     return next;
   } catch (e) { console.warn("day write failed", e); if (!opt.silent) saveErr(e); throw e; }
 }
+let profileSeq = 0;
 async function updateProfile(fn){
-  fn(S.profile); render();
-  try { const next = await mutate("app/profile", cur => { const p = migrateProfile(cur || {}); fn(p); return p; }); S.profile = migrateProfile(next); render(); return next; }
-  catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
+  const seq = ++profileSeq;
+  try {
+    const next = await mutate("app/profile", cur => { const p = migrateProfile(cur || {}); fn(p); return p; });
+    if (seq === profileSeq) { S.profile = migrateProfile(next); render(); }
+    return next;
+  } catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
 }
 /* 训练记录另存一份只增不改的备份：即使某天的记录被覆盖，也能从这里恢复 */
 function backupWorkout(date, w){
@@ -566,10 +572,26 @@ function render(){
   if (!S.ready) return;
   if (S.loadError) { tabs.hidden = true; app.innerHTML = banner(); return; }
   if (!S.profile || S.editing) { tabs.hidden = true; app.innerHTML = banner() + viewSetup(); return; }
+  const ae = typeof document !== "undefined" ? document.activeElement : null;
+  const keepFocus = ae && app.contains?.(ae) && ae.id ? {
+    id: ae.id,
+    val: "value" in ae ? ae.value : undefined,
+    keepVal: !!(ae.dataset?.meal || ae.dataset?.cu || ae.dataset?.lib || ae.id === "ex-new"),
+    start: (() => { try { return ae.selectionStart; } catch { return null; } })(),
+    end: (() => { try { return ae.selectionEnd; } catch { return null; } })()
+  } : null;
   tabs.hidden = false;
   tabs.innerHTML = `<div class="in">${TABS.map(([k,l]) => `<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k}">${ICON[k]}<span>${l}</span></button>`).join("")}</div>`;
   const v = {today:viewToday, food:viewFood, log:viewLog, fb:viewFeedback, me:viewMe}[S.tab] || viewToday;
   app.innerHTML = banner() + v();
+  if (keepFocus) {
+    const nextEl = typeof document.getElementById === "function" ? document.getElementById(keepFocus.id) : null;
+    if (nextEl) {
+      if (keepFocus.keepVal && keepFocus.val !== undefined) nextEl.value = keepFocus.val;
+      try { nextEl.focus({preventScroll: true}); } catch { try { nextEl.focus(); } catch {} }
+      if (keepFocus.start != null && keepFocus.end != null) { try { nextEl.setSelectionRange(keepFocus.start, keepFocus.end); } catch {} }
+    }
+  }
 }
 function banner(){
   if (S.loadError) return `<div class="banner" style="margin-bottom:10px">暂时无法读取账号数据。读取成功前不能新建或修改档案。<button type="button" data-act="reload-data">重新加载</button></div>`;
@@ -641,6 +663,8 @@ function profileDiff(a, b){
 }
 async function submitSetup(form){
   if (S.loadError) { render(); return; }
+  const btn = form?.querySelector?.('button[type="submit"]');
+  if (S.busy.setup || btn?.disabled) return;
   const fd = new FormData(form);
   const g = k => fd.get(k), all = k => fd.getAll(k);
   const req = {age:g("age"), height:g("height"), weight:g("weight")};
@@ -655,18 +679,21 @@ async function submitSetup(form){
     updatedAt:new Date().toISOString()};
   const today = todayStr();
   const apply = p => { Object.assign(p, fields); p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION; };
-  if (!S.profile) S.profile = {};
-  S.editing = false; S.tab = "today";
-  window.scrollTo(0,0);
+  S.busy.setup = true; if (btn) btn.disabled = true;
   try {
+    let h = null;
     if (prev.startDate) {
       const after = clone(prev); apply(after);
-      const h = {id:uid(), savedAt:new Date().toISOString(), before:prev, changes:profileDiff(prev, after)};
-      S.profileHistory = [h, ...(S.profileHistory||[])];
+      h = {id:uid(), savedAt:new Date().toISOString(), before:prev, changes:profileDiff(prev, after)};
       await write("profileHistory/" + h.id, h);
     }
-    await updateProfile(apply); toast(prev.startDate ? "已保存，以往记录都保留" : "已保存");
+    await updateProfile(apply);
+    if (h) S.profileHistory = [h, ...(S.profileHistory||[])];
+    S.editing = false; S.tab = "today";
+    render(); window.scrollTo(0,0);
+    toast(prev.startDate ? "已保存，以往记录都保留" : "已保存");
   } catch {}
+  finally { S.busy.setup = false; if (btn) btn.disabled = false; }
 }
 
 /* ---- 今天 ---- */
@@ -768,15 +795,16 @@ function viewToday(){
     </section>`;
   }
   // 打卡
-  const c = day.checkin || {};
+  const c = day.checkin || {}, cf = S.cfill?.[date] || {};
+  const cv = k => Object.prototype.hasOwnProperty.call(cf, k) ? cf[k] : (c[k] ?? "");
   html += `<section class="card"><div class="row between"><h2>今日打卡</h2>${day.checkin?`<span class="chip on">已记录</span>`:""}</div>
     <p class="small muted">体重在晨起空腹、上完厕所后称。计划只看 7 日平均。</p>
     <div class="grid2">
-      <label>体重 kg<input id="c-weight" type="number" inputmode="decimal" step="0.1" value="${esc(c.weight??"")}" placeholder="${esc(t.w?.toFixed?.(1) ?? "")}"></label>
-      <label>步数<input id="c-steps" type="number" inputmode="numeric" value="${esc(c.steps??"")}" placeholder="9000"></label>
-      <label>昨晚睡了几小时<input id="c-sleep" type="number" inputmode="decimal" step="0.5" value="${esc(c.sleep??"")}" placeholder="7.5"></label>
-      <label>体脂率 %（体脂秤）<input id="c-bf" type="number" inputmode="decimal" step="0.1" value="${esc(c.bf??"")}" placeholder="${esc(curBf() ?? "可空")}"></label>
-      ${c.waist != null ? `<label>腰围 cm<input id="c-waist" type="number" inputmode="decimal" step="0.5" value="${esc(c.waist)}"></label>` : ""}
+      <label>体重 kg<input id="c-weight" type="number" inputmode="decimal" step="0.1" value="${esc(cv("weight"))}" placeholder="${esc(t.w?.toFixed?.(1) ?? "")}"></label>
+      <label>步数<input id="c-steps" type="number" inputmode="numeric" value="${esc(cv("steps"))}" placeholder="9000"></label>
+      <label>昨晚睡了几小时<input id="c-sleep" type="number" inputmode="decimal" step="0.5" value="${esc(cv("sleep"))}" placeholder="7.5"></label>
+      <label>体脂率 %（体脂秤）<input id="c-bf" type="number" inputmode="decimal" step="0.1" value="${esc(cv("bf"))}" placeholder="${esc(curBf() ?? "可空")}"></label>
+      ${c.waist != null || Object.prototype.hasOwnProperty.call(cf, "waist") ? `<label>腰围 cm<input id="c-waist" type="number" inputmode="decimal" step="0.5" value="${esc(cv("waist"))}"></label>` : ""}
     </div>
     <p class="small muted">体脂秤单次误差有 3–5 个百分点，计划用最近 14 天的平均（至少 3 次）。</p>
     <button class="btn" data-act="save-checkin">保存打卡</button></section>`;
@@ -946,7 +974,7 @@ function viewFood(){
       <button class="chip ${mode==="manual"?"on":""}" data-act="mmode" data-v="manual">自己填</button></div>
     ${mode === "manual" ? `<div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
       ${MF.map(([k,l]) => `<label>${l}<input id="mf-${k}" data-mf="${k}" type="number" inputmode="decimal" value="${esc(S.mfill?.[k] ?? "")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}</div>` : ""}
-    <button class="btn primary block" data-act="add-meal" data-v="${mode}">${mode === "ai" ? "保存并 AI 估算" : "保存"}</button>
+    <button class="btn primary block" data-act="add-meal" data-v="${mode}" ${S.busy.addMeal?"disabled":""}>${S.busy.addMeal ? "保存中…" : mode === "ai" ? "保存并 AI 估算" : "保存"}</button>
     <p class="small muted">${mode === "ai" ? "文字、饭菜照片、营养成分表照片都可以，AI 会自己判断怎么算。吃完后也可以在下面这餐里补一张剩下的照片，对比着重新估算。有照片时一般 1 分钟左右出结果，这里会自动更新。" : "直接填你知道的数值（可以只填热量和蛋白），不经过 AI。都不填就只记下这餐。"}</p>
     ${S.assets ? "" : `<p class="small muted">照片会压缩成小图存进你的记录。</p>`}
   </section>
@@ -972,7 +1000,7 @@ function mealCard(m){
     ${e.calc ? `<p class="small muted">${e.by==="label"?"成分表换算":"依据"}：${esc(e.calc)}</p>` : ""}
     ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${e.label ? "已在本地识别照片里的营养成分表，按表换算。" : "已在本地读取照片里的文字，没发现营养成分表，按文字描述估算。"}</p>` : ""}
     ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">这次估算没能看到照片，只按文字算${e.imgErr ? `（原因：${esc(e.imgErr)}）` : ""}。包装上有营养成分表的话，可以把每 100 g 的数值写进文字里再重新估算。</p>` : ""}
-    ${m.photoErr && !m.photo ? `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr))}${S.files[m.id]?.blob && S.assets && m.photoErr !== "decode" ? ` <button class="chip" data-act="retry-photo" data-v="${esc(m.id)}">重传照片</button>` : ""}</p>` : ""}
+    ${m.photoErr && !m.photo ? (() => { const canRetry = !!(S.files[m.id]?.blob && S.assets && m.photoErr !== "decode"); return `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr, canRetry))}${canRetry ? ` <button class="chip" data-act="retry-photo" data-v="${esc(m.id)}">重传照片</button>` : ""}</p>`; })() : ""}
     ${m.visionReq?.status === "pending" ? `<p class="tip small">这是旧版尚未完成的估算请求，不会自动继续。请点「AI 重新估算」或手动填写。</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">AI 看过${photoCount(m) > 1 ? ` ${photoCount(m)} 张照片` : m.photo ? "照片" : "描述"}后估算的。数字不对可以直接改。</p>` : e.by === "manual" ? `<p class="small muted">自己填的数值。</p>` : ""}
     ${e.tip ? `<p class="tip">${esc(e.tip)}${e.confidence?` <span class="muted">（把握：${esc(e.confidence)}）</span>`:""}</p>` : ""}
     ${S.label?.id === m.id ? labelForm(m) : ""}
@@ -1038,18 +1066,41 @@ async function compress(file){
     return await new Promise(res => c.toBlob(b => res(b || file), "image/jpeg", 0.85));
   } catch { return file; }
 }
-const PHOTO_ERR = c => ({
+const RETRY_UPLOAD_CODES = ["network", "store_unavailable", "upstream_error", "rate_limited"];
+const PHOTO_ERR = (c, canRetry = true) => ({
   decode: "这张照片读不了（HEIC 自动转换没成功，可能网络连不上转换库）。请换网络重试，或用截图/JPEG 再传；文字已保存。",
   no_assets: "暂时无法保存照片，请检查网络并重新登录，文字已保存。",
   too_large: "照片太大存不下，请换一张小一点的。", unsupported_type: "照片格式不支持，请换 JPG/PNG。",
   bad_type: "照片无法解码，请换 JPG/PNG 或截图重试。", storage_quota: "照片存储空间已达上限，请删除不需要的照片或联系管理员。",
-  quota_or_state: "照片存储空间不可用。", rate_limited: "上传太频繁，稍后点“重传照片”。", store_unavailable: "存储暂时不可用，稍后点“重传照片”。"
-}[c] || `照片没存上（错误码 ${c}），文字已保存，稍后可点“重传照片”。`);
+  quota_or_state: "照片存储空间不可用。",
+  network: canRetry ? "网络中断，原图未上传（文字已保存），恢复网络后可点“重传照片”。" : "上次网络中断，原图未能上传（文字已保存），可点下方“+ 照片”重新添加。",
+  rate_limited: canRetry ? "上传太频繁，稍后点“重传照片”。" : "上次上传太频繁未成功，可点下方“+ 照片”重新添加。",
+  store_unavailable: canRetry ? "存储暂时不可用，稍后点“重传照片”。" : "上次存储暂时不可用，照片未上传，可点下方“+ 照片”重新添加。"
+}[c] || (canRetry ? "照片暂时没存上，文字已保存，稍后可点“重传照片”。" : "上次照片未能上传，文字已保存，可点下方“+ 照片”重新添加。"));
+function makeUploadKey(){
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+      return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {}
+  return `${uid()}_${uid()}_${uid()}`;
+}
+async function uploadAssetWithRetry(blob, type = "image/jpeg", key = makeUploadKey()){
+  let lastErr;
+  for (const delay of [0, 1000, 2000]) {
+    if (delay) await new Promise(r => setTimeout(r, delay));
+    try { return await S.assets.upload(blob, {type, key}); }
+    catch (e) { lastErr = e; if (!RETRY_UPLOAD_CODES.includes(e?.code)) throw e; }
+  }
+  throw lastErr;
+}
 // 上传一张照片：返回 {id} 或 {thumb}（没有资产权限/上传失败时留小图）
 async function uploadOne(file){
   const r = await compress2(file);
   if (S.assets && r.ok) {
-    for (let k = 0; k < 2; k++) { try { return {id:(await S.assets.upload(r.blob, {type:"image/jpeg"})).id, blob:r.blob}; } catch (e) { if (k || !["store_unavailable","upstream_error","rate_limited"].includes(e?.code)) { console.warn("upload failed", e); break; } await new Promise(res => setTimeout(res, 1500)); } }
+    try { return {id:(await uploadAssetWithRetry(r.blob, "image/jpeg")).id, blob:r.blob}; }
+    catch (e) { console.warn("upload failed", e); }
   }
   return r.thumb ? {thumb:r.thumb, blob:r.blob} : null;
 }
@@ -1059,57 +1110,70 @@ async function addMorePhoto(date, id, file, tag){
     const r = await uploadOne(file);
     if (!r) { toast("这张照片读不了，请换 JPG/PNG 或截图再试", 6000); return; }
     const p = {...(r.id ? {id:r.id} : {thumb:r.thumb}), tag, at:new Date().toISOString()};
-    await updateDay(date, d => { const x = d.meals.find(y => y.id === id); if (x) x.more = [...(Array.isArray(x.more) ? x.more : []), p]; });
+    await updateDay(date, d => {
+      const x = d.meals.find(y => y.id === id);
+      if (!x) return;
+      if (!x.photo && x.photoErr && p.id && tag === "其他") { x.photo = p.id; delete x.photoErr; delete x.thumb; }
+      else x.more = [...(Array.isArray(x.more) ? x.more : []), p];
+    });
     const m = S.days[date]?.meals?.find(x => x.id === id);
     toast(m?.est?.kcal != null ? "照片已加上。点「AI 重新估算」会对比着重算" : "照片已加上", 6000);
   } catch (e) { console.warn("add photo failed", e); }
   finally { delete S.busy["more-"+id]; render(); }
 }
 async function addMeal(mode, btn){
+  if (S.busy.addMeal) return;
   const text = ($("#m-text")?.value || "").trim();
   const type = document.querySelector('input[name="mtype"]:checked')?.value || "加餐";
   const picked = S.pendingPhotos || [], file = picked[0]?.file || null;
   if (!text && !file) { toast("拍张照片或写一句吃了什么"); return; }
-  const now = new Date();
-  const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
-  const early = null, anchor = null;
-  let blob = null;
-  if (file) {
-    const r = await compress2(file);
-    blob = r.blob; m.thumb = r.thumb || null;
-    if (!r.ok) m.photoErr = "decode";
-    S.files[m.id] = {blob, url:URL.createObjectURL(blob)};
-  }
-  if (blob && !S.assets) { if (!m.thumb) m.photoErr = "no_assets"; }
-  else if (blob && m.photoErr !== "decode") {
-    const up = () => S.assets.upload(blob, {type:"image/jpeg"});
-    try { m.photo = (await up()).id; }
-    catch (e) {
-      if (e?.code === "store_unavailable" || e?.code === "upstream_error" || e?.code === "rate_limited") { try { await new Promise(r => setTimeout(r, 1500)); m.photo = (await up()).id; } catch (e2) { e = e2; } }
-      if (!m.photo) { console.warn("upload failed", e); m.photoErr = e?.code || "unknown"; }
+  S.busy.addMeal = true; if (btn) btn.disabled = true;
+  try {
+    const now = new Date();
+    const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
+    const early = null, anchor = null;
+    let blob = null, photoKey = null;
+    if (file) {
+      const r = await compress2(file);
+      blob = r.blob; m.thumb = r.thumb || null;
+      photoKey = makeUploadKey();
+      if (!r.ok) m.photoErr = "decode";
+      S.files[m.id] = {blob, url:URL.createObjectURL(blob), key:photoKey};
     }
-  } else if (blob && m.photoErr === "decode" && S.assets && /^image\/(jpeg|png|webp|gif)$/.test(blob.type)) {
-    try { m.photo = (await S.assets.upload(blob, {type:blob.type})).id; delete m.photoErr; } catch (e) { m.photoErr = e?.code || "unknown"; }
+    if (blob && !S.assets) { if (!m.thumb) m.photoErr = "no_assets"; }
+    else if (blob && m.photoErr !== "decode") {
+      try { m.photo = (await uploadAssetWithRetry(blob, "image/jpeg", photoKey)).id; }
+      catch (e) { console.warn("upload failed", e); m.photoErr = e?.code || "unknown"; }
+    } else if (blob && m.photoErr === "decode" && S.assets && /^image\/(jpeg|png|webp|gif)$/.test(blob.type)) {
+      try { m.photo = (await uploadAssetWithRetry(blob, blob.type, photoKey)).id; delete m.photoErr; } catch (e) { m.photoErr = e?.code || "unknown"; }
+    }
+    if (m.photo) { delete m.photoErr; delete m.thumb; }
+    const extra = picked.slice(1);
+    if (extra.length) {
+      m.more = [];
+      for (const f of extra) { const r = await uploadOne(f.file).catch(() => null); if (r) m.more.push({...(r.id ? {id:r.id} : {thumb:r.thumb}), tag:"其他", at:new Date().toISOString()}); }
+      if (!m.more.length) delete m.more;
+    }
+    if (mode === "manual") {
+      const f = S.mfill || {}, v = k => f[k] === "" || f[k] == null || isNaN(+f[k]) ? null : (k === "kcal" ? Math.round(+f[k]) : Math.round(+f[k]*10)/10);
+      if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
+    }
+    const date = S.date;
+    try { await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }, {quiet:true}); } catch { return; }
+    picked.forEach(f => URL.revokeObjectURL(f.url)); S.pendingPhotos = null;
+    S.mtype = null; lsSet("bj-mtext", "");
+    S.busy.addMeal = false;
+    const warnPhoto = m.photoErr ? PHOTO_ERR(m.photoErr, !!(S.files[m.id]?.blob && S.assets && m.photoErr !== "decode")) : null;
+    if (mode === "manual") { S.mfill = {}; render(); toast(warnPhoto || "已记下", warnPhoto ? 6000 : 2200); return; }
+    if (warnPhoto) toast(warnPhoto, 6000);
+    render();
+    aiEstimate(date, m.id, anchor, early);
+  } finally {
+    S.busy.addMeal = false;
+    if (btn) btn.disabled = false;
+    const cur = $('[data-act="add-meal"]');
+    if (cur) { cur.disabled = false; cur.textContent = mealMode() === "ai" ? "保存并 AI 估算" : "保存"; }
   }
-  if (m.photo) { delete m.photoErr; delete m.thumb; }
-  else if (m.photoErr) toast(PHOTO_ERR(m.photoErr), 6000);
-  const extra = picked.slice(1);
-  if (extra.length) {
-    m.more = [];
-    for (const f of extra) { const r = await uploadOne(f.file).catch(() => null); if (r) m.more.push({...(r.id ? {id:r.id} : {thumb:r.thumb}), tag:"其他", at:new Date().toISOString()}); }
-    if (!m.more.length) delete m.more;
-  }
-  if (mode === "manual") {
-    const f = S.mfill || {}, v = k => f[k] === "" || f[k] == null || isNaN(+f[k]) ? null : (k === "kcal" ? Math.round(+f[k]) : Math.round(+f[k]*10)/10);
-    if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
-  }
-  const date = S.date;
-  try { await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }); } catch { return; }
-  picked.forEach(f => URL.revokeObjectURL(f.url)); S.pendingPhotos = null;
-  S.mtype = null; lsSet("bj-mtext", "");
-  if (mode === "manual") { S.mfill = {}; render(); toast("已记下"); return; }
-  render();
-  aiEstimate(date, m.id, anchor, early);
 }
 // AI is optional: manual entry and saved records work without a provider.
 async function aiEstimate(date, id){
@@ -1676,6 +1740,8 @@ document.addEventListener("click", async ev => {
     case "pw-cancel": S.pwEdit = null; render(); break;
     case "pw-save": {
       const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
+      if (!o) { S.pwEdit = {msg:"请填写原密码"}; render(); break; }
+      if (n.length < 12) { S.pwEdit = {msg:"新密码至少 12 位"}; render(); break; }
       if (n !== n2) { S.pwEdit = {msg:"两次输入的新密码不一样"}; render(); break; }
       S.pwEdit = {busy:true}; render();
       try { await window.ritual.changePassword(o, n); S.pwEdit = null; if (S.hostUser) S.hostUser.mustChange = false; toast("密码已更新，其他设备需要重新登录"); }
@@ -1727,38 +1793,50 @@ document.addEventListener("click", async ev => {
     case "cu-del": updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = (d.custom.ex || []).filter((_, i) => i !== +v); }).catch(()=>{}); break;
     case "ask-claude": await aiEstimate(S.date, v); break;
     case "retry-photo": {
-      const m = S.days[S.date]?.meals?.find(x => x.id === v), f = S.files[v]?.blob; if (!m || !f || !S.assets) break;
-      try { const id = (await S.assets.upload(f, {type:"image/jpeg"})).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
+      const m = S.days[S.date]?.meals?.find(x => x.id === v), entry = S.files[v], f = entry?.blob; if (!m || !f || !S.assets) break;
+      entry.key = entry.key || makeUploadKey();
+      try { const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
       catch (e) { toast(PHOTO_ERR(e?.code || "unknown"), 6000); }
       break;
     }
     case "override": S.ed = null; updateDay(S.date, d => { d.override = v || null; }).catch(()=>{}); break;
     case "feel": case "pain": { const plan = planFor(S.date); const d = getDraft(S.date, plan); d[act] = act === "feel" ? +v : v; persistDrafts(); syncDraft(S.date, plan.key); render(); break; }
     case "save-workout": {
+      if (S.busy.saveWorkout) break;
       const plan = planFor(S.date), d = getDraft(S.date, plan);
       const any = d.exercises.some(e => e.sets.some(s => s.r !== ""));
       if (!any) { toast("至少填一组的次数再保存"); return; }
       clearTimeout(syncDraft.t);
+      S.busy.saveWorkout = true; b.disabled = true;
       const date = S.date;
       const w = JSON.parse(JSON.stringify({...clone(d), key:plan.key, slot:plan.slot, deload:!!plan.deload, done:true, savedAt:new Date().toISOString(),
         plan:plan.ex.map(e => ({name:e.name, sets:e.sets, lo:e.lo, hi:e.hi, rest:e.rest, inc:e.inc, orig:e.orig, why:e.why, ...(e.extra ? {extra:true} : {})}))}));
       try {
-        await updateDay(date, day => { day.workout = {...(day.workout || {}), ...clone(w)}; delete day.override; delete day.workoutDraft; delete day.extra; });
+        await updateDay(date, day => { day.workout = {...(day.workout || {}), ...clone(w)}; delete day.override; delete day.workoutDraft; delete day.extra; }, {quiet:true});
         backupWorkout(date, w);
         delete S.drafts[draftKey(date, plan.key)]; persistDrafts(); render();
         toast("训练已保存");
       } catch {}
+      finally { S.busy.saveWorkout = false; b.disabled = false; }
       break;
     }
     case "save-checkin": {
-      const g = id => { const x = $(id)?.value; return x === "" ? null : +x; };
-      const c = {};
-      [["weight","#c-weight"],["steps","#c-steps"],["sleep","#c-sleep"],["bf","#c-bf"],["waist","#c-waist"]].forEach(([k,id]) => { if ($(id)) c[k] = g(id); });
+      const date = S.date, c = {}, snap = {};
+      [["weight","#c-weight"],["steps","#c-steps"],["sleep","#c-sleep"],["bf","#c-bf"],["waist","#c-waist"]].forEach(([k,id]) => {
+        const el = $(id); if (!el) return;
+        const raw = String(el.value ?? ""); snap[k] = raw; c[k] = raw === "" ? null : +raw;
+      });
       if (Object.values(c).every(x => x == null)) { toast("先填一项再保存"); return; }
-      try { await updateDay(S.date, day => { day.checkin = {...(day.checkin || {}), ...c}; }); toast("打卡已保存"); } catch {}
+      try {
+        await updateDay(date, day => { day.checkin = {...(day.checkin || {}), ...c}; }, {quiet:true});
+        const cf = S.cfill?.[date];
+        if (cf) { for (const [k, raw] of Object.entries(snap)) if (cf[k] === raw) delete cf[k]; if (!Object.keys(cf).length) delete S.cfill[date]; }
+        render();
+        toast("打卡已保存");
+      } catch {}
       break;
     }
-    case "add-meal": addMeal(v === "manual" ? "manual" : "ai", b); break;
+    case "add-meal": await addMeal(v === "manual" ? "manual" : "ai", b); break;
     case "mmode": S.mealMode = v; lsSet("bj-mmode", v); { const keep = $("#m-text")?.value; render(); if (keep != null && $("#m-text")) $("#m-text").value = keep; } break;
     case "ai-meal": {
       let anchor = null; if (S.comments) { try { anchor = await S.comments.anchorFor(b); } catch {} }
@@ -1962,6 +2040,7 @@ async function logout(btn){
     clearTimeout(syncDraft.t);
     storageUser = null;
     S.drafts = {};
+    S.cfill = {};
     clearUserLocal(id);
     try { await window.ritual?.logout?.(); } catch {}
     const loc = typeof location !== "undefined" ? location : window?.location;
@@ -1992,6 +2071,7 @@ document.addEventListener("input", ev => {
   } else if (el.id === "m-text") lsSet("bj-mtext", el.value);
   else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
   else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }
+  else if (/^c-(weight|steps|sleep|bf|waist)$/.test(el.id)) { const k = el.id.slice(2); S.cfill = {...(S.cfill || {}), [S.date]: {...(S.cfill?.[S.date] || {}), [k]: el.value}}; }
 });
 document.addEventListener("change", async ev => {
   const el = ev.target;
