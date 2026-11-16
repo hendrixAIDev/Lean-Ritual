@@ -1667,12 +1667,14 @@ document.addEventListener("click", async ev => {
       b.disabled = true;
       try {
         await window.ritual.deleteAccount(password);
-        try { const prefix = `bj-user:${S.uid}:`; Object.keys(localStorage).filter(k => k.startsWith(prefix)).forEach(k => localStorage.removeItem(k)); } catch {}
+        clearTimeout(syncDraft.t);
+        const id = S.uid || storageUser; storageUser = null; S.drafts = {};
+        clearUserLocal(id);
         location.replace("/login.html?deleted=1");
       } catch (e) { b.disabled=false; toast(e?.message || "删除未完成，请重试或联系管理员",6000); }
       break;
     }
-    case "logout": try { await window.ritual.logout(); } catch {} location.href = "/login.html"; break;
+    case "logout": await logout(b); break;
     case "acc-edit": S.accEdit = true; render(); break;
     case "acc-cancel": S.accEdit = false; render(); break;
     case "acc-save": {
@@ -1801,13 +1803,113 @@ document.addEventListener("click", async ev => {
   }
 });
 function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
+let logoutSyncMs = 5000;
+function clearUserLocal(id = S.uid || storageUser){
+  if (!id) return;
+  try {
+    const prefix = `bj-user:${id}:`, keys = new Set(Object.keys(localStorage).filter(k => k.startsWith(prefix)));
+    if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(prefix)) keys.add(k); }
+    }
+    keys.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+function draftPayload(d, key = d?.key || ""){
+  return {
+    key,
+    exercises: (d?.exercises || []).map(e => ({
+      name: e?.name || "",
+      sets: (e?.sets || []).map(s => ({w: String(s?.w ?? ""), r: String(s?.r ?? "")}))
+    })),
+    feel: d?.feel ?? "",
+    pain: d?.pain || "none",
+    painArea: d?.painArea || "",
+    note: d?.note || ""
+  };
+}
+function hasDraftData(d){
+  if (!d || typeof d !== "object") return false;
+  if (d.exercises?.some(e => e?.sets?.some(t => String(t?.r ?? "") !== "" || String(t?.w ?? "") !== ""))) return true;
+  if (d.feel !== "" && d.feel != null) return true;
+  if (d.pain && d.pain !== "none") return true;
+  return String(d.painArea || "").trim() !== "" || String(d.note || "").trim() !== "";
+}
+function unsyncedDrafts(id = S.uid || storageUser){
+  let stored = {};
+  if (id) {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`bj-user:${id}:bj-drafts`) || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
+    } catch {}
+  }
+  const all = {...stored}, out = [];
+  for (const [k, d] of Object.entries(S.drafts || {})) {
+    if (hasDraftData(d) || !hasDraftData(all[k])) all[k] = d;
+  }
+  for (const [k, d] of Object.entries(all)) {
+    if (!hasDraftData(d)) continue;
+    const [date, kKey] = k.split("|"), key = d.key || kKey || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;
+    const srv = S.days[date]?.workoutDraft;
+    if (srv && JSON.stringify(draftPayload(d, key)) === JSON.stringify(draftPayload(srv, srv.key || ""))) continue;
+    out.push({date, key, draft: clone(d)});
+  }
+  return out;
+}
+async function syncDraftEntry(date, key, d, onlyIfMissing = false){
+  const next = await mutate("days/" + date, cur => {
+    if (cur?.workout?.done && (!key || cur.workout.key === key || onlyIfMissing)) return null;
+    if (onlyIfMissing && cur?.workoutDraft) return null;
+    const x = migrateDay(cur || {date, meals:[]});
+    x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()};
+    stampTargets(x);
+    return x;
+  });
+  if (next) S.days[date] = migrateDay(next);
+  return next;
+}
+async function logout(btn){
+  if (S.busy.logout) return;
+  S.busy.logout = true;
+  if (btn) btn.disabled = true;
+  try {
+    clearTimeout(syncDraft.t);
+    const id = S.uid || storageUser, pending = unsyncedDrafts(id);
+    if (pending.length) {
+      if (S.profile && pending.length > 1) {
+        try { pending.sort((a, b) => a.date === b.date ? (a.key === planFor(a.date)?.key) - (b.key === planFor(b.date)?.key) : 0); } catch {}
+      }
+      let timer;
+      try {
+        await Promise.race([
+          Promise.all(pending.map(p => syncDraftEntry(p.date, p.key, p.draft))),
+          new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("sync_timeout")), logoutSyncMs); })
+        ]);
+      } catch {
+        const ask = typeof confirm === "function" ? confirm : window?.confirm;
+        if (!(typeof ask === "function" && ask("还有未同步到云端的训练草稿，现在退出会清除本机未同步的内容。仍要退出登录吗？"))) return;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    storageUser = null;
+    S.drafts = {};
+    clearUserLocal(id);
+    try { await window.ritual?.logout?.(); } catch {}
+    const loc = typeof location !== "undefined" ? location : window?.location;
+    if (loc) loc.href = "/login.html";
+  } finally {
+    S.busy.logout = false;
+    if (btn) btn.disabled = false;
+  }
+}
 // 边填边存：停手 2 秒后把草稿存到服务器，换设备或页面被关掉也不会丢
 function syncDraft(date, key){
   clearTimeout(syncDraft.t);
   syncDraft.t = setTimeout(() => {
     const d = S.drafts[draftKey(date, key)]; if (!d) return;
     if (S.days[date]?.workout?.done && S.days[date].workout.key === key) return;
-    updateDay(date, x => { x.workoutDraft = {...clone(d), key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
+    syncDraftEntry(date, key, d).catch(() => {});
   }, 2000);
 }
 document.addEventListener("input", ev => {
@@ -1891,7 +1993,7 @@ function rescueDrafts(){
     const date = k.split("|")[0];
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;
     found.push(date);
-    updateDay(date, x => { if (!x.workout?.done && !x.workoutDraft) x.workoutDraft = {...clone(d), key:d.key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});
+    syncDraftEntry(date, d.key, d, true).catch(() => {});
   }
   if (found.length) toast(`找到 ${[...new Set(found)].map(d => fmtDate(d).split(" ")[0]).join("、")} 填了但没保存的训练，打开那天点“完成训练，保存”即可`, 8000);
 }
