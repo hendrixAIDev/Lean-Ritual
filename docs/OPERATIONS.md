@@ -20,9 +20,22 @@ Every supported data-writing entry point (server.js and auth-admin.js) holds a s
 
 The snapshot includes bojin.db, auth.sqlite if present, and every photo referenced by bojin.db. SQLite's backup API captures database state including WAL. SHA-256 and SQLite integrity checks detect incomplete/corrupt copies. Unreferenced orphan files, transient development emails, secrets and application source are intentionally excluded. Archive AUTH_SECRET and the deployment environment separately in secure credential storage; do not put them in the snapshot manifest.
 
-`ops/backup-service.sh` and systemd service/timer provide the Ubuntu implementation. Configure `/etc/bojin-backup.env`, the SSH key/host verification and dedicated offsite destination first. Both `ops/backup-service.sh` and `ops/deploy-release.py` check that free disk space exceeds `size(DATA_DIR) + 1.5 GiB` before stopping `bojin.service`, clean up staging directories on failure, and `chown` completed local snapshots and deletion ledgers to `root:root` before publication; published pre-deploy snapshots are preserved even when activation or rollback fails, so they accumulate until retention is decided (monitor disk via the host audit checks and watchdog disk alerts). Deploys reject an intentionally stopped (`inactive`/`deactivating`) service unless authorized for a single deploy via `sudo install -m 0600 -o root -g root /dev/null /etc/bojin/allow-deploy-when-stopped`, which the next deploy consumes under the maintenance lock. The backup script restarts an initially running (or `activating`/`reloading`) app even on backup failure, and restarts it and releases `/run/lock/bojin-maintenance.lock` before transferring files offsite with bounded SSH/rsync timeouts. Install/enable the timer only after a manual backup and restore drill succeeds on the actual host. A failed rsync makes the backup service fail; inspect/alert on that failure. A local snapshot alone is not disaster recovery.
+Daily backups and pre-deploy snapshots stay on the server for approximately 7 days
+(owner decision 2026-11-16). BACKUP_RETENTION_DAYS in /etc/bojin-backup.env defaults
+to 7. The newest two of each snapshot type and newest deletion ledger are always
+kept regardless of age. Releases retain the active release, its predecessor as
+rollback target, and newest five others. Pruning runs after successful publication
+under the maintenance lock; failures fail the backup unit without removing the new
+snapshot. Only recognized names are pruned, never symlink entries.
 
-No backup is pruned automatically yet. Before accepting real users, Jay must confirm a retention period (30 days proposed), configure it for local AND remote copies, and verify expiration. This remains a deployment gate; the privacy draft must not claim backups expire before the storage policy is active. Keep the latest deletion ledger at least until every older data backup has expired. It contains random user IDs and deletion timestamps, not passwords or health records. Replicate it after deletion activity, not only on the daily backup schedule if a shorter deletion recovery window is required.
+Install from a trusted checkout as root with `sudo bash ops/install-backup.sh`.
+This preserves existing environment configuration, disables the old local timer,
+and enables the single daily bojin-backup.timer without restarting the app.
+Verify with `systemctl list-timers bojin-backup.timer` and
+`journalctl -u bojin-backup.service`. Run a manual backup and restore drill.
+An empty OFFSITE_DEST logs "offsite disabled"; configured rsync retains bounded
+timeouts and failures fail the unit. Offsite backup remains a known gap:
+loss of the host can lose all recent data.
 
 ## Restore and rollback
 
