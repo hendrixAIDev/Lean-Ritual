@@ -61,6 +61,19 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(previous.resolve(), old.resolve())
             self.assertEqual(current.resolve(), fixed.resolve())
 
+    def test_deploy_backup_leaf_symlink_does_not_mutate_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir(mode=0o700)
+            backups = root / "backups"
+            backups.symlink_to(target)
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy.os, "chown") as chown:
+                with self.assertRaisesRegex(ValueError, "Refusing symlink"):
+                    deploy.snapshot(root)
+                chown.assert_not_called()
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+
     def test_safe_bundle_and_service_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)

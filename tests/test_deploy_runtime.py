@@ -163,6 +163,7 @@ class BackupServiceRuntimeTest(unittest.TestCase):
         if free_bytes is not None:
             real_py = shutil.which("python3")
             write_stub("python3", f"""
+                if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
                 exec "{real_py}" -c '
 import shutil, sys
 from collections import namedtuple
@@ -193,7 +194,7 @@ exec(compile(code, "<stdin>", "exec"))
             "BACKUP_ROOT": str(backup_root),
             "OFFSITE_DEST": f"backup@host:{offsite_dir}",
         }
-        result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True)
+        result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=20)
         log = events.read_text().splitlines() if events.exists() else []
         return result, log, backup_root
 
@@ -222,11 +223,24 @@ exec(compile(code, "<stdin>", "exec"))
                 leftovers = [p.name for p in backup_root.iterdir() if p.name.startswith(".run-")]
                 self.assertEqual(leftovers, [])
 
+    def test_leaf_backup_symlink_rejected_before_permissions_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = root / "target"
+            target.mkdir(mode=0o700)
+            (root / "backups").symlink_to(target)
+            result, log, _ = self.run_backup_script(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Refusing symlink BACKUP_ROOT", result.stderr)
+            self.assertFalse(any(line.startswith("chown:") for line in log))
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+
     def test_preflight_blocks_low_disk_before_stopping_service(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             result, log, _ = self.run_backup_script(root, active_state="active", free_bytes=1024 ** 3)
             self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Insufficient free space", result.stderr)
             self.assertNotIn("systemctl:stop bojin.service", log)
 
     def test_failure_cleans_work_dir_and_restarts_activating_service(self):

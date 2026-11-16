@@ -28,6 +28,7 @@ rollback target, and newest five others. Pruning runs after successful publicati
 under the maintenance lock; failures fail the backup unit without removing the new
 snapshot. Only recognized names are pruned, never symlink entries.
 
+Upgrade the receiver with `sudo install -o root -g root -m 0755 ops/deploy-release.py /usr/local/sbin/lean-ritual-deploy`.
 Install from a trusted checkout as root with `sudo bash ops/install-backup.sh`.
 This preserves existing environment configuration, disables the old local timer,
 and enables the single daily bojin-backup.timer without restarting the app.

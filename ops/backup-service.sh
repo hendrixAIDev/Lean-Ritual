@@ -33,6 +33,7 @@ finish() {
 }
 trap finish EXIT
 [[ -d "$DATA_DIR" ]] || { echo "Missing DATA_DIR: $DATA_DIR" >&2; exit 1; }
+[[ ! -L "$BACKUP_ROOT" ]] || { echo "Refusing symlink BACKUP_ROOT" >&2; exit 1; }
 mkdir -p -- "$BACKUP_ROOT"
 chown -- root:bojin "$BACKUP_ROOT"
 chmod -- 710 "$BACKUP_ROOT"
@@ -135,8 +136,21 @@ def dated_entries(raw_base, pattern, directory):
     found.sort(reverse=True)
     return found
 
-def newest_keep(dated_list, count):
-    return {p for _, _, p in dated_list[:count]}
+def sized_file(p, minimum):
+    return not p.is_symlink() and p.is_file() and p.stat().st_size >= minimum
+
+def complete_snapshot(p):
+    return (not p.is_symlink() and sized_file(p / "manifest.json", 2)
+            and sized_file(p / "bojin.db", 100))
+
+def newest_keep(dated_list, count, usable):
+    complete = []
+    for _, _, p in dated_list:
+        if usable(p):
+            complete.append(p)
+        else:
+            print("incomplete backup " + p.name, file=sys.stderr)
+    return set(complete[:count])
 
 def prune_dated(dated_list, keep):
     for ts, _, p in dated_list:
@@ -153,8 +167,8 @@ def prune_dated(dated_list, keep):
 root = pathlib.Path(sys.argv[1])
 snapshots = dated_entries(root, r"snapshot-[0-9]{8}T[0-9]{6}Z", True)
 ledgers = dated_entries(root, r"deletions-[0-9]{8}T[0-9]{6}Z\.json", False)
-keep = newest_keep(snapshots, 2) | {pathlib.Path(sys.argv[3]).resolve(strict=True)}
-ledger_keep = newest_keep(ledgers, 1) | {pathlib.Path(sys.argv[4]).resolve(strict=True)}
+keep = newest_keep(snapshots, 2, complete_snapshot) | {pathlib.Path(sys.argv[3]).resolve(strict=True)}
+ledger_keep = newest_keep(ledgers, 1, lambda p: sized_file(p, 2)) | {pathlib.Path(sys.argv[4]).resolve(strict=True)}
 if snapshots:
     resolved_root = root.resolve(strict=True)
     ledger_keep.update(resolved_root / ("deletions-" + p.name[9:] + ".json") for p in keep)
@@ -163,7 +177,7 @@ prune_dated(ledgers, ledger_keep)
 
 deploy = dated_entries(pathlib.Path("/var/backups/bojin-deploy"),
                        r"[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9_]{8}", True)
-prune_dated(deploy, newest_keep(deploy, 2))
+prune_dated(deploy, newest_keep(deploy, 2, lambda p: complete_snapshot(p / "snapshot") and sized_file(p / "deletions.json", 2)))
 
 rel_base = check_root(pathlib.Path("/opt/bojin-releases"))
 if rel_base is not None:
@@ -177,11 +191,14 @@ if rel_base is not None:
     active = pathlib.Path("/opt/bojin").resolve(strict=True)
     protected = {active}
     prev_link = pathlib.Path("/opt/bojin-previous")
-    if prev_link.is_symlink() or prev_link.exists():
-        protected.add(prev_link.resolve(strict=True))
-    else:
-        print("release pruning disabled: previous pointer missing", file=sys.stderr)
+    if not prev_link.is_symlink():
+        print("release pruning disabled: previous pointer missing or not a symlink", file=sys.stderr)
         sys.exit(0)
+    prev_target = prev_link.resolve(strict=True)
+    if not prev_target.is_dir() or prev_target.parent != rel_base:
+        print("release pruning disabled: invalid previous target", file=sys.stderr)
+        sys.exit(0)
+    protected.add(prev_target)
     others = [p for p in releases if p not in protected]
     protected.update(others[:5])
     for p in releases:

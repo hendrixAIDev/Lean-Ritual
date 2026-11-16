@@ -234,6 +234,8 @@ def chown_root_tree(root):
 
 
 def snapshot(previous):
+    if BACKUPS.is_symlink():
+        raise ValueError("Refusing symlink deploy backup directory")
     BACKUPS.mkdir(mode=0o710, parents=True, exist_ok=True)
     import pwd
     app = pwd.getpwnam("bojin")

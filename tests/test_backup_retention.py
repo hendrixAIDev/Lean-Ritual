@@ -6,6 +6,12 @@ import tempfile
 import unittest
 
 
+def complete(path):
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "manifest.json").write_text("{}")
+    (path / "bojin.db").write_bytes(b"SQLite format 3\0" + b"0" * 4096)
+
+
 class RetentionTests(unittest.TestCase):
     def test_old_snapshots_ledgers_releases_and_symlinks(self):
         script = pathlib.Path("ops/backup-service.sh").read_text()
@@ -19,9 +25,10 @@ class RetentionTests(unittest.TestCase):
                 directory.mkdir()
             for day in range(1, 5):
                 stamp = f"2000010{day}T000000Z"
-                (daily / ("snapshot-" + stamp)).mkdir()
-                (daily / ("deletions-" + stamp + ".json")).touch()
-                (deploy / (stamp + "-abcdefgh")).mkdir()
+                complete(daily / ("snapshot-" + stamp))
+                (daily / ("deletions-" + stamp + ".json")).write_text("[]")
+                complete(deploy / (stamp + "-abcdefgh") / "snapshot")
+                (deploy / (stamp + "-abcdefgh") / "deletions.json").write_text("[]")
             unknown = daily / "unrelated"
             unknown.mkdir()
             (daily / "snapshot-19990101T000000Z").symlink_to(unknown, target_is_directory=True)
@@ -141,7 +148,7 @@ class RetentionTests(unittest.TestCase):
             for suffix in ("aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"):
                 (deploy_dir / (recent + "-" + suffix)).mkdir()
             for name in names:
-                (daily / name).mkdir()
+                complete(daily / name)
                 os.utime(daily / name, (1, 1))
             ledger = daily / "deletions-19990101T000000Z.json"
             ledger.touch()
@@ -164,6 +171,14 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(list(releases.iterdir())), 11)  # Missing pointer fails closed.
             self.assertEqual(len(list(deploy_dir.iterdir())), 4)
+            previous.touch()
+            result = subprocess.run(args, capture_output=True, text=True)
+            self.assertEqual(len(list(releases.iterdir())), 11)
+            previous.unlink()
+            previous.symlink_to(real)
+            subprocess.run(args, capture_output=True)
+            self.assertEqual(len(list(releases.iterdir())), 11)
+            previous.unlink()
             previous.symlink_to(releases / ("a" * 40 + "-1-1"))
             result = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -192,3 +207,41 @@ class RetentionTests(unittest.TestCase):
             active.symlink_to(real / "missing")
             result = subprocess.run(args, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_incomplete_snapshots_do_not_displace_complete_backups(self):
+        script = pathlib.Path("ops/backup-service.sh").read_text()
+        code = script.split("<<'PYRET'\n", 1)[1].split("\nPYRET", 1)[0]
+        code = code.split('rel_base =', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            daily = root / "daily"
+            deploy = root / "deploy"
+            daily.mkdir()
+            deploy.mkdir()
+            for n in range(1, 5):
+                snap = daily / ("snapshot-2000010%dT000000Z" % n)
+                snap.mkdir()
+                ds = deploy / ("2000010%dT000000Z-abcdefgh" % n)
+                ds.mkdir()
+                if n < 3:
+                    complete(snap)
+                    complete(ds / "snapshot")
+                    (ds / "deletions.json").write_text("[]")
+                elif n == 3:
+                    (snap / "manifest.json").write_text("{}")
+                os.utime(snap, (1, 1))
+                os.utime(ds, (1, 1))
+            new = daily / "snapshot-20000105T000000Z"
+            complete(new)
+            ledger = daily / "deletions-20000105T000000Z.json"
+            ledger.write_text("[]")
+            # Run start predates the new snapshot: it cannot take a keep slot.
+            code = code.replace('"/var/backups/bojin-deploy"', repr(str(deploy)))
+            result = subprocess.run(["python3", "-c", code, str(daily), "7", str(new),
+                                     str(ledger), str(int(time.time()))],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for n in (1, 2):
+                self.assertTrue((deploy / ("2000010%dT000000Z-abcdefgh" % n)).exists())
+            self.assertFalse((daily / "snapshot-20000104T000000Z").exists())
+            self.assertIn("incomplete", result.stderr)
