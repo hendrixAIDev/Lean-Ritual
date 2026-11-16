@@ -78,7 +78,7 @@ class RetentionTests(unittest.TestCase):
         script = pathlib.Path("ops/install-backup.sh").read_text()
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            for name in ("backup-service.sh", "bojin-backup.service", "bojin-backup.timer"):
+            for name in ("backup-service.sh", "bojin-backup.service", "bojin-backup.timer", "maintenance-lock.sh"):
                 (root / name).write_text("fixture")
             (root / "bojin-tmpfiles.conf").write_text(tmpfiles_src.read_text())
             bindir = root / "bin"
@@ -97,6 +97,7 @@ class RetentionTests(unittest.TestCase):
             script = script.replace("/etc/tmpfiles.d", str(root / "tmpfiles.d"))
             script = script.replace("/run/bojin", str(root / "run-bojin"))
             script = script.replace("/usr/local/libexec", str(root / "libexec"))
+            script = script.replace("/usr/local/sbin", str(root / "sbin"))
             (root / "units").mkdir()
             script = script.replace("/etc/systemd/system", str(root / "units"))
             script = script.replace("install -o root -g root", "install")
@@ -110,6 +111,7 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(env.read_text(), "BACKUP_RETENTION_DAYS=11\n")
             self.assertEqual(env.stat().st_mode & 0o777, 0o600)
             self.assertEqual((root / "libexec/bojin-backup").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((root / "sbin/bojin-maintenance-lock").stat().st_mode & 0o777, 0o755)
             self.assertEqual((root / "tmpfiles.d/bojin.conf").read_text().strip(), "d /run/bojin 0755 root root -")
             self.assertEqual((root / "tmpfiles.d/bojin.conf").stat().st_mode & 0o777, 0o644)
             self.assertTrue((root / "run-bojin").is_dir())

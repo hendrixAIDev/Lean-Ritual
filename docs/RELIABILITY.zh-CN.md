@@ -46,13 +46,14 @@ sudo bash ops/install-reliability.sh
 脚本会：
 
 - 安装 `/etc/tmpfiles.d/bojin.conf`（`ops/bojin-tmpfiles.conf`）并确保 `root:root 0755` 的维护锁目录 `/run/bojin` 存在；
+- 安装维护锁过渡包装器 `/usr/local/sbin/bojin-maintenance-lock`（`ops/maintenance-lock.sh`）；
 - 把 `ops/bojin-reliability.conf` 装成 `bojin.service` 的附加配置（只改重启策略，不动用户、路径和环境变量）；
 - 有 Caddy 时同样给 `caddy.service` 加上永不放弃的重启；
 - 安装看门狗 `/usr/local/libexec/bojin-watchdog` 和每 30 秒一次的 `bojin-watchdog.timer`；
 - 安装告警脚本 `/usr/local/libexec/bojin-alert`，并给已有的备份任务（`bojin-backup.service`、`bojin-backup-local.service`）加上失败告警；
 - 生成空的 `/etc/bojin-alert.env`（权限 0600）。
 
-它不会重启应用，不改数据、不改 Caddyfile、不读也不改 `/etc/bojin/environment`。看门狗在部署、备份或人工维护持有 `/run/bojin/maintenance.lock`（及一版过渡期内的旧锁 `/run/lock/bojin-maintenance.lock`）时会自动跳过；人工维护必须以 root 持有锁（`sudo flock /run/bojin/maintenance.lock ...`），切勿不带 `sudo` 直接执行 `flock`。应用或 Caddy 被人手动停掉（`inactive`）时看门狗不会去拉起它，但仍会继续检查 `/var/lib/bojin`、`/var/backups`、`/opt` 的磁盘空间和 inode。
+它不会重启应用，不改数据、不改 Caddyfile、不读也不改 `/etc/bojin/environment`。看门狗在部署、备份或人工维护持有 `/run/bojin/maintenance.lock`（及一版过渡期内的旧锁 `/run/lock/bojin-maintenance.lock`）时会自动跳过；在所有旧锁参与方彻底下线前，人工维护必须使用双锁包装器 `sudo /usr/local/sbin/bojin-maintenance-lock -- ...`（或仓库目录内 `sudo bash ops/maintenance-lock.sh -- ...`），切勿不带 `sudo` 直接执行 `flock`，也不要在混合版本窗口期只锁新路径或直接删除可能正被持有的 `/run/lock/bojin-maintenance.lock`。应用或 Caddy 被人手动停掉（`inactive`）时看门狗不会去拉起它，但仍会继续检查 `/var/lib/bojin`、`/var/backups`、`/opt` 的磁盘空间和 inode。
 
 确认：
 

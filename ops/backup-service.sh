@@ -51,27 +51,65 @@ if [[ -e "$LEGACY_LOCK_FILE" && ! -f "$LEGACY_LOCK_FILE" ]]; then
   exit 1
 fi
 if { exec 8>>"$LEGACY_LOCK_FILE"; } 2>/dev/null; then
-  [[ ! -L "$LEGACY_LOCK_FILE" && -f "$LEGACY_LOCK_FILE" ]] || {
+  python3 -c 'import os, stat, sys; sys.exit(0 if stat.S_ISREG(os.fstat(8).st_mode) and not os.path.islink(sys.argv[1]) else 1)' "$LEGACY_LOCK_FILE" 9>&- || {
     exec 8>&-
     echo "Refusing unsafe legacy maintenance lock: $LEGACY_LOCK_FILE" >&2
     exit 1
   }
   flock -x 8
   legacy_locked=1
-elif python3 -c '
-import errno, os, sys
-flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+elif legacy_meta=$(python3 -c '
+import errno, os, stat, sys
+path = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", 0)
 try:
-    os.close(os.open(sys.argv[1], flags, 0o600))
-except OSError as e:
-    sys.exit(0 if e.errno == errno.EACCES else 1)
-sys.exit(1)
-' "$LEGACY_LOCK_FILE"; then
-  echo "Warning: legacy maintenance lock $LEGACY_LOCK_FILE failed with EACCES (fs.protected_regular); continuing with $LOCK_FILE only" >&2
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK | nofollow, 0o600)
+except OSError as exc:
+    if exc.errno != errno.EACCES:
+        sys.exit(1)
+    try:
+        rfd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | nofollow)
+    except OSError:
+        sys.exit(1)
+    try:
+        st = os.fstat(rfd)
+        if not stat.S_ISREG(st.st_mode):
+            sys.exit(1)
+        print(f"{st.st_dev} {st.st_ino}")
+        sys.exit(0)
+    finally:
+        os.close(rfd)
+else:
+    os.close(fd)
+    sys.exit(1)
+' "$LEGACY_LOCK_FILE" 9>&-); then
+  { exec 8<"$LEGACY_LOCK_FILE"; } 2>/dev/null || {
+    echo "Failed to open existing legacy maintenance lock without O_CREAT: $LEGACY_LOCK_FILE" >&2
+    exit 1
+  }
+  read -r exp_dev exp_ino <<<"$legacy_meta"
+  python3 -c '
+import os, stat, sys
+st = os.fstat(8)
+lst = os.lstat(sys.argv[1])
+ok = (
+    stat.S_ISREG(st.st_mode)
+    and not stat.S_ISLNK(lst.st_mode)
+    and (st.st_dev, st.st_ino) == (lst.st_dev, lst.st_ino) == (int(sys.argv[2]), int(sys.argv[3]))
+)
+sys.exit(0 if ok else 1)
+' "$LEGACY_LOCK_FILE" "$exp_dev" "$exp_ino" 9>&- || {
+    exec 8>&-
+    echo "Refusing unsafe legacy maintenance lock fd: $LEGACY_LOCK_FILE" >&2
+    exit 1
+  }
+  warn_msg="legacy maintenance lock $LEGACY_LOCK_FILE failed O_CREAT with EACCES (fs.protected_regular); opened existing regular file without O_CREAT for flock"
+  echo "Warning: $warn_msg" >&2
   if command -v logger >/dev/null 2>&1; then
-    logger -t bojin-backup -p daemon.warning -- \
-      "legacy maintenance lock $LEGACY_LOCK_FILE failed with EACCES (fs.protected_regular); continuing with $LOCK_FILE only" 8>&- 9>&- || true
+    logger -t bojin-backup -p daemon.warning -- "$warn_msg" 8>&- 9>&- || true
   fi
+  flock -x 8
+  legacy_locked=1
 else
   echo "Failed to open legacy maintenance lock: $LEGACY_LOCK_FILE" >&2
   exit 1

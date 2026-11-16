@@ -32,8 +32,10 @@ fi
 [[ ! -L /run/bojin && -d /run/bojin && "$(path_uid /run/bojin)" == 0 ]] || { echo "Refusing non-root or invalid /run/bojin" >&2; exit 1; }
 
 # Root-run programs live outside the replaceable release directory.
+install -d -o root -g root -m 0755 /usr/local/sbin
 install -o root -g root -m 0755 "$here/alert.sh" /usr/local/libexec/bojin-alert
 install -o root -g root -m 0755 "$here/health-watchdog.sh" /usr/local/libexec/bojin-watchdog
+install -o root -g root -m 0755 "$here/maintenance-lock.sh" /usr/local/sbin/bojin-maintenance-lock
 install -o root -g root -m 0644 "$here/bojin-alert@.service" "$here/bojin-watchdog.service" "$here/bojin-watchdog.timer" /etc/systemd/system/
 
 install -d -o root -g root -m 0755 /etc/systemd/system/bojin.service.d

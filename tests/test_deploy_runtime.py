@@ -157,15 +157,28 @@ class BackupServiceRuntimeTest(unittest.TestCase):
         )
         stat_stub.chmod(0o755)
 
-        write_stub("flock", f"""
-            if [[ "${{1:-}}" == "-x" ]]; then
-              echo "locked" > "{lock_state}"
-              echo "flock:lock:${{2:-}}" >> "{events}"
-            elif [[ "${{1:-}}" == "-u" ]]; then
-              echo "unlocked" > "{lock_state}"
-              echo "flock:unlock:${{2:-}}" >> "{events}"
-            fi
-        """)
+        flock_stub = bindir / "flock"
+        flock_stub.write_text(
+            f"#!{real_py}\n"
+            "import fcntl, pathlib, sys\n"
+            "mode, fd = sys.argv[1], int(sys.argv[2])\n"
+            f"events = pathlib.Path({str(events)!r})\n"
+            f"state = pathlib.Path({str(lock_state)!r})\n"
+            "if mode == '-x':\n"
+            "    fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "    state.write_text('locked\\n')\n"
+            "    with events.open('a') as fh: fh.write(f'flock:lock:{fd}\\n')\n"
+            "elif mode == '-n':\n"
+            "    try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "    except BlockingIOError: sys.exit(1)\n"
+            "    state.write_text('locked\\n')\n"
+            "    with events.open('a') as fh: fh.write(f'flock:lock:{fd}\\n')\n"
+            "elif mode == '-u':\n"
+            "    fcntl.flock(fd, fcntl.LOCK_UN)\n"
+            "    state.write_text('unlocked\\n')\n"
+            "    with events.open('a') as fh: fh.write(f'flock:unlock:{fd}\\n')\n"
+        )
+        flock_stub.chmod(0o755)
         write_stub("logger", f"""
             echo "logger:$*" >> "{events}"
         """)
@@ -364,7 +377,7 @@ exec(compile(code, "<stdin>", "exec"))
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("systemctl:stop bojin.service", log)
 
-        # 4. Old-path EACCES logs a warning and continues holding only the new lock (fd 9).
+        # 4a. Unreadable legacy path where retry without O_CREAT also fails (0000) MUST fail closed.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             legacy_dir = root / "run-lock"
@@ -374,12 +387,59 @@ exec(compile(code, "<stdin>", "exec"))
             legacy_file.chmod(0o000)
             try:
                 result, log, _ = self.run_backup_script(root)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual([line for line in log if line.startswith("flock:lock:")], ["flock:lock:9"])
-                self.assertIn("eacces", result.stderr.lower())
-                self.assertTrue(any(line.startswith("logger:") and "eacces" in line.lower() for line in log), log)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("systemctl:stop bojin.service", log)
             finally:
                 legacy_file.chmod(0o600)
+
+        # 4b. Held legacy inode + EACCES on O_CREAT (0444 read-only file locked by legacy participant):
+        #     backup-service.sh must retry without O_CREAT, block on REAL flock until legacy holder releases,
+        #     and only THEN stop bojin.service.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            legacy_file = legacy_dir / "bojin-maintenance.lock"
+            events_file = root / "events.log"
+            holder = subprocess.Popen(
+                [
+                    shutil.which("python3"),
+                    "-c",
+                    f"""
+import fcntl, os, pathlib, time
+p = pathlib.Path({str(legacy_file)!r})
+ev = pathlib.Path({str(events_file)!r})
+fd = os.open(p, os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.chmod(p, 0o444)
+with ev.open("a") as fh: fh.write("legacy_holder:held\\n")
+print("READY", flush=True)
+time.sleep(1.5)
+with ev.open("a") as fh: fh.write("legacy_holder:releasing\\n")
+os.chmod(p, 0o644)
+os.close(fd)
+""",
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "READY")
+                started = time.monotonic()
+                result, log, _ = self.run_backup_script(root)
+                elapsed = time.monotonic() - started
+                holder.wait(timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertGreaterEqual(elapsed, 0.8, f"Expected backup to wait on held legacy flock, got {elapsed:.2f}s")
+                self.assertIn("eacces", result.stderr.lower())
+                self.assertEqual([line for line in log if line.startswith("flock:lock:")], ["flock:lock:9", "flock:lock:8"])
+                self.assertLess(log.index("legacy_holder:releasing"), log.index("systemctl:stop bojin.service"))
+            finally:
+                if holder.stdout is not None:
+                    holder.stdout.close()
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait()
 
 
 if __name__ == "__main__":

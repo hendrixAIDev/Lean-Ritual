@@ -86,6 +86,7 @@ def main():
         raise ValueError("Existing authorized_keys differs; review instead of overwriting")
     keys.write_text(key_line); os.chown(keys, 0, 0); keys.chmod(0o644)
     for source, target in [(ROOT / "deploy-release.py", Path("/usr/local/sbin/lean-ritual-deploy")),
+                           (ROOT / "maintenance-lock.sh", Path("/usr/local/sbin/bojin-maintenance-lock")),
                            (ROOT / "backup-service.sh", Path("/usr/local/libexec/bojin-backup"))]:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target); os.chown(target, 0, 0); target.chmod(0o755)

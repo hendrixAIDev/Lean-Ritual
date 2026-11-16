@@ -314,17 +314,20 @@ def maintenance_lock():
         try:
             legacy_fd = os.open(LEGACY_LOCK, open_flags, 0o600)
         except OSError as error:
-            if error.errno == errno.EACCES:
-                warning = (
-                    f"lean-ritual-deploy: ignoring EACCES opening legacy lock {LEGACY_LOCK} "
-                    f"(fs.protected_regular); continuing with {LOCK} only"
-                )
-                syslog.syslog(syslog.LOG_WARNING, warning)
-                print("Warning: " + warning, file=sys.stderr, flush=True)
-            else:
+            if error.errno != errno.EACCES:
                 raise
-        else:
-            fcntl.flock(legacy_fd, fcntl.LOCK_EX)
+            retry_flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+            legacy_fd = os.open(LEGACY_LOCK, retry_flags)
+            warning = (
+                f"lean-ritual-deploy: O_CREAT on legacy lock {LEGACY_LOCK} failed with EACCES "
+                f"(fs.protected_regular); opened existing file without O_CREAT for flock"
+            )
+            syslog.syslog(syslog.LOG_WARNING, warning)
+            print("Warning: " + warning, file=sys.stderr, flush=True)
+        legacy_info = os.fstat(legacy_fd)
+        if not stat.S_ISREG(legacy_info.st_mode):
+            raise ValueError(f"Refusing non-regular legacy maintenance lock: {LEGACY_LOCK}")
+        fcntl.flock(legacy_fd, fcntl.LOCK_EX)
 
         yield
     finally:

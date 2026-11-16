@@ -564,8 +564,8 @@ class DeploymentTests(unittest.TestCase):
                         with deploy.maintenance_lock():
                             pass
 
-        # 6. Old-path EACCES (fs.protected_regular=2) logs a warning and continues holding the new lock,
-        #    while symlink on old path still fails closed.
+        # 6. Old-path EACCES on O_CREAT retries without O_CREAT (O_NOFOLLOW + fstat S_ISREG) and acquires REAL flock:
+        #    (a) If retry without O_CREAT also fails (e.g. 0000 unreadable), it MUST fail closed.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             legacy_dir = root / "run-lock"
@@ -574,13 +574,86 @@ class DeploymentTests(unittest.TestCase):
             legacy_file.write_text("")
             legacy_file.chmod(0o000)
             try:
-                events, _, _, current, old, _, syslogs, _ = self.run_mock_deploy(root)
-                self.assertNotEqual(current.resolve(), old)
-                self.assertEqual([e for e in events if e in ("flock:new", "flock:legacy")], ["flock:new"])
-                self.assertTrue(any("EACCES" in m or "legacy" in m.lower() for m in syslogs), syslogs)
+                with self.assertRaises(PermissionError):
+                    self.run_mock_deploy(root)
             finally:
                 legacy_file.chmod(0o600)
 
+        #    (b) Real flock contention + EACCES on O_CREAT (0444 read-only file held by legacy participant):
+        #        deploy.maintenance_lock() must wait for the legacy holder, never enter concurrently.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            lock_dir = root / "run-bojin"
+            lock_dir.mkdir(mode=0o755)
+            lock_file = lock_dir / "maintenance.lock"
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            legacy_file = legacy_dir / "bojin-maintenance.lock"
+            timeline = root / "timeline.log"
+
+            holder = subprocess.Popen(
+                [
+                    deploy.sys.executable,
+                    "-c",
+                    f"""
+import fcntl, os, pathlib, time
+p = pathlib.Path({str(legacy_file)!r})
+tl = pathlib.Path({str(timeline)!r})
+fd = os.open(p, os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.chmod(p, 0o444)
+with tl.open("a") as fh: fh.write("HOLDER_HELD\\n")
+print("READY", flush=True)
+time.sleep(0.55)
+with tl.open("a") as fh: fh.write("HOLDER_RELEASING\\n")
+os.chmod(p, 0o644)
+os.close(fd)
+""",
+                ],
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "READY")
+                orig_lstat = os.lstat
+                orig_fstat = os.fstat
+                syslogs = []
+
+                def root_lstat(path, *a, **kw):
+                    st = orig_lstat(path, *a, **kw)
+                    p = Path(path)
+                    uid = 0 if p in (lock_dir, lock_file) else st.st_uid
+                    return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+
+                def root_fstat(fd):
+                    st = orig_fstat(fd)
+                    if lock_file.exists() and not lock_file.is_symlink() and st.st_ino == orig_lstat(lock_file).st_ino:
+                        return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, 0, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+                    return st
+
+                started = time.monotonic()
+                with patch.object(deploy, "LOCK", lock_file), patch.object(deploy, "LEGACY_LOCK", legacy_file), \
+                     patch("os.lstat", side_effect=root_lstat), patch("os.fstat", side_effect=root_fstat), \
+                     patch("syslog.syslog", side_effect=lambda *a: syslogs.append(a[-1])):
+                    with deploy.maintenance_lock():
+                        with timeline.open("a") as fh:
+                            fh.write("DEPLOY_CRITICAL_SECTION\n")
+                elapsed = time.monotonic() - started
+                holder.wait(timeout=5)
+                self.assertGreaterEqual(elapsed, 0.4, f"Expected real blocking contention on legacy inode, got {elapsed:.2f}s")
+                self.assertEqual(
+                    timeline.read_text().splitlines(),
+                    ["HOLDER_HELD", "HOLDER_RELEASING", "DEPLOY_CRITICAL_SECTION"],
+                )
+                self.assertTrue(any("EACCES" in m for m in syslogs), syslogs)
+            finally:
+                if holder.stdout is not None:
+                    holder.stdout.close()
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait()
+
+        #    (c) Symlink and FIFO on legacy path fail closed immediately without hanging.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             legacy_dir = root / "run-lock"
@@ -588,6 +661,15 @@ class DeploymentTests(unittest.TestCase):
             target = root / "real-legacy"
             target.write_text("")
             (legacy_dir / "bojin-maintenance.lock").symlink_to(target)
+            with self.assertRaises((OSError, ValueError)):
+                self.run_mock_deploy(root)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            legacy_dir = root / "run-lock"
+            legacy_dir.mkdir(mode=0o755)
+            fifo_path = legacy_dir / "bojin-maintenance.lock"
+            os.mkfifo(fifo_path, 0o444)
             with self.assertRaises((OSError, ValueError)):
                 self.run_mock_deploy(root)
 

@@ -24,7 +24,9 @@ if [[ ! -e /run/bojin ]]; then
 fi
 [[ ! -L /run/bojin && -d /run/bojin && "$(path_uid /run/bojin)" == 0 ]] || { echo "Refusing non-root or invalid /run/bojin" >&2; exit 1; }
 install -o root -g root -d -m 0755 /usr/local/libexec
+install -o root -g root -d -m 0755 /usr/local/sbin
 install -o root -g root -m 0755 "$source_dir/backup-service.sh" /usr/local/libexec/bojin-backup
+install -o root -g root -m 0755 "$source_dir/maintenance-lock.sh" /usr/local/sbin/bojin-maintenance-lock
 for unit in bojin-backup.service bojin-backup.timer; do
   install -o root -g root -m 0644 "$source_dir/$unit" "/etc/systemd/system/$unit"
 done
