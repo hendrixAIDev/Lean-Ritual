@@ -1077,11 +1077,20 @@ const PHOTO_ERR = (c, canRetry = true) => ({
   rate_limited: canRetry ? "上传太频繁，稍后点“重传照片”。" : "上次上传太频繁未成功，可点下方“+ 照片”重新添加。",
   store_unavailable: canRetry ? "存储暂时不可用，稍后点“重传照片”。" : "上次存储暂时不可用，照片未上传，可点下方“+ 照片”重新添加。"
 }[c] || (canRetry ? "照片暂时没存上，文字已保存，稍后可点“重传照片”。" : "上次照片未能上传，文字已保存，可点下方“+ 照片”重新添加。"));
-async function uploadAssetWithRetry(blob, type = "image/jpeg"){
+function makeUploadKey(){
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+      return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {}
+  return `${uid()}_${uid()}_${uid()}`;
+}
+async function uploadAssetWithRetry(blob, type = "image/jpeg", key = makeUploadKey()){
   let lastErr;
   for (const delay of [0, 1000, 2000]) {
     if (delay) await new Promise(r => setTimeout(r, delay));
-    try { return await S.assets.upload(blob, {type}); }
+    try { return await S.assets.upload(blob, {type, key}); }
     catch (e) { lastErr = e; if (!RETRY_UPLOAD_CODES.includes(e?.code)) throw e; }
   }
   throw lastErr;
@@ -1123,19 +1132,20 @@ async function addMeal(mode, btn){
     const now = new Date();
     const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
     const early = null, anchor = null;
-    let blob = null;
+    let blob = null, photoKey = null;
     if (file) {
       const r = await compress2(file);
       blob = r.blob; m.thumb = r.thumb || null;
+      photoKey = makeUploadKey();
       if (!r.ok) m.photoErr = "decode";
-      S.files[m.id] = {blob, url:URL.createObjectURL(blob)};
+      S.files[m.id] = {blob, url:URL.createObjectURL(blob), key:photoKey};
     }
     if (blob && !S.assets) { if (!m.thumb) m.photoErr = "no_assets"; }
     else if (blob && m.photoErr !== "decode") {
-      try { m.photo = (await uploadAssetWithRetry(blob, "image/jpeg")).id; }
+      try { m.photo = (await uploadAssetWithRetry(blob, "image/jpeg", photoKey)).id; }
       catch (e) { console.warn("upload failed", e); m.photoErr = e?.code || "unknown"; }
     } else if (blob && m.photoErr === "decode" && S.assets && /^image\/(jpeg|png|webp|gif)$/.test(blob.type)) {
-      try { m.photo = (await uploadAssetWithRetry(blob, blob.type)).id; delete m.photoErr; } catch (e) { m.photoErr = e?.code || "unknown"; }
+      try { m.photo = (await uploadAssetWithRetry(blob, blob.type, photoKey)).id; delete m.photoErr; } catch (e) { m.photoErr = e?.code || "unknown"; }
     }
     if (m.photo) { delete m.photoErr; delete m.thumb; }
     const extra = picked.slice(1);
@@ -1783,8 +1793,9 @@ document.addEventListener("click", async ev => {
     case "cu-del": updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = (d.custom.ex || []).filter((_, i) => i !== +v); }).catch(()=>{}); break;
     case "ask-claude": await aiEstimate(S.date, v); break;
     case "retry-photo": {
-      const m = S.days[S.date]?.meals?.find(x => x.id === v), f = S.files[v]?.blob; if (!m || !f || !S.assets) break;
-      try { const id = (await S.assets.upload(f, {type:"image/jpeg"})).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
+      const m = S.days[S.date]?.meals?.find(x => x.id === v), entry = S.files[v], f = entry?.blob; if (!m || !f || !S.assets) break;
+      entry.key = entry.key || makeUploadKey();
+      try { const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast("照片已保存"); }
       catch (e) { toast(PHOTO_ERR(e?.code || "unknown"), 6000); }
       break;
     }

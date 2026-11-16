@@ -244,16 +244,18 @@ test('double-clicking add-meal guards concurrent execution and uploads photo onl
   assert.doesNotMatch(vm.runInContext('viewFood()', ctx), /保存中…|data-act="add-meal"[^>]*disabled/);
 });
 
-test('photo upload retries transient network errors and surfaces clean Chinese message without overwriting toast', async () => {
+test('photo upload retries transient network errors with a stable idempotency key and surfaces clean Chinese message without overwriting toast', async () => {
   let attempts = 0;
+  const seenKeys = [];
   let savedDay = null;
   const mTextEl = { id: 'm-text', value: '短暂断网带图餐', dataset: {} };
   const { ctx, clickAct } = loadApp({
     fastTimers: true,
     elements: { '#m-text': mTextEl },
     assetsImpl: {
-      async upload() {
+      async upload(_blob, opts) {
         attempts++;
+        seenKeys.push(opts?.key);
         if (attempts === 1) throw { code: 'network', message: '连不上服务器' };
         return { id: 'b'.repeat(32) };
       }
@@ -266,12 +268,19 @@ test('photo upload retries transient network errors and surfaces clean Chinese m
   vm.runInContext(`
     S.profile = {sex:"m",age:28,height:176,weight:72,trainDays:[1,3,5],slot:"eve",stage:"auto",exp:"new",equipment:"gym",startDate:"2026-11-01",injuries:[],supps:[]};
     S.tab = "food";
-    S.pendingPhotos = [{ file: { name: "meal.jpg", type: "image/jpeg" }, url: "blob:preview-1" }];
+    S.pendingPhotos = [
+      { file: { name: "meal.jpg", type: "image/jpeg" }, url: "blob:preview-1" },
+      { file: { name: "extra.jpg", type: "image/jpeg" }, url: "blob:preview-extra" }
+    ];
     S.mfill = { kcal: "410" };
   `, ctx);
 
   await clickAct('add-meal', 'manual');
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 3);
+  assert.ok(seenKeys[0] && seenKeys[0].length >= 16);
+  // Retry of the first photo reuses the exact same key; the second distinct photo gets a different key.
+  assert.equal(seenKeys[0], seenKeys[1]);
+  assert.notEqual(seenKeys[2], seenKeys[0]);
   assert.equal(savedDay.meals[0].photo, 'b'.repeat(32));
   assert.equal(savedDay.meals[0].photoErr, undefined);
 
@@ -337,4 +346,24 @@ test('login.html shows Chinese offline message instead of raw Failed to fetch wh
   await els['#f'].onsubmit({ preventDefault() {} });
   assert.equal(els['#err'].textContent, '连不上服务器。');
   assert.equal(els['#go'].disabled, false);
+});
+
+test('shim.js forwards Idempotency-Key header on assets.upload when key is provided', async () => {
+  const calls = [];
+  const ctx = vm.createContext({
+    window: {},
+    location: {},
+    URLSearchParams,
+    fetch: async (url, options) => {
+      calls.push({ url, headers: options.headers });
+      return { ok: true, status: 200, json: async () => (url === '/api/me' ? { id: 'u1', ai: false } : { id: 'c'.repeat(32) }) };
+    },
+    setTimeout,
+    clearTimeout
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/shim.js'), 'utf8'), ctx);
+  const assets = await ctx.window.ritual.use('assets');
+  await assets.upload({ type: 'image/jpeg' }, { type: 'image/jpeg', key: 'idem-test-key-123456' });
+  assert.equal(calls.at(-1).headers['Idempotency-Key'], 'idem-test-key-123456');
+  assert.equal(calls.at(-1).headers['X-Bojin'], '1');
 });

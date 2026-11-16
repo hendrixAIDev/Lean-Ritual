@@ -13,14 +13,14 @@
     const t = setTimeout(resolve, ms);
     if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject({ code: "cancelled" }); }, { once: true });
   });
-  async function api(method, url, body, rawType, signal) {
+  async function api(method, url, body, rawType, signal, extraHeaders) {
     let r, rateRetries = 0;
     const retry = RETRY_METHODS.has(method) && !url.startsWith("/api/auth/") && !url.startsWith("/api/ai");
     for (let attempt = 0; ; attempt++) {
       let failed = null;
       try {
         r = await fetch(url, { method, credentials: "same-origin", signal,
-          headers: rawType ? { ...H, "Content-Type": rawType } : body !== undefined ? { ...H, "Content-Type": "application/json" } : H,
+          headers: rawType ? { ...H, ...extraHeaders, "Content-Type": rawType } : body !== undefined ? { ...H, ...extraHeaders, "Content-Type": "application/json" } : extraHeaders ? { ...H, ...extraHeaders } : H,
           body: rawType ? body : body !== undefined ? JSON.stringify(body) : undefined });
       } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; failed = { code: "network", message: "连不上服务器" }; }
       if (!failed && r.status === 429 && retry && rateRetries < 2) {
@@ -89,7 +89,11 @@
   sample.limits = async () => ({ images: { max: 4, mediaTypes: ["image/jpeg", "image/png", "image/webp"] } });
 
   const assets = {
-    async upload(blob, opts = {}) { const type = blob.type || opts.type || "image/jpeg"; return api("POST", "/api/assets", blob, type); },
+    async upload(blob, opts = {}) {
+      const type = blob.type || opts.type || "image/jpeg";
+      const extra = opts.key ? { "Idempotency-Key": String(opts.key) } : undefined;
+      return api("POST", "/api/assets", blob, type, opts.signal, extra);
+    },
     delete: id => api("DELETE", "/api/assets/" + enc(id)),
     async list() { return { assets: [], usage: null }; },
   };

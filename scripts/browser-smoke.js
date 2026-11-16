@@ -79,12 +79,18 @@ async function startLocalServer(extraEnv = {}) {
   return { dir, base, env, invite, stop };
 }
 
-function attachGuards(page, base, label) {
-  const state = { pageErrors: [], consoleErrors: [], external: [], allowConsoleNetErr: false, allowOcrWasmStderr: false };
+async function attachGuards(page, base, label) {
+  const state = { pageErrors: [], consoleErrors: [], cspViolations: [], external: [], allowConsoleNetErr: false, allowOcrWasmStderr: false };
+  await page.exposeFunction('recordCSP', value => state.cspViolations.push(`[${label}] ${value}`));
+  await page.addInitScript(() => document.addEventListener('securitypolicyviolation', e => window.recordCSP(e.violatedDirective + ': ' + e.blockedURI)));
   page.on('pageerror', e => state.pageErrors.push(`[${label}] ${e.message}`));
   page.on('console', m => {
     if (m.type() !== 'error') return;
     const text = m.text();
+    if (/Content Security Policy|Refused to|unsafe-eval/i.test(text)) {
+      state.cspViolations.push(`[${label}] ${text}`);
+      return;
+    }
     if (state.allowConsoleNetErr && (/Failed to load resource/.test(text) || /连不上服务器/.test(text))) return;
     if (state.allowOcrWasmStderr && (/^Warning: Parameter not found:|^Estimating resolution as /.test(text))) return;
     state.consoleErrors.push(`[${label}] ${text}`);
@@ -108,7 +114,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
-  const guards = attachGuards(page, srv.base, label);
+  const guards = await attachGuards(page, srv.base, label);
 
   try {
     const email = `journey-${label}@example.com`;
@@ -355,7 +361,33 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.waitForTimeout(1100);
     await context.setOffline(false);
     await page.getByText('断网恢复餐', { exact: true }).waitFor({ timeout: 12000 });
+
+    // Commit-then-response-loss on POST /api/assets: server commits blob, response drops, client retry reuses Idempotency-Key without creating an orphan copy.
+    const blobsBeforeLoss = fs.readdirSync(path.join(srv.dir, 'blobs')).length;
+    let droppedCommittedResponse = false, firstIdemKey = null, retriedIdemKey = null;
+    await page.route('**/api/assets', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const keyHeader = route.request().headers()['idempotency-key'];
+      if (!droppedCommittedResponse) {
+        droppedCommittedResponse = true;
+        firstIdemKey = keyHeader;
+        const upstream = await route.fetch();
+        assert.equal(upstream.status(), 200);
+        return route.abort('connectionreset');
+      }
+      retriedIdemKey = keyHeader;
+      return route.continue();
+    });
+    await page.locator('#m-photo').setInputFiles({ name: 'idem.jpg', mimeType: 'image/jpeg', buffer: jpegFixture });
+    await page.locator('.previews img.preview').waitFor({ state: 'visible' });
+    await page.locator('#m-text').fill('幂等重传餐');
+    await page.locator('#mf-kcal').fill('390');
+    await page.locator('[data-act="add-meal"]').click();
+    await page.getByText('幂等重传餐', { exact: true }).waitFor({ timeout: 10000 });
+    await page.unroute('**/api/assets');
     guards.allowConsoleNetErr = false;
+    assert.ok(firstIdemKey && firstIdemKey === retriedIdemKey);
+    assert.equal(fs.readdirSync(path.join(srv.dir, 'blobs')).length, blobsBeforeLoss + 1);
 
     await page.reload();
     await page.locator('#tabs').waitFor({ state: 'visible' });
@@ -394,6 +426,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     assert.ok(page.url().includes('/login.html'));
     guards.allowConsoleNetErr = false;
 
+    assert.deepEqual(guards.cspViolations, []);
     assert.deepEqual(guards.pageErrors, []);
     assert.deepEqual(guards.consoleErrors, []);
     assert.deepEqual(guards.external, []);
@@ -427,7 +460,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
-  const guards = attachGuards(page, srv.base, 'ai-ocr-smoke');
+  const guards = await attachGuards(page, srv.base, 'ai-ocr-smoke');
 
   try {
     const invite = srv.invite('browser@example.com');
@@ -522,6 +555,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
       console.log('PASS: real HEIC fixture converts to JPEG using the local library');
     }
 
+    assert.deepEqual(guards.cspViolations, []);
     assert.deepEqual(guards.pageErrors, []);
     assert.deepEqual(guards.consoleErrors, []);
     assert.deepEqual(guards.external, []);
