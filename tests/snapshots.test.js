@@ -24,7 +24,7 @@ test('WAL backups are normalized and verification never adds sidecars',async t=>
  const {root,data}=fixture(t),snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);
  const file=path.join(snapshot,'bojin.db'),db=new DatabaseSync(file);
  assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode,'delete');db.close();
- const before=fs.readdirSync(snapshot);verifySnapshot(snapshot);assert.deepEqual(fs.readdirSync(snapshot),before);fs.chmodSync(snapshot,0o755);fs.chmodSync(path.join(snapshot,'blobs'),0o755);
+ const before=fs.readdirSync(snapshot);verifySnapshot(snapshot);assert.deepEqual(fs.readdirSync(snapshot),before);
 });
 for(const legacy of [false,true])test('read-only snapshot verifies and restores (legacy='+legacy+')',{skip:process.getuid?.()===0},async t=>{
  const {root,data}=fixture(t),snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);
@@ -33,7 +33,8 @@ for(const legacy of [false,true])test('read-only snapshot verifies and restores 
  for(const name of before)if(name!=='blobs')fs.chmodSync(path.join(snapshot,name),0o444);
  fs.chmodSync(path.join(snapshot,'blobs','a'.repeat(32)),0o444);fs.chmodSync(path.join(snapshot,'blobs'),0o555);fs.chmodSync(snapshot,0o555);
 
- verifySnapshot(snapshot);restoreSnapshot(snapshot,path.join(root,'restore'),{version:1,users:[]});assert.deepEqual(fs.readdirSync(snapshot),before);fs.chmodSync(snapshot,0o755);fs.chmodSync(path.join(snapshot,'blobs'),0o755);
+ try{verifySnapshot(snapshot);restoreSnapshot(snapshot,path.join(root,'restore'),{version:1,users:[]});assert.deepEqual(fs.readdirSync(snapshot),before);}
+ finally{fs.chmodSync(snapshot,0o755);fs.chmodSync(path.join(snapshot,'blobs'),0o755);}
 });
 test('failed replay rolls back rows and restore can retry',async t=>{
  const {root,data}=fixture(t);const db=new DatabaseSync(path.join(data,'bojin.db'));db.exec("ALTER TABLE docs ADD COLUMN uid TEXT; ALTER TABLE blobs ADD COLUMN uid TEXT; UPDATE docs SET uid='u_existing'; CREATE TRIGGER fail_delete BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT,'injected'); END");db.close();
@@ -43,4 +44,20 @@ test('failed replay rolls back rows and restore can retry',async t=>{
  const snapshot=path.join(root,'snapshot');await createSnapshot(data,snapshot);const target=path.join(root,'restore');
  assert.throws(()=>restoreSnapshot(snapshot,target,ledger),/injected/);assert.deepEqual(fs.readdirSync(target),[]);
  restoreSnapshot(snapshot,target,{version:1,users:[]});
+});
+test('partial database copy is cleaned before retry',async t=>{
+ const {root,data}=fixture(t),snapshot=path.join(root,'snapshot'),target=path.join(root,'restore');await createSnapshot(data,snapshot);
+ const copy=fs.copyFileSync;
+ try{fs.copyFileSync=(source,destination,...args)=>{if(destination===path.join(target,'bojin.db')){fs.writeFileSync(destination,'partial');throw Object.assign(new Error('disk full'),{code:'ENOSPC'});}return copy(source,destination,...args);};
+ assert.throws(()=>restoreSnapshot(snapshot,target,{version:1,users:[]}),/disk full/);assert.deepEqual(fs.readdirSync(target),[]);
+ }finally{fs.copyFileSync=copy;}
+ restoreSnapshot(snapshot,target,{version:1,users:[]});
+});
+test('later auth error preserves both databases and blob files',t=>{
+ const {data}=fixture(t),app=new DatabaseSync(path.join(data,'bojin.db'));
+ app.exec("ALTER TABLE docs ADD COLUMN uid TEXT; ALTER TABLE blobs ADD COLUMN uid TEXT; UPDATE blobs SET uid='u_existing'; UPDATE docs SET uid='u_existing';");app.close();
+ const auth=new DatabaseSync(path.join(data,'auth.sqlite'));auth.exec("CREATE TABLE user(id TEXT); INSERT INTO user VALUES('u_existing'),('u_later'); CREATE TRIGGER fail_delete BEFORE DELETE ON user WHEN OLD.id='u_later' BEGIN SELECT RAISE(ABORT,'auth failure'); END");auth.close();
+ assert.throws(()=>require('../lib/deletion-ledger').applyLedger(data,{version:1,users:[{uid:'u_existing',requested:'today'},{uid:'u_later',requested:'today'}]}),/auth failure/);
+ for(const [name,sql,count] of [['bojin.db','SELECT count(*) n FROM docs',1],['auth.sqlite','SELECT count(*) n FROM user',2]]){const db=new DatabaseSync(path.join(data,name));assert.equal(db.prepare(sql).get().n,count);db.close();}
+ assert.equal(fs.readFileSync(path.join(data,'blobs','a'.repeat(32)),'utf8'),'photo');
 });
