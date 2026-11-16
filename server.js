@@ -277,12 +277,22 @@ async function cli(args){
   server.keepAliveTimeout = 125000;
   server.headersTimeout = 126000;
   server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${CFG.port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
-  let stopping = false;
+  let stopping = false, exitCode = 0;
+  const closeDatabases = () => {
+    try { authentication.close(); } catch {}
+    try { db.close(); } catch {}
+  };
   const shutdown = code => {
-    if (stopping) return; stopping = true;
-    server.close(() => { try { authentication.close(); db.close(); } finally { process.exit(code); } });
+    if (code) exitCode = code;
+    if (stopping) return;
+    stopping = true;
+    server.close(() => { closeDatabases(); process.exit(exitCode); });
     server.closeIdleConnections();
-    setTimeout(() => process.exit(code || 1), 5000).unref();
+    setTimeout(() => {
+      server.closeAllConnections();
+      closeDatabases();
+      process.exit(exitCode);
+    }, 5000).unref();
   };
   for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => shutdown(0));
   // After an unexpected error the process state is unknown. Stop taking requests,
