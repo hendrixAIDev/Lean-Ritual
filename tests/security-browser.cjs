@@ -1,6 +1,6 @@
 'use strict';
 // Requires Playwright and a Chromium executable; uses only disposable local data.
-const {chromium}=require('playwright'),assert=require('node:assert/strict');
+const {chromium,webkit}=require('playwright'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawn,spawnSync}=require('node:child_process');
 const http=require('node:http');
@@ -14,7 +14,7 @@ const http=require('node:http');
   const issued=spawnSync(process.execPath,['scripts/auth-admin.js','invite','browser@example.com'],{env,encoding:'utf8',timeout:5000});if(issued.error)throw issued.error;assert.equal(issued.status,0,issued.stderr);const invite=JSON.parse(issued.stdout);
   server=spawn(process.execPath,['server.js'],{env,stdio:['ignore','pipe','pipe']});let errors='';server.stderr.on('data',d=>errors+=d);
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('startup timeout '+errors)),8000);server.stdout.once('data',()=>{clearTimeout(timer);resolve();});server.once('error',reject);server.once('exit',()=>{clearTimeout(timer);reject(new Error(errors));});});
-  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+  browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch({executablePath:process.env.BROWSER==='webkit'?undefined:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
   const page=await browser.newPage({viewport:{width:390,height:844}}),failures=[],external=[];
   const violations=[];
   await page.exposeFunction('recordCSP', value=>violations.push(value));
@@ -60,9 +60,33 @@ const http=require('node:http');
     return {unavailable,thumbnail:extra.src===extra.dataset.fb};
   });
   assert.deepEqual(fallback,{unavailable:true,thumbnail:true});
-  if(process.env.HEIC_FIXTURE){
-    const converted=await page.evaluate(async base64=>{const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));const result=await compress2(new File([bytes],'fixture.heic',{type:'image/heic'}));return {ok:result.ok,type:result.blob?.type,size:result.blob?.size};},fs.readFileSync(process.env.HEIC_FIXTURE).toString('base64'));
-    assert.equal(converted.ok,true);assert.equal(converted.type,'image/jpeg');assert.ok(converted.size>0);console.log('PASS: real HEIC fixture converts to JPEG using the local library');
+  {
+    const converted=await page.evaluate(async base64=>{const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));const file=new File([bytes],'fixture.heic',{type:'image/heic'});const jpeg=await convertHeic(file);const result=await compress2(jpeg);return {ok:result.ok,type:result.blob?.type,size:result.blob?.size};},fs.readFileSync(path.join(__dirname,'fixtures/sample.heic')).toString('base64'));
+    assert.equal(converted.ok,true);assert.equal(converted.type,'image/jpeg');assert.ok(converted.size>0);
+    await page.locator('[data-act="mmode"][data-v="manual"]').click();
+    await page.locator('#m-photo').setInputFiles(path.join(__dirname,'fixtures/sample.heic'));
+    await page.locator('#m-text').fill('Real HEIC meal');
+    await page.locator('#mf-kcal').fill('123');
+    await page.locator('[data-act="add-meal"]').click();
+    await page.waitForFunction(()=>Object.values(S.days).some(d=>d.meals?.some(m=>m.text==='Real HEIC meal'&&m.photo)));
+    const failure=await page.evaluate(async()=>{
+      const original=window.heic2any;window.heic2any=()=>new Promise(()=>{});
+      try { await convertHeic(new Blob(),25);return false; } catch {return true;} finally {window.heic2any=original;}
+    });assert.equal(failure,true);
+    const workerFailure=await page.evaluate(async()=>{
+      const original=window.heic2any;window.heic2any=()=>new Promise(()=>{});
+      const pending=convertHeic(new Blob(),1000);
+      setTimeout(()=>window.__heic2any__worker.dispatchEvent(new Event('error')),10);
+      try {await pending;return false;}catch(e){return e.message==='heic_worker_failed';}finally{window.heic2any=original;}
+    });assert.equal(workerFailure,true);
+    await page.evaluate(()=>{window.realConvertHeic=convertHeic;convertHeic=()=>Promise.reject(new Error('simulated decode failure'));});
+    await page.locator('#m-photo').setInputFiles({name:'broken.heic',mimeType:'image/heic',buffer:Buffer.from('invalid HEIC')});
+    await page.locator('#m-text').fill('Failed HEIC keeps text');
+    await page.locator('#mf-kcal').fill('124');
+    await page.locator('[data-act="add-meal"]').click();
+    await page.waitForFunction(()=>Object.values(S.days).some(d=>d.meals?.some(m=>m.text==='Failed HEIC keeps text'&&m.photoErr==='decode')));
+    await page.evaluate(()=>{convertHeic=window.realConvertHeic;});
+console.log('PASS: real HEIC fixture converts to JPEG using the local library');
   }
   await page.locator('#tabs [data-act="tab"][data-v="me"]').click();await page.locator('[data-act="pw-edit"]').click();await page.locator('#pw-old').fill('browser strong password');await page.locator('#pw-new').fill('new browser strong password');await page.locator('#pw-new2').fill('new browser strong password');await page.locator('[data-act="pw-save"]').click();await page.getByText('密码已更新，其他设备需要重新登录',{exact:true}).waitFor();
   await page.locator('[data-act="logout"]').click();await page.waitForURL('**/login.html');
@@ -74,6 +98,6 @@ const http=require('node:http');
   await page.getByText('删除账号',{exact:true}).click();await page.locator('#delete-password').fill('new browser strong password');await page.locator('#delete-confirm').check();await page.locator('[data-act="delete-account"]').click();await page.waitForURL('**/login.html?deleted=1');
   assert.equal(await page.evaluate(()=>Object.keys(localStorage).some(k=>k.startsWith('bj-user:'))),false);
   assert.deepEqual(violations,[]);console.log('PASS: ZERO CSP violations on login/privacy/guide and all application flows');assert.deepEqual(failures,[]);assert.deepEqual(external,[]);
-  console.log('PASS: mobile Chromium invitation, verification, login, setup, manual meal persistence, local OCR, backend photo AI mock, password change, logout/login; export and deletion; no external browser requests or page errors');
+  console.log('PASS: mobile '+(process.env.BROWSER==='webkit'?'WebKit':'Chromium')+' invitation, verification, login, setup, manual meal persistence, local OCR, backend photo AI mock, password change, logout/login; export and deletion; no external browser requests or page errors');
  } finally {if(browser)await browser.close();if(server&&server.exitCode===null){const stopped=new Promise(r=>server.once('exit',r));server.kill();await stopped;}if(provider)await new Promise(r=>provider.close(r));fs.rmSync(dir,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1});

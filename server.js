@@ -132,9 +132,20 @@ function serveStatic(req, res, user){
 
 /* ---------- 路由 ---------- */
 // Generated from the final HTML by build.js; deploy it with the public assets.
-const scriptHashes = JSON.parse(fs.readFileSync(path.join(CFG.publicDir, "csp-hashes.json"), "utf8"));
-if (!Array.isArray(scriptHashes) || !scriptHashes.length || !scriptHashes.every(value => /^'sha256-[A-Za-z0-9+/]{43}='$/.test(value)))
-  throw new Error("Invalid CSP hash manifest; run npm run build");
+let scriptHashes = [];
+if (process.argv.length === 2) {
+  try {
+    scriptHashes = JSON.parse(fs.readFileSync(path.join(CFG.publicDir, "csp-hashes.json"), "utf8"));
+    const actual = new Set();
+    for (const name of ["index.html", "login.html", "privacy.html", "guide.html"]) {
+      const html = fs.readFileSync(path.join(CFG.publicDir, name), "utf8");
+      for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi))
+        if (!/\bsrc\s*=/i.test(m[1])) actual.add("'sha256-" + crypto.createHash("sha256").update(m[2].replace(/\r\n?/g, "\n")).digest("base64") + "'");
+    }
+    if (!Array.isArray(scriptHashes) || JSON.stringify([...new Set(scriptHashes)].sort()) !== JSON.stringify([...actual].sort()))
+      throw new Error("hash mismatch");
+  } catch (error) { throw new Error("CSP manifest missing or stale; run npm run build", {cause:error}); }
+}
 const SEC_HEADERS = {
   "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY",
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -143,7 +154,9 @@ const SEC_HEADERS = {
 };
 function securityHeaders(req, res) {
   for (const [k, v] of Object.entries(SEC_HEADERS)) res.setHeader(k, v);
-  if (CFG.cookieSecure || (CFG.trustProxy && req.headers["x-forwarded-proto"] === "https"))
+  if (new URL(req.url, "http://x").pathname === "/vendor/heic2any-worker.js")
+    res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-eval'");
+  if (CFG.cookieSecure || (CFG.trustProxy && String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase() === "https"))
     res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
 }
 async function handle(req, res){
@@ -290,7 +303,7 @@ async function cli(args){
   // lets Node close a socket Caddy is about to reuse, which surfaces as a random 502.
   server.keepAliveTimeout = 125000;
   server.headersTimeout = 126000;
-  server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${CFG.port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
+  server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${server.address().port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
   let stopping = false, exitCode = 0;
   const closeDatabases = () => {
     try { authentication.close(); } catch {}

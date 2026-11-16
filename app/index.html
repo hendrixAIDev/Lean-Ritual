@@ -997,6 +997,20 @@ function loadHeic(){
     document.head.appendChild(sc);
   });
 }
+async function convertHeic(file, timeout = 20000) {
+  let loadTimer;
+  const convert = await Promise.race([loadHeic(), new Promise((_, reject) => { loadTimer = setTimeout(() => reject(new Error("heic_load_timeout")), timeout); })]).finally(() => clearTimeout(loadTimer));
+  const worker = window.__heic2any__worker;
+  let cleanup = () => {};
+  return new Promise((resolve, reject) => {
+    const fail = () => reject(new Error("heic_worker_failed"));
+    const timer = setTimeout(() => reject(new Error("heic_timeout")), timeout);
+    worker?.addEventListener("error", fail, {once:true});
+    Promise.resolve().then(() => convert({blob:file, toType:"image/jpeg", quality:0.85})).then(resolve, reject);
+    // Cleanup on either success or failure, including worker errors and timeouts.
+    cleanup = () => { clearTimeout(timer); worker?.removeEventListener("error", fail); };
+  }).finally(() => cleanup());
+}
 async function compress2(file, tried){
   try {
     const url = URL.createObjectURL(file);
@@ -1008,7 +1022,7 @@ async function compress2(file, tried){
     return blob ? {blob, thumb, ok:true} : {blob:file, thumb, ok:false};
   } catch {
     if (!tried && isHeic(file)) {
-      try { toast("正在把 HEIC 照片转成 JPG…", 8000); const conv = await (await loadHeic())({blob:file, toType:"image/jpeg", quality:0.85}); const b = Array.isArray(conv) ? conv[0] : conv; return await compress2(b, true); } catch (e) { console.warn("heic convert failed", e); }
+      try { toast("正在把 HEIC 照片转成 JPG…", 8000); const conv = await convertHeic(file); const b = Array.isArray(conv) ? conv[0] : conv; return await compress2(b, true); } catch (e) { console.warn("heic convert failed", e); }
     }
     return {blob:file, thumb:null, ok:false};
   }

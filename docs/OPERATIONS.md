@@ -91,3 +91,12 @@ Camera file capture does not use getUserMedia.
 Run the extended browser check with Playwright available:
 `CHROMIUM_PATH=/path/to/chromium node tests/security-browser.cjs`.
 It checks CSP events across public pages and authenticated photo/OCR flows.
+
+HEIC conversion uses the build-extracted /vendor/heic2any-worker.js.
+Only that worker response receives CSP `default-src 'none'; script-src 'unsafe-eval'`;
+HTML retains its hashed script policy without unsafe-eval. Conversion errors
+or a 20-second timeout preserve meal text and show the photo decode error.
+Startup checks the manifest against all four served HTML pages and refuses
+stale/missing hashes with a rebuild message; CLI import does not require a build.
+Release packaging and unpacking require the generated hash manifest.
+The committed HEIC fixture is a synthetic 8×8 red image generated with sips.

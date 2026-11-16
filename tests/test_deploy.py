@@ -22,7 +22,7 @@ DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])
 
 
 def bundle(extra=None, metadata=None):
-    files = {name: b"test" for name in ["server.js", "package.json", "package-lock.json", "public/index.html",
+    files = {name: b"test" for name in ["server.js", "package.json", "package-lock.json", "public/index.html", "public/csp-hashes.json",
         "scripts/data-backup.js", "lib/snapshots.js", "node_modules/sharp/package.json"]}
     files[".release.json"] = json.dumps(metadata or {
         "revision": "a" * 40, "node": "24.19.0", "platform": "linux", "arch": "x64"
