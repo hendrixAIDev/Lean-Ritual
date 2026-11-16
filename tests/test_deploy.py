@@ -42,6 +42,38 @@ def bundle(extra=None, metadata=None):
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_previous_pointer_tracks_successful_activation_after_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, broken, fixed = [root / name for name in ("manual", "broken", "fixed")]
+            for p in (old, broken, fixed):
+                p.mkdir()
+            current = root / "bojin"
+            current.symlink_to(old)
+            previous = root / "bojin-previous"
+            previous.symlink_to(broken)
+            deploy.activate(fixed, current, lambda: None, lambda: None,
+                            lambda **kwargs: True, lambda p: None)
+            self.assertEqual(previous.resolve(), old.resolve())
+            with self.assertRaises(RuntimeError):
+                deploy.activate(broken, current, lambda: None, lambda: None,
+                                lambda rollback=False: rollback, lambda p: None)
+            self.assertEqual(previous.resolve(), old.resolve())
+            self.assertEqual(current.resolve(), fixed.resolve())
+
+    def test_deploy_backup_leaf_symlink_does_not_mutate_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir(mode=0o700)
+            backups = root / "backups"
+            backups.symlink_to(target)
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy.os, "chown") as chown:
+                with self.assertRaisesRegex(ValueError, "Refusing symlink"):
+                    deploy.snapshot(root)
+                chown.assert_not_called()
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+
     def test_safe_bundle_and_service_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
@@ -334,7 +366,7 @@ class DeploymentTests(unittest.TestCase):
             with self.subTest(allowed=state), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory).resolve()
                 events, _, _, current, old, _, _, _ = self.run_mock_deploy(root, service_state=state)
-                self.assertLess(events.index("unpack"), events.index("flock"))
+                self.assertLess(events.index("flock"), events.index("unpack"))
                 self.assertNotEqual(current.resolve(), old)
 
         # Transient inactive before lock (e.g. during backup-service.sh) becoming active under lock must succeed.

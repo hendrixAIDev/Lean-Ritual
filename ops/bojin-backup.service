@@ -1,5 +1,6 @@
 [Unit]
-Description=Lean Ritual verified offline backup and offsite copy
+Description=Lean Ritual verified local backup and retention
+OnFailure=bojin-alert@%n.service
 [Service]
 Type=oneshot
 TimeoutStartSec=1800
