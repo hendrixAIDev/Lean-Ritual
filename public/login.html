@@ -5,14 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>登录 · 薄肌日课</title>
 <style>
-:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--bad:#A83A3A;color-scheme:light}
-@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--bad:#E77B7B;color-scheme:dark}}
+:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--bad:#A83A3A;--ok:#2E6B4E;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--bad:#E77B7B;--ok:#6EC29B;color-scheme:dark}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:15px;line-height:1.55}
 main{max-width:380px;margin:0 auto;padding:56px 16px}
 h1{font-size:24px;margin:0 0 4px}
 p{margin:0 0 20px;color:var(--muted)}
+.banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--ok);border-radius:8px;background:var(--surface);color:var(--ok);font-size:14px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
 .tabs{display:flex;gap:8px}
 .tabs button{flex:1;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
@@ -29,6 +30,7 @@ button.primary:disabled{opacity:.6}
 <main>
   <h1>Lean Ritual · 薄肌日课</h1>
   <p>每天的训练、饮食和体重，一个地方记下来。</p>
+  <p class="banner" id="banner" role="status" aria-live="polite" hidden></p>
   <form class="card" id="f">
     <div class="tabs" id="tabs"><button type="button" data-m="login">登录</button><button type="button" data-m="register">凭邀请注册</button></div>
     <label id="nw" hidden>称呼<input id="n" maxlength="80" autocomplete="nickname"></label>
@@ -44,7 +46,96 @@ button.primary:disabled{opacity:.6}
 </main>
 <script>
 (function(){
-  const $ = s => document.querySelector(s), params = new URLSearchParams(location.search);
+  const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
+  const FALLBACK_ERR = "请求失败，请稍后再试。";
+  const ERROR_CODES = {
+    INVALID_EMAIL_OR_PASSWORD: "邮箱或密码错误。",
+    INVALID_PASSWORD: "密码不正确。",
+    INVALID_EMAIL: "请输入有效的邮箱地址。",
+    EMAIL_NOT_VERIFIED: "邮箱尚未验证，请查收验证邮件后再登录。",
+    EMAIL_ALREADY_VERIFIED: "该邮箱已完成验证，请直接登录。",
+    EMAIL_MISMATCH: "输入的邮箱与当前账号不一致。",
+    PASSWORD_TOO_SHORT: "密码太短，至少需要 12 位。",
+    PASSWORD_TOO_LONG: "密码太长，最多 200 位。",
+    USER_ALREADY_EXISTS: "该邮箱已注册，请直接登录或重置密码。",
+    USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: "该邮箱已注册，请直接登录或重置密码。",
+    INVALID_TOKEN: "链接无效或已过期，请重新发送邮件。",
+    TOKEN_EXPIRED: "链接已过期，请重新发送邮件。",
+    USER_NOT_FOUND: "未找到对应账号，请检查输入信息。",
+    ACCOUNT_NOT_FOUND: "未找到对应账号，请检查输入信息。",
+    CREDENTIAL_ACCOUNT_NOT_FOUND: "未找到对应账号，请检查输入信息。",
+    USER_EMAIL_NOT_FOUND: "未找到对应账号，请检查输入信息。",
+    INVALID_USER: "账号状态异常，请重新操作。",
+    TOO_MANY_REQUESTS: "操作过于频繁，请稍后再试。",
+    SESSION_EXPIRED: "登录状态已过期，请刷新页面后重试。",
+    SESSION_NOT_FRESH: "登录状态已过期，请刷新页面后重试。",
+    FAILED_TO_CREATE_USER: "注册未能完成，请稍后再试。",
+    FAILED_TO_CREATE_SESSION: "登录失败，请稍后再试。",
+    FAILED_TO_GET_SESSION: "获取登录状态失败，请稍后再试。",
+    FAILED_TO_UPDATE_USER: "更新账号信息失败，请稍后再试。",
+    FAILED_TO_CREATE_VERIFICATION: "生成验证信息失败，请稍后再试。",
+    EMAIL_PASSWORD_DISABLED: "当前暂未开放密码登录。",
+    EMAIL_PASSWORD_SIGN_UP_DISABLED: "当前暂未开放注册。",
+    RESET_PASSWORD_DISABLED: "当前暂未开放密码重置。",
+    VERIFICATION_EMAIL_NOT_ENABLED: "当前暂未开放验证邮件发送。",
+    EMAIL_CAN_NOT_BE_UPDATED: "暂不支持修改邮箱。",
+    CHANGE_EMAIL_DISABLED: "暂不支持修改邮箱。",
+    PASSWORD_ALREADY_SET: "该账号已设置密码。",
+    USER_ALREADY_HAS_PASSWORD: "该账号已设置密码。",
+    CROSS_SITE_NAVIGATION_LOGIN_BLOCKED: "请求来源校验未通过，请刷新页面后重试。",
+    INVALID_ORIGIN: "请求来源校验未通过，请刷新页面后重试。",
+    MISSING_OR_NULL_ORIGIN: "请求来源校验未通过，请刷新页面后重试。",
+    INVALID_CALLBACK_URL: "跳转地址无效，请刷新页面后重试。",
+    INVALID_REDIRECT_URL: "跳转地址无效，请刷新页面后重试。",
+    INVALID_ERROR_CALLBACK_URL: "跳转地址无效，请刷新页面后重试。",
+    INVALID_NEW_USER_CALLBACK_URL: "跳转地址无效，请刷新页面后重试。",
+    CALLBACK_URL_REQUIRED: "跳转地址缺失，请刷新页面后重试。",
+    MISSING_FIELD: "请填写完整信息后再提交。",
+    FIELD_NOT_ALLOWED: "提交的信息格式不正确，请刷新页面后重试。",
+    BODY_MUST_BE_AN_OBJECT: "提交的信息格式不正确，请刷新页面后重试。"
+  };
+  const ERROR_MESSAGES = {
+    "invitation required": "需要有效邀请码才能注册。",
+    "invitation is invalid, expired, used, or belongs to another email": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
+    "email changes are unavailable": "暂不支持修改邮箱。",
+    "confirm your password to delete the account": "请输入密码以确认删除账号。",
+    "too many requests": "操作过于频繁，请稍后再试。",
+    "too many requests. please try again later": "操作过于频繁，请稍后再试。",
+    "invalid email or password": "邮箱或密码错误。",
+    "invalid password": "密码不正确。",
+    "invalid email": "请输入有效的邮箱地址。",
+    "email not verified": "邮箱尚未验证，请查收验证邮件后再登录。",
+    "email is already verified": "该邮箱已完成验证，请直接登录。",
+    "email mismatch": "输入的邮箱与当前账号不一致。",
+    "password too short": "密码太短，至少需要 12 位。",
+    "password too long": "密码太长，最多 200 位。",
+    "user already exists": "该邮箱已注册，请直接登录或重置密码。",
+    "user already exists. use another email": "该邮箱已注册，请直接登录或重置密码。",
+    "invalid token": "链接无效或已过期，请重新发送邮件。",
+    "token expired": "链接已过期，请重新发送邮件。",
+    "user not found": "未找到对应账号，请检查输入信息。",
+    "account not found": "未找到对应账号，请检查输入信息。",
+    "credential account not found": "未找到对应账号，请检查输入信息。",
+    "user email not found": "未找到对应账号，请检查输入信息。",
+    "failed to create user": "注册未能完成，请稍后再试。",
+    "failed to create session": "登录失败，请稍后再试。"
+  };
+  function mapAuthError(j, status){
+    const code = j && typeof j.code === "string" ? j.code.trim() : "";
+    const rawMsg = j && typeof j.message === "string" ? j.message.trim() : "";
+    if(code === "VALIDATION_ERROR"){
+      if(/\bemail\b/i.test(rawMsg)) return "请输入有效的邮箱地址。";
+      if(/password/i.test(rawMsg)) return "请填写符合要求的密码（至少 12 位）。";
+      if(/invitation/i.test(rawMsg)) return "需要有效邀请码才能注册。";
+      return "填写的信息格式不正确，请检查后重试。";
+    }
+    if(code && Object.hasOwn(ERROR_CODES, code)) return ERROR_CODES[code];
+    if(status === 429) return "操作过于频繁，请稍后再试。";
+    const normMsg = rawMsg.toLowerCase().replace(/[.!]+$/, "");
+    if(normMsg && Object.hasOwn(ERROR_MESSAGES, normMsg)) return ERROR_MESSAGES[normMsg];
+    return FALLBACK_ERR;
+  }
+  function clearBanner(){ if(banner){ banner.hidden=true; banner.textContent=""; } }
   let mode = params.has("token") ? "reset" : params.has("invite") ? "register" : "login";
   if(params.has("invite")) $("#i").value=params.get("invite");
   if(params.has("email")) $("#e").value=params.get("email");
@@ -54,15 +145,28 @@ button.primary:disabled{opacity:.6}
     $("#pw").hidden=["forgot","resend"].includes(m); $("#p").required=!$("#pw").hidden;
     $("#ew").hidden=m==="reset"; $("#e").required=m!=="reset";
     $("#p").autocomplete=m==="login"?"current-password":"new-password";
-    $("#go").textContent=labels[m]; $("#err").textContent="";
+    $("#go").textContent=labels[m]; $("#err").textContent=""; clearBanner();
     document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.m===m));
   }
   $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
   $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
   setMode(mode);
-  if(params.has("error")) $("#err").textContent="链接无效或已过期，请重新发送邮件。";
+  if(params.has("error")) $("#err").textContent=params.get("error")==="TOKEN_EXPIRED"?"链接已过期，请重新发送邮件。":"链接无效或已过期，请重新发送邮件。";
+  let cleanURL=false;
+  if(params.has("verified")){
+    if(params.get("verified")==="1"&&!params.has("error")&&banner){banner.textContent="邮箱已验证，请登录。";banner.hidden=false}
+    params.delete("verified"); cleanURL=true;
+  }
+  if(params.has("deleted")){
+    if(params.get("deleted")==="1"&&!params.has("error")&&banner){banner.textContent="账号已删除。";banner.hidden=false}
+    params.delete("deleted"); cleanURL=true;
+  }
+  if(cleanURL){
+    const q=params.toString();
+    history.replaceState(null,"",(location.pathname||"/login.html")+(q?"?"+q:"")+(location.hash||""));
+  }
   $("#f").onsubmit=async e=>{
-    e.preventDefault(); $("#go").disabled=true; $("#err").textContent="";
+    e.preventDefault(); $("#go").disabled=true; $("#err").textContent=""; clearBanner();
     const email=$("#e").value.trim(), password=$("#p").value;
     const routes={login:"sign-in/email",register:"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
     let body={email,password};
@@ -75,11 +179,11 @@ button.primary:disabled{opacity:.6}
       try{r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});}
       catch{$("#err").textContent="连不上服务器。";return}
       const j=await r.json().catch(()=>({}));
-      if(!r.ok)throw Error(j.message||"请求失败，请稍后再试。");
+      if(!r.ok){$("#err").textContent=mapAuthError(j,r.status);return}
       if(mode==="login"){location.replace("/");return}
       if(mode==="reset"){history.replaceState(null,"","/login.html");setMode("login");$("#err").textContent="密码已更新，请重新登录。"}
       else $("#err").textContent=mode==="register"?"请查收验证邮件，验证后再登录。":"如果邮箱符合条件，邮件会发送到你的邮箱。请检查垃圾邮件。";
-    }catch(err){$("#err").textContent=err.message||"请求失败，请稍后再试。"}finally{$("#go").disabled=false}
+    }catch{$("#err").textContent=FALLBACK_ERR}finally{$("#go").disabled=false}
   };
 })();
 </script>
