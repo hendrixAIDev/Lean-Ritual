@@ -19,9 +19,9 @@
 | 进程被 kill -9 / 内存不足杀掉后 | 留下的租约文件让之后的每日备份和自动部署一直失败，需要手动清理；崩溃的备份留下的锁还会让应用起不来 | 能证明属于本机已死进程的租约会被自动清掉；无法证明的（别的容器、别的机器、旧格式）照旧拒绝，绝不误删 | 自动部署 |
 | 重启或更新的那几秒 | 页面上的保存/读取直接失败 | 读取、整篇保存、合并修改、删除会自动重试约 15 秒；上传照片和 AI 请求不会自动重发 | 自动部署 |
 | systemd 重启策略 | `Restart=on-failure`，连续失败 5 次就放弃 | `Restart=always`，永不放弃；内存吃紧时优先不杀这个进程 | **需要你在服务器上执行** |
-| 进程活着但不响应 | 没人发现 | 看门狗每 30 秒查一次，连续 3 次失败就重启应用 | **需要你在服务器上执行** |
-| Caddy 进程挂了 | 只在异常退出时重启，失败多次就放弃 | 一律重启，永不放弃；看门狗也会查 | **需要你在服务器上执行** |
-| 崩溃、备份失败、磁盘快满 | 没人知道 | 发通知到你的手机（30 分钟内同类只发一次） | **需要你在服务器上执行** |
+| 进程活着但不响应 | 没人发现 | 看门狗按日历每 30 秒查一次，连续 3 次失败就重启应用；若卡在启动崩溃循环（`activating`）也会告警 | **需要你在服务器上执行** |
+| Caddy 进程挂了或卡死 | 只在异常退出时重启，失败多次就放弃 | 一律重启，永不放弃；看门狗同时检查 `caddy.service` 状态、自动重启次数与本机 `127.0.0.1:80` 响应（连续 3 次无响应就重启 Caddy） | **需要你在服务器上执行** |
+| 崩溃、备份失败、磁盘/inode 快满 | 没人知道 | 发通知到你的手机（崩溃/异常 30 分钟内同类只发一次；`/var/lib/bojin`、`/var/backups`、`/opt` 磁盘或 inode ≥90% 每 6 小时一次；推送成功才记冷却，网络抖动会自动重试） | **需要你在服务器上执行** |
 | 应用重启时访问网站 | 浏览器看到空白 502 | Caddy 先等 15 秒；仍连不上时显示“正在更新，你的记录都在”并自动刷新 | **需要你改 Caddyfile** |
 
 数据规则：没有改任何数据结构或字段，旧数据照常读取；租约清理只删锁文件，不碰数据库和照片。
@@ -30,9 +30,9 @@
 
 用管理员账号（admin）SSH 登录服务器后执行。建议在用户少的时候做，全程大约 10 分钟。以下命令都不会输出密钥。
 
-### 2.1 安装自动重启、看门狗和告警（必做）
+### 2.1 安装或更新自动重启、看门狗和告警（必做）
 
-先等这个 PR 合并、自动部署成功（`curl -s https://leanritual.app/api/health` 里的 revision 等于 main 最新提交）。然后：
+注意：`ops/` 下的看门狗、告警脚本和 systemd 单元是由 root 安装在 `/opt/bojin` 发布目录之外的；**合并 PR 只会自动部署应用代码，不会自动更新宿主机上的看门狗和告警文件**。首次安装或每次 `ops/` 有更新后，等 PR 合并部署完成（`curl -s https://leanritual.app/api/health` 里的 revision 等于 main 最新提交），都在服务器上重新执行一遍：
 
 ```sh
 cd /tmp
@@ -51,7 +51,7 @@ sudo bash ops/install-reliability.sh
 - 安装告警脚本 `/usr/local/libexec/bojin-alert`，并给已有的备份任务（`bojin-backup.service`、`bojin-backup-local.service`）加上失败告警；
 - 生成空的 `/etc/bojin-alert.env`（权限 0600）。
 
-它不会重启应用，不改数据、不改 Caddyfile、不读也不改 `/etc/bojin/environment`。看门狗在部署、备份持有维护锁时会自动跳过，应用被人手动停掉时也不会去拉起它。
+它不会重启应用，不改数据、不改 Caddyfile、不读也不改 `/etc/bojin/environment`。看门狗在部署、备份持有维护锁时会自动跳过；应用或 Caddy 被人手动停掉（`inactive`）时不会去拉起它，但仍会继续检查 `/var/lib/bojin`、`/var/backups`、`/opt` 的磁盘空间和 inode。
 
 确认：
 
@@ -66,8 +66,8 @@ journalctl -t bojin-watchdog -n 20 --no-pager                       # 正常时�
 最省事的是 ntfy（免费、iOS/安卓都有 App，不用注册）：
 
 1. 手机安装 ntfy，订阅一个别人猜不到的主题名，例如 `leanritual-` 加一串随机字母数字（可用 `openssl rand -hex 12` 生成）。主题名相当于密码，不要发到群里。
-2. 服务器上：`sudo nano /etc/bojin-alert.env`，填 `ALERT_URL=https://ntfy.sh/你的主题名`。
-3. 测试：`sudo /usr/local/libexec/bojin-alert 测试通知`，手机应在几秒内收到。
+2. 服务器上：`sudo nano /etc/bojin-alert.env`，填 `ALERT_URL=https://ntfy.sh/你的主题名`（必须是 `https://`，`http://` 会被拒绝并报错，避免明文泄露主题名；也支持通过环境变量导出 `ALERT_URL`）。
+3. 测试：`sudo /usr/local/libexec/bojin-alert 测试通知`，手机应在几秒内收到（推送失败时命令会返回非零退出码）。
 
 通知内容只有状态（哪个服务、什么问题），不含任何用户数据。不填 `ALERT_URL` 时只写进系统日志。
 
@@ -118,7 +118,8 @@ systemctl status bojin caddy --no-pager
 journalctl -u bojin -n 100 --no-pager           # 应用日志（崩溃原因在这里）
 journalctl -t bojin-watchdog -t bojin-alert -n 50 --no-pager
 systemctl list-timers 'bojin-*' --no-pager
-df -h /var/lib/bojin
+df -h /var/lib/bojin /var/backups /opt
+df -i /var/lib/bojin /var/backups /opt
 ```
 
 停用看门狗：`sudo systemctl disable --now bojin-watchdog.timer`。去掉重启策略改动：`sudo rm /etc/systemd/system/bojin.service.d/reliability.conf && sudo systemctl daemon-reload`。

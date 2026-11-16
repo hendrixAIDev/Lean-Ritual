@@ -6,3 +6,4 @@ After=bojin.service
 Type=oneshot
 ExecStart=/usr/local/libexec/bojin-watchdog
 UMask=0077
+TimeoutStartSec=60

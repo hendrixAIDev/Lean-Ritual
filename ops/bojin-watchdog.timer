@@ -2,8 +2,7 @@
 Description=Check Lean Ritual health every 30 seconds
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=30s
+OnCalendar=*:*:0/30
 AccuracySec=5s
 
 [Install]

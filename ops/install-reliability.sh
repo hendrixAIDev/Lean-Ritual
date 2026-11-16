@@ -5,7 +5,7 @@
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo/root" >&2; exit 1; }
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for tool in curl flock logger systemctl; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
+for tool in curl df flock logger systemctl; do command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }; done
 systemctl cat bojin.service >/dev/null 2>&1 || { echo "bojin.service not found; review the host first" >&2; exit 1; }
 
 # Root-run programs live outside the replaceable release directory.
@@ -31,7 +31,8 @@ if [[ ! -e /etc/bojin-alert.env ]]; then
 fi
 
 systemctl daemon-reload
-systemctl enable --now bojin-watchdog.timer
+systemctl enable bojin-watchdog.timer
+systemctl restart bojin-watchdog.timer
 echo
 systemctl show bojin.service -p Restart -p RestartUSec -p StartLimitIntervalUSec
 systemctl list-timers bojin-watchdog.timer --no-pager
