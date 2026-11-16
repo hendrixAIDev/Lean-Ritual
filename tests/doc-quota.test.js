@@ -1,0 +1,45 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
+const {spawn,spawnSync}=require('node:child_process');
+const {DatabaseSync}=require('node:sqlite');
+test('HTTP document quotas: bytes, count, overwrite, deletion, isolation and throttle', {timeout:30000},async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-http-'));
+ const base='http://127.0.0.1:18092';
+ const env={...process.env,DATA_DIR:dir,DOC_USER_BYTES:'100',DOC_USER_COUNT:'2',DOC_WRITE_PER_MIN:'12',PORT:'18092',HOST:'127.0.0.1',AUTH_BASE_URL:base,AUTH_SECRET:'disposable-test-secret-at-least-32-characters',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_API_KEY:''};
+ // A real legacy data fixture proves the mapping preserves IDs and records.
+ const legacy=new DatabaseSync(path.join(dir,'bojin.db'));
+ legacy.exec("CREATE TABLE users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, created TEXT NOT NULL,mustChange INTEGER DEFAULT 0); INSERT INTO users VALUES('u_legacy_owner','legacy','not-a-real-password','2020-01-01',0)");legacy.close();
+ const issue=(email,old)=>{const r=spawnSync(process.execPath,['scripts/auth-admin.js','invite',email,...(old?['--legacy-user',old]:[])],{env,encoding:'utf8',timeout:5000});if(r.error)throw r.error;assert.equal(r.status,0,r.stderr);return JSON.parse(r.stdout);};
+ const a=issue('alice@example.com','legacy'),b=issue('bob@example.com');
+ const child=spawn(process.execPath,['server.js'],{env,stdio:['ignore','pipe','pipe']});let errors='';child.stderr.on('data',d=>errors+=d);
+ t.after(async()=>{if(child.exitCode===null){const stopped=new Promise(r=>child.once('exit',r));child.kill();await stopped;}fs.rmSync(dir,{recursive:true,force:true});});
+ await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('startup timeout '+errors)),8000);child.stdout.once('data',()=>{clearTimeout(timer);resolve();});child.once('error',reject);child.once('exit',()=>{clearTimeout(timer);reject(new Error(errors));});});
+ const request=(route,body,cookie,method)=>fetch(base+route,{method:method||(body?'POST':'GET'),redirect:'manual',headers:{origin:base,'Content-Type':'application/json','X-Bojin':'1',...(cookie?{cookie}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ assert.equal((await request('/api/register',{username:'outsider',password:'arbitrary'})).status,410);
+ assert.equal((await request('/api/me',null,'bj_s=old-session')).status,401);
+ const password='temporary strong test password';
+ const register=async invitation=>{
+  const r=await request('/api/auth/sign-up/email',{email:invitation.email,name:'Test',password,invitation:invitation.token,callbackURL:'/login.html'});assert.equal(r.status,200,await r.clone().text());
+  assert.equal((await request('/api/auth/sign-in/email',{email:invitation.email,password})).status,403);
+  const mails=fs.readdirSync(path.join(dir,'mail')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'mail',f),'utf8')));
+  const mail=mails.find(m=>m.to===invitation.email&&m.kind==='verify');assert.ok(mail);
+  assert.equal((await fetch(mail.url,{redirect:'manual'})).status,302);
+  const login=await request('/api/auth/sign-in/email',{email:invitation.email,password});assert.equal(login.status,200,await login.clone().text());
+  return login.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');
+ };
+ const ca=await register(a),cb=await register(b);
+ const doc=(uid,id)=>'/api/doc?path=data/users/'+uid+'/app/app/'+id;
+ const put=(id,data,cookie=ca,uid=a.userId)=>request(doc(uid,id),{data},cookie,'PUT');
+ assert.equal((await put('one',{x:'a'})).status,200);
+ assert.equal((await put('one',{x:'b'.repeat(60)})).status,200);
+ let r=await put('two',{x:'c'.repeat(60)});assert.equal(r.status,413);assert.equal((await r.json()).error,'doc_quota');
+ assert.equal((await put('two',{})).status,200);
+ assert.equal((await put('three',{})).status,413);
+ assert.equal((await request(doc(a.userId,'one'),null,ca,'DELETE')).status,200);
+ assert.equal((await put('three',{x:'z'.repeat(60)})).status,200);
+ assert.equal((await put('one',{x:'q'.repeat(60)},cb,b.userId)).status,200);
+ for(let i=0;i<5;i++)await put('two',{});
+ r=await put('two',{});assert.equal(r.status,429);assert.ok(+r.headers.get('retry-after')>0);
+ assert.equal((await request(doc(a.userId,'two'),null,ca)).status,200);
+});

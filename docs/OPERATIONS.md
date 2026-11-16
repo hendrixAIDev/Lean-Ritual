@@ -50,3 +50,5 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 ## Local evidence
 
 Tests cover writer exclusion, checksums, refusing overwrites, snapshots with both databases/photos, pre-auth migration and rollback, and replaying a newer deletion ledger onto an older snapshot. These tests do not replace a restore drill and offsite access verification on the purchased host.
+
+文档保护：`DOC_USER_BYTES` 默认 52428800（50 MiB，按 UTF-8 字节计算），`DOC_USER_COUNT` 默认 20000；覆盖按新旧大小差计算，删除释放额度。超过额度返回 413 / `doc_quota`。`DOC_WRITE_PER_MIN` 默认 120，每账号固定 60 秒窗口限制写入（含删除与失败尝试），超限返回 429 和 `Retry-After`；读取不限流，重启清空窗口。配置均须为正整数。默认值为日常记录保留充足空间，同时限制单账号滥用。
