@@ -63,7 +63,8 @@ class RetentionTests(unittest.TestCase):
             script = script.replace('[[ $EUID == 0 ]]', '[[ 1 == 1 ]]')
             script = script.replace("/etc/bojin-backup.env", str(env))
             script = script.replace("/usr/local/libexec", str(root / "libexec"))
-            script = script.replace("/etc/systemd/system", str(root))
+            (root / "units").mkdir()
+            script = script.replace("/etc/systemd/system", str(root / "units"))
             script = script.replace("install -o root -g root", "install")
             script = script.replace("systemctl ", "true ")
             installer = root / "installer"
@@ -71,3 +72,18 @@ class RetentionTests(unittest.TestCase):
             for _ in range(2):
                 subprocess.run(["bash", str(installer)], check=True)
             self.assertEqual(env.read_text(), "BACKUP_RETENTION_DAYS=11\n")
+
+    def test_pruning_failure_preserves_new_snapshot(self):
+        script = pathlib.Path("ops/backup-service.sh").read_text()
+        code = script.split("<<'PYRET'\n", 1)[1].split("\nPYRET", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            new = root / "snapshot-20000103T000000Z"
+            for name in ("snapshot-20000101T000000Z", "snapshot-20000102T000000Z", new.name):
+                (root / name).mkdir()
+            code = code.replace('root = pathlib.Path(sys.argv[1])',
+                'root = pathlib.Path(sys.argv[1])\ndef fail(*args): raise OSError("injected pruning failure")\nshutil.rmtree = fail')
+            result = subprocess.run(["python3", "-c", code, str(root), "7", str(new)],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(new.is_dir())
