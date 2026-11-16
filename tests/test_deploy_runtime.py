@@ -176,6 +176,7 @@ exec(compile(code, "<stdin>", "exec"))
 
         script_text = (ROOT / "ops/backup-service.sh").read_text()
         script_text = script_text.replace("/run/lock/bojin-maintenance.lock", str(lock_file))
+        script_text = script_text.replace("/var/backups/bojin-deploy", str(app_dir / "deploy-backups"))
         script_text = script_text.replace("/opt/bojin", str(app_dir))
         script_text = script_text.replace("PATH=/usr/bin:/bin", f"PATH={Path(NODE_BIN).parent}:/usr/bin:/bin")
         script_text = script_text.replace("/usr/bin/node", NODE_BIN)
