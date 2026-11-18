@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F4F1EA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="薄肌日课">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>登录 · 薄肌日课</title>
 <style>
 :root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--bad:#A83A3A;--ok:#2E6B4E;color-scheme:light}
@@ -10,7 +21,7 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:15px;line-height:1.55}
-main{max-width:380px;margin:0 auto;padding:56px 16px}
+main{max-width:380px;margin:0 auto;padding:calc(56px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(56px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 h1{font-size:24px;margin:0 0 4px}
 p{margin:0 0 20px;color:var(--muted)}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 4px}

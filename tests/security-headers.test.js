@@ -12,7 +12,7 @@ for(const [secure,proxy] of [['0','0'],['0','1'],['1','0'],['1','1']]) test('sec
  const worker=await fetch('http://127.0.0.1:'+port+'/vendor/heic2any-worker.js');
  assert.equal(worker.headers.get('content-security-policy'),"default-src 'none'; script-src 'unsafe-eval'");
 
- for(const route of ['/login.html','/privacy.html','/guide.html','/index.html','/api/health','/api/me','/missing','/api/auth/get-session','/shim.js','/ocr/tesseract-core-lstm.wasm.js','/_blob/00000000000000000000000000000000']) for(const forwarded of ['http','https','HTTPS','https, http']){
+ for(const route of ['/login.html','/privacy.html','/guide.html','/index.html','/manifest.webmanifest','/icons/icon-192.png','/api/health','/api/me','/missing','/api/auth/get-session','/shim.js','/ocr/tesseract-core-lstm.wasm.js','/_blob/00000000000000000000000000000000']) for(const forwarded of ['http','https','HTTPS','https, http']){
   const r=await fetch('http://127.0.0.1:'+port+route,{redirect:'manual',headers:{'X-Forwarded-Proto':forwarded}});
   assert.equal(r.headers.get('strict-transport-security'),secure==='1'||proxy==='1'&&forwarded.toLowerCase().split(',')[0]==='https'?'max-age=15552000; includeSubDomains':null);
   assert.equal(r.headers.get('cross-origin-opener-policy'),'same-origin');
