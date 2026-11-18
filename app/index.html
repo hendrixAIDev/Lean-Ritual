@@ -397,6 +397,26 @@ const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
 const rawLsGet = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
 const rawLsSet = (k, v) => { try { if (typeof localStorage !== "undefined") localStorage.setItem(k, v); } catch {} };
+const rawLsDel = k => { try { if (typeof localStorage !== "undefined") localStorage.removeItem(k); } catch {} };
+const PENDING_LANG_TTL_MS = 24 * 60 * 60 * 1000;
+function markExplicitLang(l){
+  rawLsSet("bj-lang", l);
+  rawLsSet("bj-lang-set-at", String(Date.now()));
+  rawLsSet("bj-lang-pending", l);
+}
+function clearPendingLang(){
+  rawLsDel("bj-lang-pending");
+}
+function readPendingLang(){
+  const p = validLang(rawLsGet("bj-lang-pending"));
+  if (!p) return null;
+  const ts = Number(rawLsGet("bj-lang-set-at"));
+  if (!Number.isFinite(ts) || ts <= 0 || Date.now() - ts > PENDING_LANG_TTL_MS) {
+    clearPendingLang();
+    return null;
+  }
+  return p;
+}
 function detectBrowserLang(nav){
   const list = Array.isArray(nav?.languages) && nav.languages.length ? nav.languages : (typeof nav?.language === "string" && nav.language.trim() ? [nav.language] : []);
   if (!list.length) return "zh";
@@ -422,7 +442,7 @@ function resolveLang({ search = "", explicit = null, profileLang = null, nav = n
 }
 const initSearch = (() => { try { return typeof location !== "undefined" ? (location.search || "") : ""; } catch { return ""; } })();
 const urlLangOverride = queryLang(initSearch);
-if (urlLangOverride) rawLsSet("bj-lang", urlLangOverride);
+if (urlLangOverride) markExplicitLang(urlLangOverride);
 
 const I18N = {
   zh: {
@@ -1229,11 +1249,18 @@ async function setLang(next, { persistProfile = true } = {}){
   const l = validLang(next);
   if (!l) return;
   S.explicitLang = l;
-  rawLsSet("bj-lang", l);
+  markExplicitLang(l);
   applyDocLang();
   if (S.ready) render();
-  if (persistProfile && S.profile && S.store && !S.loadError && S.profile.lang !== l) {
-    try { await updateProfile(p => { p.lang = l; }); } catch {}
+  if (persistProfile && S.profile && S.store && !S.loadError) {
+    if (S.profile.lang === l) {
+      clearPendingLang();
+    } else {
+      try {
+        await updateProfile(p => { p.lang = l; });
+        clearPendingLang();
+      } catch {}
+    }
   }
 }
 
@@ -1362,7 +1389,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 
 /* ============ 存储 ============ */
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
-  explicitLang: urlLangOverride || validLang(rawLsGet("bj-lang")),
+  explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
   drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null };
 applyDocLang();
@@ -1526,9 +1553,29 @@ const dayTargets = date => S.days[date]?.targets || targets();
 async function loadAll(){
   try {
     S.profile = migrateProfile(await S.store.get("app/profile"));
-    if (!urlLangOverride && validLang(S.profile?.lang)) {
+    const pendingLang = urlLangOverride || readPendingLang();
+    if (pendingLang) {
+      S.explicitLang = pendingLang;
+      rawLsSet("bj-lang", pendingLang);
+      if (S.profile) {
+        try {
+          if (S.profile.lang !== pendingLang) {
+            const saved = await mutate("app/profile", cur => {
+              if (!cur) return null;
+              const p = migrateProfile(cur);
+              p.lang = pendingLang;
+              return p;
+            });
+            if (saved) S.profile = migrateProfile(saved);
+          }
+          clearPendingLang();
+        } catch (e) { console.warn("profile lang sync failed", e); }
+      }
+    } else if (validLang(S.profile?.lang)) {
       S.explicitLang = validLang(S.profile.lang);
       rawLsSet("bj-lang", S.explicitLang);
+    } else {
+      S.explicitLang = null;
     }
     applyDocLang();
     const days = await S.store.list("days", {order:"date", limit:1000});
@@ -1815,7 +1862,7 @@ async function submitSetup(form){
     injuries:all("injuries"), injNote:g("injNote")||"", supps:all("supps"),
     updatedAt:new Date().toISOString()};
   const today = todayStr();
-  const chosenLang = validLang(S.explicitLang) || validLang(rawLsGet("bj-lang"));
+  const chosenLang = validLang(S.explicitLang) || readPendingLang();
   const apply = p => { Object.assign(p, fields); if (chosenLang) p.lang = chosenLang; p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION; };
   S.busy.setup = true; if (btn) btn.disabled = true;
   try {
@@ -1826,6 +1873,7 @@ async function submitSetup(form){
       await write("profileHistory/" + h.id, h);
     }
     await updateProfile(apply);
+    if (chosenLang) clearPendingLang();
     if (h) S.profileHistory = [h, ...(S.profileHistory||[])];
     S.editing = false; S.tab = "today";
     render(); window.scrollTo(0,0);
@@ -3713,10 +3761,6 @@ document.addEventListener("submit", ev => { if (ev.target.id === "setup") { ev.p
   // 诊断：记下这次打开时平台给的能力，方便排查看图估算
   if (S.cloud) { try { S.store.set("meta/diag", {at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!sample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!assets, comments:!!comments, owner:S.owner}).catch(()=>{}); } catch {} }
   await loadAll();
-  const syncLang = urlLangOverride || (!validLang(S.profile?.lang) ? validLang(S.explicitLang) : null);
-  if (syncLang && S.profile && !S.loadError && S.profile.lang !== syncLang) {
-    updateProfile(p => { p.lang = syncLang; }).catch(() => {});
-  }
   if (S.cloud) { try { S.account = await S.store.get("meta/account"); } catch {} }
   S.ready = true; render();
   rescueDrafts();

@@ -177,7 +177,8 @@ function createLoginEnv({
   search = '',
   storage = {},
   languages = ['zh-CN'],
-  fetchImpl
+  fetchImpl,
+  fixedIso = '2026-11-18T12:00:00'
 } = {}) {
   const localStorage = makeStorage(storage);
   const docEl = { lang: 'zh-CN' };
@@ -271,6 +272,7 @@ function createLoginEnv({
       return [];
     }
   };
+  const MockDate = makeFixedDate(fixedIso);
   const ctx = vm.createContext({
     window,
     document,
@@ -279,6 +281,7 @@ function createLoginEnv({
     navigator: { languages },
     history: { replaceState(_, __, u) { location.replacedState = u; } },
     URLSearchParams,
+    Date: MockDate,
     fetch: fetchImpl || (async () => ({ ok: false, status: 400, json: async () => ({ code: 'INVALID_EMAIL_OR_PASSWORD' }) }))
   });
   vm.runInContext(loginScript, ctx);
@@ -336,7 +339,7 @@ function findUnexpectedChineseInHtml(html) {
   return badText;
 }
 
-test('language resolution order: ?lang= override > explicit choice > profile.lang after login > navigator.languages > zh fallback', async () => {
+test('language resolution order: explicit session choice (login switch, ?lang=, Me switch) > profile.lang > navigator.languages > zh fallback', async () => {
   // 1. Fallback to zh when navigator has no languages and nothing is stored
   {
     const env = createAppEnv({ languages: [] });
@@ -344,39 +347,138 @@ test('language resolution order: ?lang= override > explicit choice > profile.lan
     assert.equal(env.docEl.lang, 'zh-CN');
   }
 
-  // 2. navigator.languages detection: any zh* -> zh, otherwise en
+  // 2. No explicit choice & no profile.lang -> navigator.languages detection (any zh* -> zh, else en, empty -> zh)
   {
-    const envZh = createAppEnv({ languages: ['en-US', 'zh-Hant-HK'] });
-    assert.equal(vm.runInContext('getLang()', envZh.ctx), 'zh');
-    assert.equal(envZh.docEl.lang, 'zh-CN');
+    const baseProfile = {
+      sex: 'm', age: 28, height: 175, weight: 70, steps: 9500, exp: 'mid',
+      stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym', startDate: '2026-10-01'
+    };
 
-    const envEn = createAppEnv({ languages: ['en-US', 'fr-FR'] });
+    const envEn = createAppEnv({
+      storage: { 'bj-lang': 'zh' }, // stale cached value without bj-lang-pending
+      languages: ['en-US', 'fr-FR'],
+      docs: { 'app/profile': baseProfile }
+    });
+    await vm.runInContext('loadAll()', envEn.ctx);
     assert.equal(vm.runInContext('getLang()', envEn.ctx), 'en');
     assert.equal(envEn.docEl.lang, 'en');
     assert.equal(envEn.document.title, 'Lean Ritual');
+
+    const envZh = createAppEnv({
+      languages: ['en-US', 'zh-Hant-HK'],
+      docs: { 'app/profile': baseProfile }
+    });
+    await vm.runInContext('loadAll()', envZh.ctx);
+    assert.equal(vm.runInContext('getLang()', envZh.ctx), 'zh');
+    assert.equal(envZh.docEl.lang, 'zh-CN');
+
+    const envFallback = createAppEnv({
+      languages: [],
+      docs: { 'app/profile': baseProfile }
+    });
+    await vm.runInContext('loadAll()', envFallback.ctx);
+    assert.equal(vm.runInContext('getLang()', envFallback.ctx), 'zh');
   }
 
-  // 3. Explicit localStorage choice (bj-lang) wins over navigator.languages pre-login and when profile.lang is unset
+  // 3. Login-page switch to 'en' with existing profile.lang='zh' -> stays 'en' after login and updates profile.lang='en' without clobbering other fields
   {
-    const env1 = createAppEnv({ storage: { 'bj-lang': 'en' }, languages: ['zh-CN'] });
-    assert.equal(vm.runInContext('getLang()', env1.ctx), 'en');
+    const login = createLoginEnv({
+      languages: ['zh-CN'],
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ user: { id: 'u1' } }) })
+    });
+    assert.equal(login.ctx.window.ritualLoginI18n.getLang(), 'zh');
+    login.clickLang('en');
+    assert.equal(login.ctx.window.ritualLoginI18n.getLang(), 'en');
+    assert.equal(login.localStorage.getItem('bj-lang'), 'en');
+    assert.equal(login.localStorage.getItem('bj-lang-pending'), 'en');
+    assert.ok(Number(login.localStorage.getItem('bj-lang-set-at')) > 0);
+    await login.submit();
+    assert.equal(login.location.href, '/');
 
-    const env2 = createAppEnv({ storage: { 'bj-lang': 'zh' }, languages: ['en-US'] });
-    assert.equal(vm.runInContext('getLang()', env2.ctx), 'zh');
+    const existingProfile = {
+      sex: 'm', age: 29, height: 178, weight: 74.5, bf: 15.2, steps: 9500, exp: 'mid',
+      stage: 'cut', trainDays: [1, 3, 5], slot: 'am', equipment: 'gym',
+      injuries: ['shoulder'], injNote: 'Keep neutral grip', supps: ['creatine'],
+      startDate: '2026-10-01', kcalAdjust: -120, deloadEvery: 9,
+      swaps: { '深蹲': '腿举' },
+      exEdits: { '平板杠铃卧推': { name: '哑铃地板卧推', sets: 3, lo: 6, hi: 8 } },
+      adjustLog: [{ date: '2026-11-16', text: '每日热量 -120 kcal' }],
+      lang: 'zh'
+    };
+    const app = createAppEnv({
+      storage: login.localStorage.dump(),
+      languages: ['zh-CN'],
+      docs: { 'app/profile': existingProfile }
+    });
+    assert.equal(vm.runInContext('getLang()', app.ctx), 'en');
+    await vm.runInContext('loadAll()', app.ctx);
+    assert.equal(vm.runInContext('getLang()', app.ctx), 'en');
+    assert.equal(app.docEl.lang, 'en');
+    assert.equal(app.localStorage.getItem('bj-lang'), 'en');
+    assert.equal(app.localStorage.getItem('bj-lang-pending'), null);
 
-    const login1 = createLoginEnv({ storage: { 'bj-lang': 'en' }, languages: ['zh-CN'] });
-    assert.equal(login1.ctx.window.ritualLoginI18n.getLang(), 'en');
-    assert.equal(login1.docEl.lang, 'en');
-    login1.clickLang('zh');
-    assert.equal(login1.ctx.window.ritualLoginI18n.getLang(), 'zh');
-    assert.equal(login1.localStorage.getItem('bj-lang'), 'zh');
-    assert.equal(login1.docEl.lang, 'zh-CN');
+    const savedProfile = await app.store.get('app/profile');
+    assert.equal(savedProfile.lang, 'en');
+    assert.equal(savedProfile.weight, 74.5);
+    assert.equal(savedProfile.kcalAdjust, -120);
+    assert.deepEqual(savedProfile.swaps, { '深蹲': '腿举' });
+    assert.deepEqual(savedProfile.exEdits, { '平板杠铃卧推': { name: '哑铃地板卧推', sets: 3, lo: 6, hi: 8 } });
+    assert.deepEqual(savedProfile.adjustLog, [{ date: '2026-11-16', text: '每日热量 -120 kcal' }]);
   }
 
-  // 4. On login (loadAll), profile.lang overrides stale localStorage bj-lang; then manual switch updates both bj-lang and profile.lang
+  // 4. ?lang=zh with profile.lang='en' -> stays 'zh' and updates profile.lang='zh' (both via /login.html?lang=zh -> login and via /?lang=zh directly)
   {
+    const loginViaUrl = createLoginEnv({
+      search: '?lang=zh',
+      storage: { 'bj-lang': 'en' },
+      languages: ['en-US'],
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ user: { id: 'u1' } }) })
+    });
+    assert.equal(loginViaUrl.ctx.window.ritualLoginI18n.getLang(), 'zh');
+    await loginViaUrl.submit();
+    assert.equal(loginViaUrl.location.href, '/');
+
+    const appAfterLoginUrl = createAppEnv({
+      storage: loginViaUrl.localStorage.dump(),
+      languages: ['en-US'],
+      docs: {
+        'app/profile': {
+          sex: 'f', age: 27, height: 166, weight: 58, steps: 8000, exp: 'new',
+          stage: 'maintain', trainDays: [2, 4, 6], slot: 'eve', equipment: 'home',
+          startDate: '2026-10-10', lang: 'en'
+        }
+      }
+    });
+    await vm.runInContext('loadAll()', appAfterLoginUrl.ctx);
+    assert.equal(vm.runInContext('getLang()', appAfterLoginUrl.ctx), 'zh');
+    assert.equal(appAfterLoginUrl.docEl.lang, 'zh-CN');
+    assert.equal((await appAfterLoginUrl.store.get('app/profile')).lang, 'zh');
+    assert.equal((await appAfterLoginUrl.store.get('app/profile')).weight, 58);
+
+    const appDirectUrl = createAppEnv({
+      search: '?lang=zh',
+      storage: { 'bj-lang': 'en' },
+      languages: ['en-US'],
+      docs: {
+        'app/profile': {
+          sex: 'm', age: 28, height: 175, weight: 70, steps: 9500, exp: 'mid',
+          stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
+          startDate: '2026-10-01', lang: 'en'
+        }
+      }
+    });
+    await vm.runInContext('loadAll()', appDirectUrl.ctx);
+    assert.equal(vm.runInContext('getLang()', appDirectUrl.ctx), 'zh');
+    assert.equal(appDirectUrl.docEl.lang, 'zh-CN');
+    assert.equal((await appDirectUrl.store.get('app/profile')).lang, 'zh');
+    assert.equal(appDirectUrl.localStorage.getItem('bj-lang-pending'), null);
+  }
+
+  // 5. No explicit choice in this session (detected default or stale/expired localStorage) -> profile.lang wins; Me switch updates profile.lang
+  {
+    const staleTs = String(Date.parse('2026-11-15T12:00:00')); // 3 days old (>24h TTL)
     const env = createAppEnv({
-      storage: { 'bj-lang': 'zh' },
+      storage: { 'bj-lang': 'zh', 'bj-lang-pending': 'zh', 'bj-lang-set-at': staleTs },
       languages: ['zh-CN'],
       docs: {
         'app/profile': {
@@ -386,44 +488,19 @@ test('language resolution order: ?lang= override > explicit choice > profile.lan
         }
       }
     });
-    assert.equal(vm.runInContext('getLang()', env.ctx), 'zh');
     await vm.runInContext('loadAll()', env.ctx);
     assert.equal(vm.runInContext('getLang()', env.ctx), 'en');
     assert.equal(env.localStorage.getItem('bj-lang'), 'en');
+    assert.equal(env.localStorage.getItem('bj-lang-pending'), null);
     assert.equal(env.docEl.lang, 'en');
 
-    // Clicking manual switch in UI updates both bj-lang and profile.lang
+    // Clicking manual switch in Me updates both bj-lang and profile.lang
     vm.runInContext('S.ready = true; render();', env.ctx);
     await env.clickAct('lang', 'zh');
     assert.equal(vm.runInContext('getLang()', env.ctx), 'zh');
     assert.equal(env.localStorage.getItem('bj-lang'), 'zh');
     assert.equal((await env.store.get('app/profile')).lang, 'zh');
     assert.equal(env.docEl.lang, 'zh-CN');
-  }
-
-  // 5. ?lang=en|zh query param overrides everything (bj-lang, profile.lang, navigator.languages) and sets bj-lang
-  {
-    const env = createAppEnv({
-      search: '?lang=en',
-      storage: { 'bj-lang': 'zh' },
-      languages: ['zh-CN'],
-      docs: {
-        'app/profile': {
-          sex: 'm', age: 28, height: 175, weight: 70, steps: 9500, exp: 'mid',
-          stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
-          startDate: '2026-10-01', lang: 'zh'
-        }
-      }
-    });
-    assert.equal(env.localStorage.getItem('bj-lang'), 'en');
-    await vm.runInContext('loadAll()', env.ctx);
-    assert.equal(vm.runInContext('getLang()', env.ctx), 'en');
-    assert.equal(env.localStorage.getItem('bj-lang'), 'en');
-
-    const login = createLoginEnv({ search: '?lang=zh', storage: { 'bj-lang': 'en' }, languages: ['en-US'] });
-    assert.equal(login.ctx.window.ritualLoginI18n.getLang(), 'zh');
-    assert.equal(login.localStorage.getItem('bj-lang'), 'zh');
-    assert.equal(login.docEl.lang, 'zh-CN');
   }
 });
 

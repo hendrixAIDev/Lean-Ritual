@@ -749,11 +749,12 @@ async function runEnglishJourney(browser, jpegFixture) {
       await assertZeroChineseVisible(page, `${tab} tab`);
     }
 
-    // 6. Cross-device profile.lang override: login from a zh-CN browser overrides localStorage to profile.lang ('en')
+    // 6. Cross-device profile.lang override (when no explicit choice was made) AND explicit login-page switch / ?lang= handoff
     const ctxZh = await browser.newContext({ viewport, locale: 'zh-CN' });
     const pageZh = await ctxZh.newPage();
     const guardsZh = await attachGuards(pageZh, srv.base, 'cross-device-lang');
     try {
+      // 6a. Stale bj-lang without explicit choice in this session -> profile.lang ('en') wins
       await pageZh.goto(srv.base + '/login.html');
       assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'zh-CN');
       await pageZh.evaluate(() => localStorage.setItem('bj-lang', 'zh'));
@@ -765,13 +766,38 @@ async function runEnglishJourney(browser, jpegFixture) {
       assert.equal(await pageZh.evaluate(() => localStorage.getItem('bj-lang')), 'en');
       await assertZeroChineseVisible(pageZh, 'cross-device Me/Today after login');
 
-      // Switch to 中文 in Me -> updates profile.lang to 'zh'
-      await pageZh.locator('#tabs [data-act="tab"][data-v="me"]').click();
+      // 6b. Switch to 中文 in Me -> updates profile.lang to 'zh', then sign out
+      await pageZh.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
       const langSaved = pageZh.waitForResponse(r => committedDoc(r, p => p.endsWith('/app/profile')));
       await pageZh.locator('[data-act="lang"][data-v="zh"]').click();
       await langSaved;
       assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'zh-CN');
       assert.equal(await pageZh.evaluate(() => S.profile?.lang), 'zh');
+      await pageZh.locator('[data-act="logout"]').click();
+      await pageZh.waitForURL('**/login.html');
+
+      // 6c. Explicit login-page switch to English when profile.lang='zh' -> stays 'en' after login and updates profile.lang='en' without clobbering weight
+      await pageZh.locator('#lang-switch [data-lang="en"]').click();
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'en');
+      await pageZh.locator('#e').fill(email);
+      await pageZh.locator('#p').fill(pw);
+      await pageZh.locator('#go').click();
+      await pageZh.locator('nav#tabs').waitFor({ state: 'visible' });
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'en');
+      assert.deepEqual(await pageZh.evaluate(() => ({ lang: S.profile?.lang, weight: S.profile?.weight })), { lang: 'en', weight: 73 });
+      await assertZeroChineseVisible(pageZh, 'after explicit login-page switch to English');
+
+      // 6d. ?lang=zh on login.html when profile.lang='en' -> stays 'zh' after login and updates profile.lang='zh'
+      await pageZh.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
+      await pageZh.locator('[data-act="logout"]').click();
+      await pageZh.waitForURL('**/login.html');
+      await pageZh.goto(srv.base + '/login.html?lang=zh');
+      await pageZh.locator('#e').fill(email);
+      await pageZh.locator('#p').fill(pw);
+      await pageZh.locator('#go').click();
+      await pageZh.locator('nav#tabs').waitFor({ state: 'visible' });
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'zh-CN');
+      assert.deepEqual(await pageZh.evaluate(() => ({ lang: S.profile?.lang, weight: S.profile?.weight })), { lang: 'zh', weight: 73 });
 
       assert.deepEqual(guardsZh.cspViolations, []);
       assert.deepEqual(guardsZh.pageErrors, []);
