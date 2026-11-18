@@ -57,11 +57,11 @@ test('response_format is sent only when caller explicitly requests JSON',async()
  }finally{db.close();}
 });
 
-test('JSON mode retries once without response_format when provider rejects with 400',async()=>{
+test('JSON mode retries once without response_format when provider rejects response_format with 400',async()=>{
  const sent=[];
  const {db,proxy}=fixture({aiDaily:10,aiGlobalDaily:10,aiReasoningEffort:'low'},async(u,o)=>{
   const req=JSON.parse(o.body);sent.push(req);
-  if(sent.length===1)return {ok:false,status:400,json:async()=>({error:{code:400,message:'response_format unsupported'}})};
+  if(sent.length===1)return {ok:false,status:400,json:async()=>({error:{code:400,message:'Provider returned error',metadata:{raw:'{"error":{"message":"Invalid parameter: response_format json_object is not supported"}}'}}})};
   return {ok:true,status:200,json:async()=>({choices:[{message:{content:'{"ok":true}'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:20}})};
  });
  try{
@@ -75,24 +75,36 @@ test('JSON mode retries once without response_format when provider rejects with 
  }finally{db.close();}
 });
 
-test('400 retry does not trigger for text calls, non-400 errors, or more than once',async()=>{
- let calls=0;
- const {db,proxy}=fixture({aiDaily:10,aiGlobalDaily:10},async()=>{
-  calls++;return {ok:false,status:400,json:async()=>({error:{code:400,message:'bad request'}})};
- });
+test('retry never runs for unrelated 400s, HTTP-200 error envelopes, text calls, non-400s, or more than once',async()=>{
+ for(const unrelated of [
+  {ok:false,status:400,body:{error:{code:400,message:'Bad Request'}}},
+  {ok:false,status:400,body:{error:{code:400,message:'Invalid image data'}}},
+  {ok:false,status:400,body:{error:{code:400,message:'maximum context length exceeded'}}},
+  {ok:true,status:200,body:{error:{code:400,message:'response_format unsupported'}}},
+  {ok:false,status:502,body:{error:{code:502,message:'response_format upstream error'}}}
+ ]){
+  let calls=0;
+  const {db,proxy}=fixture({aiDaily:10,aiGlobalDaily:10},async()=>{calls++;return {ok:unrelated.ok,status:unrelated.status,json:async()=>unrelated.body};});
+  try{
+   await assert.rejects(proxy({id:'a'},{messages:[{content:'json call'}],json:true}),e=>e.code==='ai_failed');
+   assert.equal(calls,1,`unexpected retry for ${JSON.stringify(unrelated)}`);
+   assert.equal(db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
+  }finally{db.close();}
+ }
+ let textCalls=0;
+ const fText=fixture({aiDaily:10,aiGlobalDaily:10},async()=>{textCalls++;return {ok:false,status:400,json:async()=>({error:{code:400,message:'response_format is not supported'}})};});
  try{
-  await assert.rejects(proxy({id:'a'},{messages:[{content:'text call'}]}),e=>e.code==='ai_failed');
-  assert.equal(calls,1);
-  calls=0;
-  await assert.rejects(proxy({id:'a'},{messages:[{content:'json call'}],json:true}),e=>e.code==='ai_failed');
-  assert.equal(calls,2);
- }finally{db.close();}
- let calls502=0;
- const f2=fixture({aiDaily:10,aiGlobalDaily:10},async()=>{calls502++;return {ok:false,status:502,json:async()=>({})};});
+  await assert.rejects(fText.proxy({id:'a'},{messages:[{content:'text call'}]}),e=>e.code==='ai_failed');
+  assert.equal(textCalls,1);
+ }finally{fText.db.close();}
+
+ let repeatCalls=0;
+ const fRepeat=fixture({aiDaily:10,aiGlobalDaily:10},async()=>{repeatCalls++;return {ok:false,status:400,json:async()=>({error:{code:400,message:'response_format is not supported'}})};});
  try{
-  await assert.rejects(f2.proxy({id:'a'},{messages:[{content:'json call'}],json:true}),e=>e.code==='ai_failed');
-  assert.equal(calls502,1);
- }finally{f2.db.close();}
+  await assert.rejects(fRepeat.proxy({id:'a'},{messages:[{content:'json call'}],json:true}),e=>e.code==='ai_failed');
+  assert.equal(repeatCalls,2);
+  assert.equal(fRepeat.db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
+ }finally{fRepeat.db.close();}
 });
 
 test('AI_REASONING_EFFORT validates at startup and passes reasoning.effort only when set',async()=>{
@@ -118,7 +130,7 @@ test('AI_REASONING_EFFORT validates at startup and passes reasoning.effort only 
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test('diagnostic log records one metadata line with tokens and finish_reason and never logs personal markers',async()=>{
+test('diagnostic log uses configured model, allowlisted finish_reason, numeric counters, and never logs personal markers even when echoed in model or finish_reason',async()=>{
  const logs=[];
  const origLog=console.log,origErr=console.error;
  console.log=(...a)=>logs.push(a.join(' '));
@@ -132,12 +144,42 @@ test('diagnostic log records one metadata line with tokens and finish_reason and
   response:'PLANTED_RESPONSE_MARKER_5555',
   errMsg:'PLANTED_UPSTREAM_ERR_MARKER_4466'
  };
- let pseudonym='';
+ let pseudonym='',step=0;
  const {db,proxy}=fixture({aiDaily:10,aiGlobalDaily:10,authSecret:markers.secret,orModel:'google/gemini-3.8-flash'},async(u,o)=>{
-  const req=JSON.parse(o.body);pseudonym=req.user;
-  if(logs.length===1)return {ok:true,status:200,json:async()=>({model:'google/gemini-3.8-flash',choices:[{message:{content:'   '},finish_reason:'length'}],usage:{prompt_tokens:501,completion_tokens:2000,completion_tokens_details:{reasoning_tokens:2000}}})};
-  if(logs.length===2)return {ok:false,status:502,json:async()=>({error:{message:markers.errMsg}})};
-  return {ok:true,status:200,json:async()=>({model:'google/gemini-3.8-flash',choices:[{message:{content:`{"note":"${markers.response}"}`},finish_reason:'stop'}],usage:{prompt_tokens:321,completion_tokens:1234,completion_tokens_details:{reasoning_tokens:789}}})};
+  const req=JSON.parse(o.body);pseudonym=req.user;step++;
+  if(step===1)return {
+   ok:true,status:200,
+   json:async()=>({
+    model:`${markers.prompt}/${markers.uid}/${pseudonym}`,
+    choices:[{message:{content:`{"note":"${markers.response}"}`},finish_reason:pseudonym}],
+    usage:{prompt_tokens:321,completion_tokens:1234,completion_tokens_details:{reasoning_tokens:789}}
+   })
+  };
+  if(step===2)return {
+   ok:true,status:200,
+   json:async()=>({
+    model:markers.response,
+    choices:[{message:{content:'ok'},finish_reason:'content_filter'}],
+    usage:{prompt_tokens:11,completion_tokens:22,completion_tokens_details:{reasoning_tokens:0}}
+   })
+  };
+  if(step===3)return {
+   ok:true,status:200,
+   json:async()=>({
+    model:markers.history,
+    choices:[{message:{content:'ok'},finish_reason:'tool_calls'}],
+    usage:{prompt_tokens:5,completion_tokens:6}
+   })
+  };
+  if(step===4)return {
+   ok:true,status:200,
+   json:async()=>({
+    model:markers.uid,
+    choices:[{message:{content:'   '},finish_reason:'stop'}],
+    usage:{prompt_tokens:501,completion_tokens:12,completion_tokens_details:{reasoning_tokens:12}}
+   })
+  };
+  return {ok:false,status:502,json:async()=>({model:markers.prompt,choices:[{finish_reason:markers.errMsg}],error:{message:markers.errMsg}})};
  });
  try{
   await proxy({id:markers.uid},{
@@ -150,24 +192,39 @@ test('diagnostic log records one metadata line with tokens and finish_reason and
   assert.match(logs[0],/\bkind=json\b/);
   assert.match(logs[0],/\bimages=1\b/);
   assert.match(logs[0],/\bmodel=google\/gemini-3\.8-flash\b/);
-  assert.match(logs[0],/\bfinish_reason=stop\b/);
-  assert.match(logs[0],/\b321\b/);
-  assert.match(logs[0],/\b1234\b/);
-  assert.match(logs[0],/\b789\b/);
+  assert.match(logs[0],/\bfinish_reason=other\b/);
+  assert.match(logs[0],/\bprompt=321\b/);
+  assert.match(logs[0],/\bcompletion=1234\b/);
+  assert.match(logs[0],/\breasoning=789\b/);
   assert.match(logs[0],/\bempty=false\b/);
   assert.match(logs[0],/\bms=\d+\b/);
 
-  await assert.rejects(proxy({id:markers.uid},{messages:[{content:markers.prompt}]}),e=>e.code==='ai_failed');
+  await proxy({id:markers.uid},{messages:[{content:markers.prompt}]});
   assert.equal(logs.length,2);
-  assert.match(logs[1],/\bkind=text\b/);
-  assert.match(logs[1],/\bimages=0\b/);
-  assert.match(logs[1],/\bfinish_reason=length\b/);
-  assert.match(logs[1],/\b501\b/);
-  assert.match(logs[1],/\b2000\b/);
-  assert.match(logs[1],/\bempty=true\b/);
+  assert.match(logs[1],/\bmodel=google\/gemini-3\.8-flash\b/);
+  assert.match(logs[1],/\bfinish_reason=content_filter\b/);
+
+  await proxy({id:markers.uid},{messages:[{content:markers.prompt}]});
+  assert.equal(logs.length,3);
+  assert.match(logs[2],/\bfinish_reason=tool_calls\b/);
 
   await assert.rejects(proxy({id:markers.uid},{messages:[{content:markers.prompt}]}),e=>e.code==='ai_failed');
-  assert.equal(logs.length,3);
+  assert.equal(logs.length,4);
+  assert.match(logs[3],/\bkind=text\b/);
+  assert.match(logs[3],/\bimages=0\b/);
+  assert.match(logs[3],/\bfinish_reason=stop\b/);
+  assert.match(logs[3],/\bprompt=501\b/);
+  assert.match(logs[3],/\bcompletion=12\b/);
+  assert.match(logs[3],/\breasoning=12\b/);
+  assert.match(logs[3],/\bempty=true\b/);
+
+  await assert.rejects(proxy({id:markers.uid},{messages:[{content:markers.prompt}]}),e=>e.code==='ai_failed');
+  assert.equal(logs.length,5);
+  assert.match(logs[4],/\bfinish_reason=error\b/);
+  assert.match(logs[4],/\bprompt=0\b/);
+  assert.match(logs[4],/\bcompletion=0\b/);
+  assert.match(logs[4],/\breasoning=0\b/);
+  assert.match(logs[4],/\bempty=true\b/);
 
   const combined=logs.join('\n');
   for(const m of [...Object.values(markers),pseudonym]){
@@ -176,6 +233,50 @@ test('diagnostic log records one metadata line with tokens and finish_reason and
  }finally{
   console.log=origLog;console.error=origErr;db.close();
  }
+});
+
+test('length-truncated responses with empty content surface dedicated truncation error end-to-end',async()=>{
+ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+ const shimSrc=fs.readFileSync(path.join(__dirname,'../public/shim.js'),'utf8');
+ const htmlSrc=fs.readFileSync(path.join(__dirname,'../app/index.html'),'utf8');
+ const appScript=htmlSrc.match(/<script>([\s\S]*?)<\/script>/)[1].split('/* ============ 启动 ============ */')[0];
+ const appCtx=vm.createContext({window:{ritual:{hosted:true}},document:{addEventListener(){},querySelector(){return {innerHTML:''};}},localStorage:{getItem:()=>null,setItem(){}},console,URL,Date,setTimeout,clearTimeout});
+ vm.runInContext(appScript,appCtx);
+ const sampleErr=e=>appCtx.sampleErr(e);
+
+ let upstream={choices:[{message:{content:''},finish_reason:'length'}],usage:{prompt_tokens:800,completion_tokens:6000,completion_tokens_details:{reasoning_tokens:6000}}};
+ const logs=[];
+ const {db,proxy}=fixture({aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)},async()=>({ok:true,status:200,json:async()=>upstream}));
+ try{
+  const ctx=vm.createContext({window:{},location:{},URLSearchParams,fetch:async(url,options)=>{
+   if(url==='/api/me')return {ok:true,status:200,json:async()=>({id:'alice',ai:true})};
+   try{
+    const res=await proxy({id:'alice'},JSON.parse(options.body));
+    return {ok:true,status:200,json:async()=>res};
+   }catch(e){
+    return {ok:false,status:e.status||500,json:async()=>({error:e.code||'server_error',message:e.message})};
+   }
+  }});
+  vm.runInContext(shimSrc,ctx);
+  const sample=await ctx.window.ritual.use('sample');
+
+  for(const emptyContent of ['','   ',null]){
+   upstream={choices:[{message:{content:emptyContent},finish_reason:'length'}],usage:{prompt_tokens:800,completion_tokens:6000,completion_tokens_details:{reasoning_tokens:6000}}};
+   let err;
+   await assert.rejects(sample.json('feedback'),e=>{err=e;return e.code==='truncated';});
+   assert.equal(sampleErr(err),'AI 的回答太长被截断了，请再试一次或缩短反馈。');
+   assert.equal(sampleErr(err).replace('估算','分析'),'AI 的回答太长被截断了，请再试一次或缩短反馈。');
+  }
+  assert.match(logs[0],/\bfinish_reason=length\b/);
+  assert.match(logs[0],/\bcompletion=6000\b/);
+  assert.match(logs[0],/\breasoning=6000\b/);
+  assert.match(logs[0],/\bempty=true\b/);
+
+  upstream={choices:[{message:{content:'   '},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:5}};
+  let nonTruncErr;
+  await assert.rejects(sample.json('feedback'),e=>{nonTruncErr=e;return e.code==='ai_failed';});
+  assert.notEqual(sampleErr(nonTruncErr),'AI 的回答太长被截断了，请再试一次或缩短反馈。');
+ }finally{db.close();}
 });
 
 test('shim sample.json requests JSON mode, distinguishes truncated from invalid_json, and tolerates safe wrappers',async()=>{
