@@ -71,21 +71,56 @@
     } catch { return blob; }
   }
   function parseJSONText(t) {
-    t = String(t || "").replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+    t = String(t || "").replace(/^[\uFEFF\s]+|[\uFEFF\s]+$/g, "");
     try { return JSON.parse(t); } catch {}
-    const i = t.search(/[\[{]/), j = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
-    if (i >= 0 && j > i) { try { return JSON.parse(t.slice(i, j + 1)); } catch {} }
+    const fence = t.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+    if (fence) {
+      const inner = fence[1].replace(/^[\uFEFF\s]+|[\uFEFF\s]+$/g, "");
+      try { return JSON.parse(inner); } catch {}
+    }
+    const stripped = t.replace(/^\s*```(?:[a-zA-Z0-9_-]+)?/i, "").replace(/```\s*$/, "").trim();
+    if (stripped !== t) { try { return JSON.parse(stripped); } catch {} }
+    let tries = 0;
+    for (let start = 0; start < stripped.length && tries < 32; start++) {
+      const open = stripped[start];
+      if (open !== "{" && open !== "[") continue;
+      tries++;
+      const stack = [open === "{" ? "}" : "]"];
+      let inStr = false, esc = false;
+      for (let k = start + 1; k < stripped.length; k++) {
+        const ch = stripped[k];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+        else if (ch === "}" || ch === "]") {
+          if (ch !== stack.pop()) break;
+          if (!stack.length) {
+            try { return JSON.parse(stripped.slice(start, k + 1)); } catch { break; }
+          }
+        }
+      }
+    }
     throw { code: "invalid_json", message: "回答不是 JSON" };
   }
   const sample = async (input, opts = {}) => {
     const messages = typeof input === "string" ? [{ role: "user", content: input }] : input.map(t => ({ role: t.role, content: String(t.content ?? "") }));
     const images = [];
     for (const b of opts.images || []) if (b) images.push(await blobToDataURL(await shrink(b)));
-    const r = await api("POST", "/api/ai", { messages, images }, null, opts.signal);
+    const body = opts.json === true ? { messages, images, json: true } : { messages, images };
+    const r = await api("POST", "/api/ai", body, null, opts.signal);
     if (opts.onText) { try { opts.onText({ text: r.text, delta: r.text }); } catch {} }
     return r;
   };
-  sample.json = async (input, opts) => parseJSONText((await sample(input, opts)).text);
+  sample.json = async (input, opts) => {
+    const r = await sample(input, { ...opts, json: true });
+    if (r.truncated) throw { code: "truncated", message: "回答被截断" };
+    return parseJSONText(r.text);
+  };
   sample.limits = async () => ({ images: { max: 4, mediaTypes: ["image/jpeg", "image/png", "image/webp"] } });
 
   const assets = {

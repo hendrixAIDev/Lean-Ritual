@@ -65,7 +65,8 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 ## Monitoring and account operations
 
 - Configure external HTTPS uptime checks for `/api/health`, plus alerts for service restarts, disk capacity, backup age/offsite-copy failure and provider spending. Docker has an internal healthcheck; it does not prove mainland reachability.
-- Authentication failures and provider outages must not include passwords, keys, email links or record contents in logs. Do not turn on request-body logging. Backup/data paths are private.
+- Authentication failures and provider outages must not include passwords, keys, email links or record contents in logs. Do not turn on request-body logging. Backup/data paths are private. Each `/api/ai` call logs one metadata-only diagnostic line (`kind`, `images`, `model`, `finish_reason`, `prompt`/`completion`/`reasoning` token counts, `empty`, `ms`) and never logs prompts, responses, or user IDs.
+- Optional reasoning effort (`AI_REASONING_EFFORT`): unset or empty by default (no `reasoning` parameter sent). When set to `low`, `medium`, or `high`, `/api/ai` sends `reasoning: {"effort": "<value>"}` to OpenRouter; any other value fails startup naming `AI_REASONING_EFFORT`.
 - Issue/revoke invitations using scripts/auth-admin.js. Preserve legacy IDs with --legacy-user; verify the mapping with the owner first. After migrating, repeat the import only if needed; it fills missing records rather than overwriting.
 - Account deletion queues cleanup durably before deleting credentials. Files/records are removed after auth deletion, and interrupted cleanup retries at startup/every minute. If auth deletion itself failed, access stays blocked; the user can retry the authenticated /api/auth/delete-user endpoint with their password. Investigate repeated cleanup errors before launch.
 
