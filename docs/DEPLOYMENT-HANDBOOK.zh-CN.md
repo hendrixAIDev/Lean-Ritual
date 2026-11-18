@@ -107,12 +107,68 @@ SMTP、AUTH_SECRET、AI 凭证留在主机，不上传到 GitHub 变量或文档
 
 ### 数据恢复（受控维护流程）
 
-1. 确认灾难范围和可信快照，独立取得最新删除台账。先暂停部署/备份并停止所有数据写入者；不要因为健康接口失败就立即恢复数据库。
-2. 在新的空目录恢复，保留当前数据供调查。避免先把生产目录移走后才发现备份不可读。
-3. 准备仅恢复身份可读的快照与台账副本、bojin 可写的新目录。以 bojin 运行 `scripts/data-backup.js verify` 和 `restore SNAPSHOT EMPTY_TARGET --deletions LATEST_LEDGER`；不要输出数据或密钥。
-4. 工具校验哈希/SQLite 并重放删除记录；再验证恢复文件所有权、权限、数据库、照片、账号隔离和已删除账号不可恢复访问。
-5. 用隔离监听及适当邮件/AI控制完成验证，再在 `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` 维护锁包装器内切换数据路径、启动正式服务。配置与 AUTH_SECRET 需要从独立安全存储恢复，数据库快照不包含它们。
-6. 记录快照标识、台账时间、恢复版本、验证结果与未覆盖范围；成功演练才算恢复能力完成。
+1. **确认灾难范围并跨两个备份根目录查找真正的最新删除台账**：先暂停部署/备份并停止所有数据写入者；不要因为健康接口失败就立即恢复数据库。每日备份写入 `/var/backups/bojin/deletions-<UTC>.json`，每次发布写入 `/var/backups/bojin-deploy/<UTC>-<id>/deletions.json`；若发布晚于每日备份且期间有用户注销，仅用 `/var/backups/bojin/deletions-*.json` 会漏掉删除记录并**导致已删除账号、业务数据与凭证复活**。两个目录均为 `0710 root:bojin`（内部条目 `0700`/`0600` `root:root`），`admin` shell 直接展开通配符会在 `sudo` 前失败，须在 `sudo python3` 内按 `exportedAt` 跨目录选出最新台账：
+
+   ```sh
+   LATEST_LEDGER=$(sudo python3 -c '
+   import datetime, glob, json, os, sys
+   candidates = []
+   for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
+       for p in glob.glob(pattern):
+           if os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
+               continue
+           with open(p, "r", encoding="utf-8") as fh:
+               data = json.load(fh)
+           if data.get("version") == 1 and isinstance(data.get("users"), list) and isinstance(data.get("exportedAt"), str):
+               ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+               candidates.append((ts, p, data["exportedAt"], len(data["users"])))
+   if not candidates:
+       sys.exit("No valid deletion ledger found")
+   candidates.sort()
+   print(candidates[-1][1])
+   ')
+   echo "Newest ledger: $LATEST_LEDGER"
+   ```
+
+2. **在新的空目录恢复，保留当前数据供调查**：切勿覆盖线上 `/var/lib/bojin`，也避免先把生产目录移走后才发现备份不可读。
+3. **准备只读暂存副本并以 `bojin` 低权限执行校验与恢复**：不改动 `/var/backups` 归属，将快照与最新台账拷贝至临时 `root:bojin` 目录（目录 `0750`、文件 `0640`），创建 `bojin:bojin`（`0700`）空目标目录；`data-backup.js` 不需要 `/etc/bojin/environment`，以 `sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=<目标目录> /usr/bin/node /opt/bojin/scripts/data-backup.js verify <暂存快照>` 先做完整性校验，再运行 `restore <暂存快照> <目标目录> --deletions <暂存台账>`，全程不输出业务数据或密钥。
+4. **核验恢复结果**：工具校验 SHA-256 哈希与 SQLite 完整性并事务重放删除台账；再用只读 SQLite 连接核验恢复文件所有权/权限（`0600`/`0700` `bojin:bojin`）、`PRAGMA integrity_check`、`blobs` 行数与磁盘文件大小一一对应、账号隔离及台账内 UID 零残留。
+5. **用隔离临时实例完成验证后再加锁切换**：
+
+   > [!WARNING]
+   > **安全红线（`systemd-run` 环境变量优先级）：** 在 systemd 中，`-p EnvironmentFile=/etc/bojin/environment` 会在 `-p Environment=DATA_DIR=...` **之后**生效并覆盖文件内已有的同名键，导致 `DATA_DIR` 被静默重置回 `/var/lib/bojin`（**直接读写线上生产库**）！凡需将 `DATA_DIR` 指向非生产路径的命令（恢复演练、临时校验实例），**必须**在 `ExecStart` 中通过 `/usr/bin/env DATA_DIR=... PORT=... /usr/bin/node ...` 传入覆盖值。
+
+   同时，`MAIL_MODE=file`（`lib/mail.js`）拒绝公网 `AUTH_BASE_URL`（报错 `File mail is only available for localhost development`），`COOKIE_SECURE=0` 同样要求本机回环地址；启动隔离实例时须一并覆盖 `HOST=127.0.0.1`、未占用的 `PORT`（如 `18099`）、`MAIL_MODE=file`、`AUTH_BASE_URL=http://127.0.0.1:18099`、`COOKIE_SECURE=0`、`TRUST_PROXY=0` 及空 `OPENROUTER_API_KEY=`（防止消耗线上 AI 额度）：
+
+   ```sh
+   sudo systemd-run --unit=bojin-restore-check --uid=bojin --gid=bojin \
+     -p WorkingDirectory=/opt/bojin \
+     -p EnvironmentFile=/etc/bojin/environment \
+     --collect \
+     /usr/bin/env \
+       DATA_DIR=/var/lib/bojin-restored \
+       HOST=127.0.0.1 \
+       PORT=18099 \
+       MAIL_MODE=file \
+       AUTH_BASE_URL=http://127.0.0.1:18099 \
+       COOKIE_SECURE=0 \
+       TRUST_PROXY=0 \
+       OPENROUTER_API_KEY= \
+       /usr/bin/node --disable-warning=ExperimentalWarning /opt/bojin/server.js
+   ```
+
+   在本机回环验证 `/api/health` 与业务功能后停止临时单元，再在 `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` 维护锁包装器内切换数据路径、启动正式服务。配置与 `AUTH_SECRET` 需从独立安全存储恢复，数据库快照不包含它们。
+6. **记录与演练闭环**：记录快照标识、台账 `exportedAt`、恢复版本、验证结果与未覆盖范围；成功演练才算恢复能力完成。
+
+#### 无中断恢复演练摘要（Restore Drill）
+
+完整可复制粘贴的分步脚本见 [OPERATIONS.md](OPERATIONS.md)（`Restore drill procedure`）：
+
+- **无需维护锁**：已发布的快照与台账通过原子重命名生成且不可变，只读暂存与隔离恢复不停止 `bojin.service`、不触碰 `/var/lib/bojin`，**无需**加 `bojin-maintenance-lock`（避免无谓阻塞定时备份、部署或健康看门狗）。
+- **受限暂存目录**：创建 `0700` 的 `/var/tmp/restore-drill-<UTC>`（完成后归属 `bojin:bojin`），在 `stage/` 下放置 `root:bojin` 只读副本（目录 `0750`、文件 `0640`），并创建空目录 `data/`（`bojin:bojin 0700`）。
+- **低权限恢复与只读核验**：以 `sudo -u bojin` 依次运行 `verify` 和带跨目录最新 `--deletions` 台账的 `restore`；用只读 SQLite（`?mode=ro`）核验双库 `PRAGMA integrity_check=ok`、表行数、`blobs` 文件数与字节数一致及已删 UID 零残留（严禁查看或输出邮箱、昵称、token、密钥或正文）。
+- **可选临时实例与精确路径清理**：按上文 `/usr/bin/env` 覆盖方式在 `127.0.0.1:18099` 启动 `bojin-restore-drill.service`，核验 `/api/health` 后立即 `systemctl stop`；最后校验精确目录路径后执行 `sudo rm -rf -- /var/tmp/restore-drill-<UTC>`（严禁使用通配符 `*`），并确认线上 `127.0.0.1:8080/api/health` 正常。
+- **最近一次生产演练记录**：`last drill: 2026-11-18, snapshot-20261118T052524Z, OK`
 
 具体工具约束见 [OPERATIONS.md](OPERATIONS.md)。不能将“备份命令成功”当作“完整恢复演练成功”。
 

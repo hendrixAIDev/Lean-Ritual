@@ -67,6 +67,9 @@ sudo systemd-run --uid=bojin --gid=bojin \
   import-account --email "你的已验证注册邮箱" /tmp/lr-import --dry-run
 ```
 
+> [!WARNING]
+> **切勿将 `-p Environment=DATA_DIR=...` 写法复制到恢复演练或临时实例：** 在 systemd 中，`-p EnvironmentFile=/etc/bojin/environment` 会在 `-p Environment=...` **之后**应用并覆盖文件内已定义的同名变量（包括 `DATA_DIR=/var/lib/bojin`、`PORT=8080`、`MAIL_MODE=smtp`、`AUTH_BASE_URL` 等）。此处导入目标本来就是线上生产目录 `/var/lib/bojin`，因此不受影响；但若在恢复演练或隔离验证实例中需要改指其它 `DATA_DIR`，`-p Environment=DATA_DIR=/var/tmp/...` 会被静默重置回**线上生产库** `/var/lib/bojin`。任何需要覆盖 `/etc/bojin/environment` 内键值的命令，必须在 `ExecStart` 中通过 `/usr/bin/env DATA_DIR=... PORT=... /usr/bin/node ...` 传入（完整命令见 [OPERATIONS.md](OPERATIONS.md) 与 [DEPLOYMENT-HANDBOOK.zh-CN.md](DEPLOYMENT-HANDBOOK.zh-CN.md)）。
+
 核对预览输出中的：
 - 目标账号邮箱与 `uid`（`u_...`）
 - 各顶层集合（`app`、`days`、`workoutLog`、`profileHistory`、`feedback` 等）待导入条数与跳过条数
@@ -75,7 +78,7 @@ sudo systemd-run --uid=bojin --gid=bojin \
 
 ### 4. 执行正式导入
 
-确认预览结果符合预期后，去掉 `--dry-run` 执行正式导入：
+确认预览结果符合预期后，去掉 `--dry-run` 执行正式导入（同上，`-p Environment=DATA_DIR=...` 仅因与 `/etc/bojin/environment` 内生产路径一致而有效；恢复演练或临时实例必须改用 `/usr/bin/env` 覆盖）：
 
 ```sh
 sudo systemd-run --uid=bojin --gid=bojin \
