@@ -399,6 +399,59 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#tabs [data-act="tab"][data-v="fb"]').click();
     assert.ok((await page.locator('.ins.bad p.small').textContent()).includes(painSpecial));
 
+    // AI suggestion adoption scope chooser + today-only saved-record update + per-item undo + decline
+    await page.evaluate(async () => {
+      const fb = {
+        id: 'fb_e2e',
+        createdAt: new Date().toISOString(),
+        summary: '肩部不适时建议把平板杠铃卧推换成哑铃卧推。',
+        good: ['坚持记录'],
+        issues: ['右肩不适'],
+        adjustments: [
+          { kind: 'swap', from: '平板杠铃卧推', to: '平板哑铃卧推', sets: 3, lo: 8, hi: 10, text: '减少肩前侧压力（做3组8–10次）' },
+          { kind: 'kcal', delta: -120, text: '测试不采纳 <img src=x onerror=alert(1)>' }
+        ],
+        applied: []
+      };
+      await S.store.set('feedback/fb_e2e', fb);
+      S.feedback = [fb];
+      render();
+    });
+    await page.locator('[data-act="adopt-open"]').filter({ hasText: '采纳：平板杠铃卧推' }).click();
+    await page.locator('.chooser').getByText('平板杠铃卧推 3×4–6 → 平板哑铃卧推 3×8–10').waitFor({ state: 'visible' });
+    await page.locator('[data-act="adopt-confirm"]').filter({ hasText: '只改今天' }).click();
+    await page.locator('[data-act="undo-adjust"]').filter({ hasText: '已采纳 · 撤销' }).waitFor({ state: 'visible' });
+
+    // Saved workout updated in place with logged 70×5 preserved, and no long-term exEdit created
+    await page.locator('#tabs [data-act="tab"][data-v="today"]').click();
+    await page.locator('.ex-h b').filter({ hasText: '平板哑铃卧推' }).waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#w-1-0-w').inputValue(), '70');
+    assert.equal(await page.locator('#w-1-0-r').inputValue(), '5');
+    await page.locator('#tabs [data-act="tab"][data-v="me"]').click();
+    assert.equal(await page.locator('[data-act="del-exedit"]').count(), 0);
+
+    // Undo from feedback chip restores saved workout to 平板杠铃卧推 and re-enables suggestion
+    await page.locator('#tabs [data-act="tab"][data-v="fb"]').click();
+    await page.locator('[data-act="undo-adjust"]').filter({ hasText: '已采纳 · 撤销' }).click();
+    await page.locator('[data-act="adopt-open"]').filter({ hasText: '采纳：平板杠铃卧推' }).waitFor({ state: 'visible' });
+    await page.locator('#tabs [data-act="tab"][data-v="today"]').click();
+    await page.locator('.ex-h b').filter({ hasText: '平板杠铃卧推' }).waitFor({ state: 'visible' });
+
+    // Long-term adoption with sets stores exEdit, individually revertible in 我的; decline persists across reload
+    await page.locator('#tabs [data-act="tab"][data-v="fb"]').click();
+    await page.locator('[data-act="adopt-open"]').filter({ hasText: '采纳：平板杠铃卧推' }).click();
+    await page.locator('[data-act="adopt-confirm"]').filter({ hasText: '长期调整' }).click();
+    await page.locator('[data-act="adopt-open"]').filter({ hasText: '采纳：每日 -120 kcal' }).click();
+    await page.locator('[data-act="adopt-decline"]').click();
+    await page.getByText('已不采纳', { exact: true }).waitFor({ state: 'visible' });
+    await page.reload();
+    await page.locator('#tabs').waitFor({ state: 'visible' });
+    await page.getByText('已不采纳', { exact: true }).waitFor({ state: 'visible' });
+    await page.locator('#tabs [data-act="tab"][data-v="me"]').click();
+    await page.locator('[data-act="del-exedit"][data-v="平板杠铃卧推"]').waitFor({ state: 'visible' });
+    await page.locator('[data-act="del-exedit"][data-v="平板杠铃卧推"]').click();
+    await page.locator('[data-act="del-exedit"]').waitFor({ state: 'detached' });
+
     // 8. Export NDJSON -> account deletion with password -> cannot log in again
     await page.locator('#tabs [data-act="tab"][data-v="me"]').click();
     const [download] = await Promise.all([
