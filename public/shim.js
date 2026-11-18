@@ -59,7 +59,7 @@
       return { docs: j.docs.map(d => ({ id: d.id, data: () => d.data })), empty: !j.docs.length };
     },
   });
-  const db = { doc, collection };
+  const db = { doc, collection, commit: changes => api("POST", "/api/doc-commit", {changes}) };
 
   const blobToDataURL = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
   async function shrink(blob, max = 1280) {

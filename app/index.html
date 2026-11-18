@@ -304,6 +304,7 @@ function mkCloud(db, prefix){
   return {
     async get(p){ const s = await db.doc(P(p)).get(); return s.exists ? clone(s.data()) : null; },
     async set(p, d){ await db.doc(P(p)).set(d); },
+    commit(changes){ return db.commit(changes.map(change => ({...change, path:P(change.path)}))); },
     async del(p){ await db.doc(P(p)).delete(); },
     async list(col, opt={}){ let q = db.collection(P(col)); if (opt.order) q = q.orderBy(opt.order, "desc"); if (opt.limit) q = q.limit(opt.limit); const s = await q.get(); return s.docs.map(d => ({id:d.id, data:clone(d.data())})); }
   };
@@ -336,19 +337,45 @@ function migrateDay(d){ return {meals:[], ...d, meals:Array.isArray(d.meals) ? d
 function snapTargets(){ const t = targets(); return {kcal:t.kcal, protein:t.protein, carbs:t.carbs, fat:t.fat, st:t.st, w:Math.round(t.w*10)/10, tdee:t.tdee}; }
 // 当天的营养目标存一份快照；以后改计划，这一天仍按当时的目标显示
 function stampTargets(d){ if (S.profile && (!d.targets || d.date === todayStr())) d.targets = snapTargets(); }
-/* 防丢数据：每次写入前先读服务器上的最新版本，只改这次操作涉及的部分再写回。
-   这样另一个打开着的页面（另一台设备、旧窗口）不会用它手里的旧数据覆盖新记录。读不到最新版本就不写。 */
+// Serialize overlapping writes in this tab. The server checks every snapshot
+// in one transaction before committing changes from any tab.
 const locks = {};
+function withDocLocks(paths, fn){
+  const pending = Promise.all(paths.map(path => locks[path]?.catch(() => {}))).then(fn);
+  for (const path of paths) locks[path] = pending;
+  return pending;
+}
+function mutateDocs(paths, fn, onSaved){
+  return withDocLocks(paths, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const before = await Promise.all(paths.map(path => S.store.get(path)));
+      const docs = Object.fromEntries(paths.map((path, i) => [path, clone(before[i])]));
+      const result = fn(docs);
+      const changes = paths.map((path, i) => ({path, before:before[i], ...(sameVal(before[i], docs[path]) ? {} : {after:docs[path]})}));
+      try {
+        if (changes.some(change => change.after !== undefined)) await S.store.commit(changes);
+      } catch (e) {
+        if (e.code === "doc_conflict" && attempt < 3) continue;
+        throw e;
+      }
+      onSaved?.(docs);
+      return result;
+    }
+  });
+}
 function mutate(path, fn){
-  const p = (locks[path] || Promise.resolve()).catch(() => {}).then(async () => {
+  if (S.store.commit) return mutateDocs([path], docs => {
+    const next = fn(clone(docs[path]));
+    if (next != null) docs[path] = next;
+    return docs[path];
+  });
+  return withDocLocks([path], async () => {
     const cur = await S.store.get(path);
     const next = fn(cur ? clone(cur) : null);
     if (next == null) return cur;
     await S.store.set(path, next);
     return next;
   });
-  locks[path] = p;
-  return p;
 }
 const saveErr = e => toast(e?.message ? "保存失败：" + e.message : "保存失败（" + (e?.code || "网络问题") + "），请稍后再试");
 const daySeq = {};
@@ -477,8 +504,8 @@ function nextKey(date){
   }
   return nx();
 }
-function resolveEx(ex){
-  const p = S.profile;
+function resolveEx(ex){ return resolveExForProfile(ex, S.profile); }
+function resolveExForProfile(ex, p){
   let o = {name:ex.name, sets:ex.sets, lo:ex.lo, hi:ex.hi, rest:ex.rest, inc:ex.inc, orig:ex.name, why:null};
   const home = p.equipment === "home" && ex.home;
   if (home) { const {subs, ...h} = ex.home; Object.assign(o, h, {why:"居家器械"}); }
@@ -1591,6 +1618,7 @@ function actionBtn(rawA, src, fid, idx){
   const a = normAction(rawA);
   if (!a) return "";
   const key = fid ? `${fid}:${idx}` : `${src || "rule"}:${idx ?? a.kind}`;
+  if (pendingAdoptions.has(key)) return `<button class="chip" disabled>正在保存…</button>`;
   const fb = fid ? (S.feedback || []).find(f => f.id === fid) : null;
   const applied = !!(fb && (fb.applied || []).includes(idx));
   const declined = !applied && !!(fb ? (fb.declined || []).includes(idx) : S.ruleDeclined?.[key]);
@@ -1610,7 +1638,7 @@ function actionBtn(rawA, src, fid, idx){
   const payloadObj = {a:cleanA, fid:fid||null, idx:idx??null, key};
   const pv = esc(JSON.stringify(payloadObj));
   if (S.adopt === key) {
-    const {preview, hint} = adoptPreview(a, fid);
+    const {preview, hint} = adoptPreview(a);
     const isEx = a.kind === "swap" || a.kind === "edit";
     return `<div class="chooser"><div class="prev">${esc(preview)}</div>${hint ? `<p class="small muted">${esc(hint)}</p>` : ""}<div class="row">${isEx
       ? `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"today"}))}'>只改今天</button><button class="btn small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>长期调整</button>`
@@ -1656,7 +1684,7 @@ function conflictNotice(c){
   links.push(`<button class="link muted" data-act="dismiss-conflict">知道了</button>`);
   return `<div class="tip warn small stack" style="gap:4px;margin-top:4px"><span>${esc(c.msg || "这项调整之后又被修改过，不能直接恢复到采纳前的值。")}</span><div class="row" style="gap:10px">${links.join("")}</div></div>`;
 }
-function adoptPreview(a, fid){
+function adoptPreview(a){
   if (a.kind === "kcal") {
     const preview = S.profile && typeof targets === "function" ? (() => { const curK = targets().kcal, nextK = targets({...S.profile, kcalAdjust:(num(S.profile.kcalAdjust)||0)+a.delta}).kcal; return `每日热量目标：${curK} kcal → ${nextK} kcal（${a.delta>0?"+":""}${a.delta} kcal）`; })() : `每日热量 ${a.delta>0?"+":""}${a.delta} kcal`;
     return {preview, hint:"采纳后会更新每日热量目标，随时可以撤销。"};
@@ -1669,7 +1697,7 @@ function adoptPreview(a, fid){
   const toName = a.to || cur?.name || a.from;
   const toSets = a.hasNums ? a.sets : cur?.sets, toLo = a.hasNums ? a.lo : cur?.lo, toHi = a.hasNums ? a.hi : cur?.hi;
   const rightSpec = toSets != null && toSets !== "" ? ` ${num(toSets)}×${num(toLo)}–${num(toHi)}` : "";
-  const td = typeof resolveAdoptDate === "function" && S.profile ? resolveAdoptDate(a.from, fid) : null;
+  const td = resolveAdoptDate(a.from);
   const savedDone = !!(td && S.days?.[td]?.workout?.done);
   const hint = savedDone ? "今天这练已保存：选「只改今天」会直接更新已保存记录里的这项动作（填过的组数重量保留）；选「长期调整」从下次训练开始生效。"
     : (!td && S.profile ? "今天的训练已保存且不含这项动作；想改以后课表请选「长期调整」。"
@@ -1751,57 +1779,49 @@ function sameVal(a, b){
 function findSavedExIndex(w, orig){
   if (!w?.done || !Array.isArray(w.exercises)) return -1;
   const pl = savedPlan(w);
-  let i = pl.findIndex((e, idx) => !e?.extra && e?.orig === orig && w.exercises[idx]);
+  const i = pl.findIndex((e, idx) => !e?.extra && e?.orig === orig && w.exercises[idx]);
   if (i >= 0) return i;
-  i = w.exercises.findIndex((e, idx) => !pl[idx]?.extra && e?.name === orig);
-  if (i >= 0) return i;
-  if (PROGRAM[w.key]) {
-    const pi = PROGRAM[w.key].ex.findIndex(e => e.name === orig);
-    if (pi >= 0 && w.exercises[pi] && !pl[pi]?.extra) return pi;
+  return w.exercises.findIndex((e, idx) => !pl[idx]?.extra && !pl[idx]?.orig && e?.name === orig);
+}
+const pendingAdoptions = new Set();
+function resolveAdoptDate(orig){
+  const today = todayStr(), workout = S.days[today]?.workout;
+  return workout?.done && findSavedExIndex(workout, orig) < 0 ? null : today;
+}
+function changeFeedback(d, idx, applied){
+  if (applied) {
+    if (!(d.applied || []).includes(idx)) d.applied = [...(d.applied || []), idx];
+    if (Array.isArray(d.declined)) d.declined = d.declined.filter(i => i !== idx);
+  } else if (d.applied?.includes(idx)) {
+    d.applied = d.applied.filter(i => i !== idx);
   }
-  return -1;
 }
-function resolveAdoptDate(orig, fid){
-  const today = todayStr(), sDate = S.date;
-  const hasSaved = dt => !!(dt && S.days[dt]?.workout?.done && findSavedExIndex(S.days[dt].workout, orig) >= 0);
-  const hasUnsavedPlan = dt => !!(dt && !S.days[dt]?.workout?.done && (planFor(dt).ex || []).some(e => !e.extra && e.orig === orig));
-  if (hasSaved(today) || hasUnsavedPlan(today)) return today;
-  if (sDate && sDate !== today && (hasSaved(sDate) || hasUnsavedPlan(sDate))) return sDate;
-  if (!S.days[today]?.workout?.done) return today;
-  if (sDate && sDate !== today && !S.days[sDate]?.workout?.done) return sDate;
-  const fbDate = ((S.feedback || []).find(f => f.id === fid)?.createdAt || "").slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(fbDate) && hasSaved(fbDate)) return fbDate;
-  return null;
-}
-async function markFeedbackApplied(fid, idx){
-  if (!fid || idx == null) return;
-  const f = (S.feedback || []).find(x => x.id === fid);
-  if (f) {
-    f.applied = [...new Set([...(f.applied || []), idx])];
-    if (Array.isArray(f.declined)) f.declined = f.declined.filter(x => x !== idx);
-  }
-  if (S.store) await mutate("feedback/" + fid, cur => {
-    const d = cur || (f ? clone(f) : null);
-    if (!d) return null;
-    d.applied = [...new Set([...(d.applied || []), idx])];
-    if (Array.isArray(d.declined)) d.declined = d.declined.filter(x => x !== idx);
-    return d;
-  }).catch(() => {});
-}
-async function unmarkFeedbackApplied(fid, idx){
-  if (!fid || idx == null) return;
-  const f = (S.feedback || []).find(x => x.id === fid);
-  if (f && Array.isArray(f.applied)) f.applied = f.applied.filter(x => x !== idx);
-  if (S.store) await mutate("feedback/" + fid, cur => {
-    const d = cur || (f ? clone(f) : null);
-    if (!d) return null;
-    if (Array.isArray(d.applied)) d.applied = d.applied.filter(x => x !== idx);
-    return d;
-  }).catch(() => {});
+function mutateAdjustment(date, fid, idx, fn){
+  const profilePath = "app/profile";
+  const dayPath = date ? "days/" + date : null;
+  const feedbackPath = fid && idx != null ? "feedback/" + fid : null;
+  const paths = [profilePath, dayPath, feedbackPath].filter(Boolean);
+  return mutateDocs(paths, docs => {
+    const profile = migrateProfile(docs[profilePath] || {});
+    const day = dayPath ? migrateDay(docs[dayPath] || {date}) : null;
+    const feedback = feedbackPath ? docs[feedbackPath] : null;
+    const result = fn(profile, day, feedback);
+    if (result.written) {
+      docs[profilePath] = profile;
+      if (dayPath) { stampTargets(day); docs[dayPath] = day; }
+    }
+    return result;
+  }, docs => {
+    S.profile = migrateProfile(docs[profilePath]);
+    if (docs[dayPath]) S.days[date] = migrateDay(docs[dayPath]);
+    const local = S.feedback.find(f => f.id === fid);
+    if (local && docs[feedbackPath]) Object.assign(local, docs[feedbackPath]);
+  });
 }
 async function declineAction(payload){
   if (!payload) return;
   const {fid, idx, key} = payload;
+  if (pendingAdoptions.has(fid ? `${fid}:${idx}` : key)) return;
   S.adopt = null;
   if (fid && idx != null) {
     const f = (S.feedback || []).find(x => x.id === fid);
@@ -1809,11 +1829,13 @@ async function declineAction(payload){
       try {
         const next = await mutate("feedback/" + fid, cur => {
           const d = cur || (f ? clone(f) : {id:fid, applied:[], declined:[]});
+          if (d.applied?.includes(idx)) return null;
           d.declined = [...new Set([...(d.declined || []), idx])];
           if (Array.isArray(d.applied)) d.applied = d.applied.filter(x => x !== idx);
           return d;
         });
         if (f && next) { f.declined = next.declined; f.applied = next.applied || []; }
+        if (next?.applied?.includes(idx)) { render(); return toast("这项建议已采纳"); }
       } catch (e) { render(); saveErr(e); return; }
     } else if (f) {
       f.declined = [...new Set([...(f.declined || []), idx])];
@@ -1832,19 +1854,28 @@ async function applyAction(payload){
   const fid = payload.fid || null, idx = payload.idx ?? null;
   const scope = (a.kind === "swap" || a.kind === "edit") && payload.scope === "today" ? "today" : "long";
   const today = todayStr();
-  if (scope === "today") {
-    const dayDate = resolveAdoptDate(a.from, fid);
-    if (!dayDate) {
-      toast(`今天已保存的训练里没有「${a.from}」，如需改以后请选「长期调整」`, 4000);
-      return "";
-    }
-    let entry = null, savedW = null, wasSaved = false;
-    try {
-      await updateDay(dayDate, day => {
+  const dayDate = scope === "today" ? today : null;
+  const key = fid ? `${fid}:${idx}` : (payload.key || a.kind);
+  if (pendingAdoptions.has(key)) return;
+  pendingAdoptions.add(key);
+  render();
+  try {
+    const result = await mutateAdjustment(dayDate, fid, idx, (p, day, feedback) => {
+      if (fid && idx != null) {
+        if ((p.adjustLog || []).some(e => e?.id && !e.reverted && e.feedbackId === fid && e.idx === idx)) {
+          if (feedback) changeFeedback(feedback, idx, true);
+          return {already:true};
+        }
+        if (feedback?.applied?.includes(idx)) return {already:true};
+        if (!feedback) throw new Error("这条反馈已不存在");
+      }
+      p.adjustLog = p.adjustLog || [];
+      let entry, savedW;
+      if (day) {
         const w = day.workout;
         const exIdx = w?.done ? findSavedExIndex(w, a.from) : -1;
-        if (w?.done && exIdx >= 0) {
-          wasSaved = true;
+        if (w?.done && exIdx < 0) return {missingExercise:true};
+        if (w?.done) {
           const hadPlan = Array.isArray(w.plan) && w.plan.length > 0;
           const prevPlanItem = hadPlan && w.plan[exIdx] ? clone(w.plan[exIdx]) : null;
           const prevExercise = clone(w.exercises[exIdx]);
@@ -1866,11 +1897,11 @@ async function applyAction(payload){
             prev: {mode:"savedWorkout", exIdx, hadPlan, planItem:prevPlanItem, exercise:prevExercise},
             after: {mode:"savedWorkout", exIdx, planItem:clone(w.plan[exIdx]), exercise:clone(w.exercises[exIdx])},
             feedbackId: fid, idx, reverted: false,
-            text: `只改${dayDate === today ? "今天" : " " + dayDate.slice(5)}（已保存记录）：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
+            text: `只改今天（已保存记录）：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
           };
         } else {
           const progEx = ORDER.flatMap(k => PROGRAM[k].ex).find(e => e.name === a.from);
-          const base = progEx && S.profile ? resolveEx(progEx) : null;
+          const base = progEx ? resolveExForProfile(progEx, p) : null;
           const prevDayEdit = (day.exEdits || {})[a.from] ? clone(day.exEdits[a.from]) : null;
           const cur = prevDayEdit ? {...(base || {}), ...prevDayEdit} : base;
           const name = a.to || cur?.name || a.from;
@@ -1890,26 +1921,11 @@ async function applyAction(payload){
             prev: {mode:"dayEdit", dayEdit:prevDayEdit},
             after: {mode:"dayEdit", dayEdit:clone(val)},
             feedbackId: fid, idx, reverted: false,
-            text: `只改${dayDate === today ? "今天" : " " + dayDate.slice(5)}：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
+            text: `只改今天：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
           };
         }
-      });
-      if (savedW) {
-        backupWorkout(dayDate, savedW);
-        Object.keys(S.drafts).filter(k => k.startsWith(dayDate)).forEach(k => delete S.drafts[k]);
-        persistDrafts();
-      }
-      if (entry) await updateProfile(p => { p.adjustLog = p.adjustLog || []; p.adjustLog.push(entry); });
-      await markFeedbackApplied(fid, idx);
-      S.adopt = null; S.undoConflict = null; render();
-      toast(wasSaved ? "已只改今天（已更新今天保存的训练记录）" : "已只改今天");
-    } catch {}
-    return;
-  }
-  try {
-    await updateProfile(p => {
-      p.adjustLog = p.adjustLog || [];
-      if (a.kind === "kcal") {
+        p.adjustLog.push(entry);
+      } else if (a.kind === "kcal") {
         const prevK = num(p.kcalAdjust) || 0, nextK = prevK + a.delta;
         p.kcalAdjust = nextK;
         p.adjustLog.push({
@@ -1961,9 +1977,21 @@ async function applyAction(payload){
           text: `「${a.from}」长期换成 ${name} ${a.sets}×${a.lo}–${a.hi}（根据反馈）`
         });
       }
+      if (feedback) changeFeedback(feedback, idx, true);
+      return {written:true, savedW};
     });
-    await markFeedbackApplied(fid, idx);
-    S.adopt = null; S.undoConflict = null; render();
+    if (result.missingExercise) {
+      toast(`今天已保存的训练里没有「${a.from}」，如需改以后请选「长期调整」`, 4000);
+      return;
+    }
+    S.adopt = null; S.undoConflict = null;
+    if (result.already) return toast("这项建议已采纳");
+    if (result.savedW) {
+      backupWorkout(dayDate, result.savedW);
+      Object.keys(S.drafts).filter(k => k.startsWith(dayDate)).forEach(k => delete S.drafts[k]);
+      persistDrafts();
+    }
+    if (dayDate) return toast(result.savedW ? "已只改今天（已更新今天保存的训练记录）" : "已只改今天");
     if (a.kind === "kcal") toast(`已采纳：每日热量 ${a.delta>0?"+":""}${a.delta} kcal`);
     else if (a.kind === "deload") toast("已采纳：本周开始减载");
     else {
@@ -1971,7 +1999,8 @@ async function applyAction(payload){
       const todayHasEx = !todaySaved && S.profile && (planFor(today).ex || []).some(e => !e.extra && e.orig === a.from && !(S.days[today]?.exEdits || {})[a.from]);
       toast(todayHasEx ? "已长期调整，今天及以后课表已更新" : "已长期调整，从下次训练开始生效");
     }
-  } catch {}
+  } catch (e) { saveErr(e); }
+  finally { pendingAdoptions.delete(key); render(); }
 }
 function isLongConflict(p, e){
   if (!p || !e?.after) return true;
@@ -2019,59 +2048,54 @@ function restoreTodayPrev(day, e){
     const w = day.workout, i = e.prev.exIdx;
     w.exercises[i] = clone(e.prev.exercise);
     if (e.prev.hadPlan) w.plan[i] = clone(e.prev.planItem);
-    else delete w.plan;
+    else {
+      const generated = savedPlan({...w, plan:null});
+      w.plan[i] = generated[i];
+      if (sameVal(w.plan, generated)) delete w.plan;
+    }
     return clone(w);
   }
   return null;
 }
 async function undoAdjust(entryId){
   const entry = (S.profile?.adjustLog || []).find(x => x?.id === entryId);
-  if (!entry || entry.reverted || !entry.prev || !entry.after) return;
-  const failConflict = msg => {
-    S.undoConflict = {id: entry.id, kind: entry.kind, scope: entry.scope, from: entry.from || null, msg};
-    render();
-    toast(msg, 4000);
-  };
-  if (entry.scope === "today") {
-    const dayDate = entry.dayDate || entry.date;
-    if (S.days[dayDate] && isTodayConflict(S.days[dayDate], entry)) return failConflict("这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。");
-    let conflict = false, savedW = null;
-    try {
-      await updateDay(dayDate, day => {
-        if (isTodayConflict(day, entry)) { conflict = true; return; }
-        savedW = restoreTodayPrev(day, entry);
-      });
-      if (conflict) return failConflict("这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。");
-      if (entry.prev.mode === "savedWorkout" && savedW) {
-        backupWorkout(dayDate, savedW);
-        Object.keys(S.drafts).filter(k => k.startsWith(dayDate)).forEach(k => delete S.drafts[k]);
-        persistDrafts();
-      } else if (entry.prev.mode === "dayEdit") {
-        Object.keys(S.drafts).filter(k => k.startsWith(dayDate + "|")).forEach(k => { if (!hasDraftData(S.drafts[k])) delete S.drafts[k]; });
-        persistDrafts();
-      }
-      await updateProfile(p => { const x = (p.adjustLog || []).find(it => it?.id === entryId); if (x) x.reverted = true; });
-      await unmarkFeedbackApplied(entry.feedbackId, entry.idx);
-      S.undoConflict = null; render();
-      toast("已撤销这项调整");
-    } catch {}
-    return;
-  }
-  if (isLongConflict(S.profile, entry)) return failConflict("这项调整之后又被修改过，不能直接恢复到采纳前的值。");
-  let conflict = false;
+  if (!entry || !entry.prev || !entry.after) return;
+  const dayDate = entry.scope === "today" ? (entry.dayDate || entry.date) : null;
   try {
-    await updateProfile(p => {
-      if (isLongConflict(p, entry)) { conflict = true; return; }
-      restoreLongPrev(p, entry);
-      const x = (p.adjustLog || []).find(it => it?.id === entryId);
-      if (x) x.reverted = true;
+    const result = await mutateAdjustment(dayDate, entry.feedbackId, entry.idx, (p, day, feedback) => {
+      const current = p.adjustLog?.find(x => x?.id === entryId);
+      if (!current || current.reverted) return {already:true};
+      if (day ? isTodayConflict(day, current) : isLongConflict(p, current)) return {conflict:true};
+      let savedW;
+      if (day) savedW = restoreTodayPrev(day, current);
+      else restoreLongPrev(p, current);
+      current.reverted = true;
+      if (feedback) changeFeedback(feedback, current.idx, false);
+      return {written:true, savedW};
     });
-    if (conflict) return failConflict("这项调整之后又被修改过，不能直接恢复到采纳前的值。");
-    await unmarkFeedbackApplied(entry.feedbackId, entry.idx);
-    S.undoConflict = null; render();
+    if (result.already) {
+      render();
+      return toast("这项调整已撤销");
+    }
+    if (result.conflict) {
+      const msg = dayDate ? "这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。" : "这项调整之后又被修改过，不能直接恢复到采纳前的值。";
+      S.undoConflict = {id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null, msg};
+      render();
+      return toast(msg, 4000);
+    }
+    if (dayDate) {
+      if (result.savedW) backupWorkout(dayDate, result.savedW);
+      Object.keys(S.drafts).filter(k => k.startsWith(dayDate + "|")).forEach(k => {
+        if (result.savedW || !hasDraftData(S.drafts[k])) delete S.drafts[k];
+      });
+      persistDrafts();
+    }
+    S.undoConflict = null;
+    render();
     toast("已撤销这项调整");
-  } catch {}
+  } catch (e) { saveErr(e); }
 }
+
 async function revertSingleExEdit(orig){
   const log = S.profile?.adjustLog || [];
   for (let i = log.length - 1; i >= 0; i--) {

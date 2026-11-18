@@ -14,6 +14,12 @@ const sharp = require('sharp');
 
 const ROOT = path.resolve(__dirname, '..');
 
+function committedDoc(response, matchesPath) {
+  const request = response.request();
+  if (new URL(response.url()).pathname !== '/api/doc-commit' || request.method() !== 'POST') return false;
+  return request.postDataJSON().changes.some(change => change.after && matchesPath(change.path));
+}
+
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -158,7 +164,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     const cb = page.locator(`#setup input[name="trainDays"][value="${dow}"]`);
     if (!(await cb.isChecked())) await cb.locator('..').click();
 
-    const profileSaved = page.waitForResponse(r => r.url().includes('/api/doc?') && r.url().includes('profile') && r.request().method() === 'PUT');
+    const profileSaved = page.waitForResponse(r => committedDoc(r, path => path.endsWith('/app/profile')));
     await page.getByRole('button', { name: '生成我的计划', exact: true }).click();
     await profileSaved;
     await page.locator('#tabs').waitFor({ state: 'visible' });
@@ -169,7 +175,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     // 3. Today tab: record check-in (weight, sleep) -> reload persists
     await page.locator('#c-weight').fill('72.1');
     await page.locator('#c-sleep').fill('7.5');
-    const checkinSaved = page.waitForResponse(r => r.url().includes('/api/doc?') && r.url().includes('%2Fdays%2F') && r.request().method() === 'PUT');
+    const checkinSaved = page.waitForResponse(r => committedDoc(r, path => path.includes('/days/')));
     await page.locator('[data-act="save-checkin"]').click();
     await checkinSaved;
     await page.getByText('已记录', { exact: true }).waitFor();
@@ -215,7 +221,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#w-1-0-w').fill('70');
     await page.locator('#w-1-0-r').fill('5');
     const draftSynced = await page.waitForResponse(
-      r => r.url().includes('/api/doc?') && r.url().includes('%2Fdays%2F') && r.request().method() === 'PUT',
+      r => committedDoc(r, path => path.includes('/days/')),
       { timeout: 6000 }
     );
     assert.equal(draftSynced.status(), 200);
@@ -227,7 +233,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     assert.equal(await page.locator('#w-1-0-w').inputValue(), '70');
     assert.equal(await page.locator('#w-1-0-r').inputValue(), '5');
 
-    const workoutSaved = page.waitForResponse(r => r.url().includes('/api/doc?') && r.url().includes('%2Fdays%2F') && r.request().method() === 'PUT');
+    const workoutSaved = page.waitForResponse(r => committedDoc(r, path => path.includes('/days/')));
     await page.locator('[data-act="save-workout"]').click();
     await workoutSaved;
     await page.getByText('已完成', { exact: true }).waitFor();
@@ -309,7 +315,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('[data-act="pain"][data-v="pain"]').click();
     const painSpecial = `右肩 & <img src=x onerror=alert(1)> "痛" '测'`;
     await page.locator('#w-painarea').fill(painSpecial);
-    const noteSaved = page.waitForResponse(r => r.url().includes('/api/doc?') && r.url().includes('%2Fdays%2F') && r.request().method() === 'PUT');
+    const noteSaved = page.waitForResponse(r => committedDoc(r, path => path.includes('/days/')));
     await page.locator('[data-act="save-workout"]').click();
     await noteSaved;
 
@@ -531,7 +537,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await page.locator('#f-age').fill('30');
     await page.locator('#f-height').fill('175');
     await page.locator('#f-weight').fill('70');
-    const profileSaved = page.waitForResponse(r => r.url().includes('/api/doc?') && r.url().includes('profile') && r.request().method() === 'PUT');
+    const profileSaved = page.waitForResponse(r => committedDoc(r, path => path.endsWith('/app/profile')));
     await page.getByRole('button', { name: '生成我的计划', exact: true }).click();
     await profileSaved;
     await page.locator('#tabs').waitFor({ state: 'visible' });

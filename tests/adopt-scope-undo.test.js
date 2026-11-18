@@ -18,8 +18,7 @@ function decodeAttr(s) {
     .replace(/&amp;/g, '&');
 }
 
-function createApp({ confirmImpl } = {}) {
-  const docs = new Map();
+function createApp({ confirmImpl, docs = new Map(), rejectPath } = {}) {
   const listCols = prefix => {
     const out = [];
     for (const [k, v] of docs.entries()) {
@@ -29,7 +28,18 @@ function createApp({ confirmImpl } = {}) {
   };
   const store = {
     async get(p) { return docs.has(p) ? JSON.parse(JSON.stringify(docs.get(p))) : null; },
-    async set(p, d) { docs.set(p, JSON.parse(JSON.stringify(d))); },
+    set(p, d) { docs.set(p, JSON.parse(JSON.stringify(d))); },
+    async commit(changes) {
+      for (const { path, before, after } of changes) {
+        if (JSON.stringify(docs.get(path) ?? null) !== JSON.stringify(before)) {
+          throw Object.assign(new Error('stale snapshot'), { code: 'doc_conflict' });
+        }
+        if (after !== undefined && rejectPath?.() === path) throw new Error('simulated write rejection');
+      }
+      for (const { path, after } of changes) {
+        if (after !== undefined) store.set(path, after);
+      }
+    },
     async del(p) { docs.delete(p); },
     async list(col) { return listCols(col); }
   };
@@ -82,7 +92,7 @@ function createApp({ confirmImpl } = {}) {
     equipment: 'gym', startDate: '2026-10-01', injuries: [], supps: [],
     kcalAdjust: 0, deloadEvery: 9, swaps: {}, exEdits: {}, adjustLog: [], schema: 2
   };
-  docs.set('app/profile', JSON.parse(JSON.stringify(profile)));
+  if (!docs.has('app/profile')) docs.set('app/profile', JSON.parse(JSON.stringify(profile)));
   ctx.__initProfile = profile;
   vm.runInContext(`
     storageUser = "u1";
@@ -590,4 +600,126 @@ test('no XSS via AI-provided from/to/text strings in chooser preview, data-v JSO
   await app.click('tab', 'me');
   assertSafeHtml(app.appEl.innerHTML);
   assert.match(app.appEl.innerHTML, /&lt;img src=x onerror=&quot;alert\(&#39;from&#39;\)&quot;&gt;/);
+});
+
+const kcalFeedback = {
+  id: 'race', summary: '热量调整', adjustments: [{ kind: 'kcal', delta: -100 }], applied: []
+};
+const submitKcal = app => vm.runInContext('applyAction({fid:"race",idx:0,a:{kind:"kcal",delta:-100}})', app.ctx);
+
+test('double taps and competing tabs commit one adoption and one undo', async () => {
+  const first = createApp();
+  const second = createApp({ docs: first.docs });
+  await first.seedFeedback(kcalFeedback);
+  await second.seedFeedback(kcalFeedback);
+  const pending = submitKcal(first);
+  assert.match(first.appEl.innerHTML, /disabled>正在保存/);
+  await Promise.all([pending, submitKcal(first), submitKcal(second)]);
+  const adopted = first.docs.get('app/profile');
+  assert.equal(adopted.kcalAdjust, -100);
+  assert.equal(adopted.adjustLog.length, 1);
+  assert.deepEqual(first.docs.get('feedback/race').applied, [0]);
+  assert.ok([...first.toasts, ...second.toasts].includes('这项建议已采纳'));
+  const id = adopted.adjustLog[0].id;
+  await Promise.all([first.click('undo-adjust', id), second.click('undo-adjust', id)]);
+  const reverted = first.docs.get('app/profile');
+  assert.equal(reverted.kcalAdjust, 0);
+  assert.equal(reverted.adjustLog[0].reverted, true);
+  assert.deepEqual(first.docs.get('feedback/race').applied, []);
+  assert.ok([...first.toasts, ...second.toasts].includes('这项调整已撤销'));
+});
+
+const pullUp = '引体向上（能做 6 个后负重）';
+const exerciseFeedback = {
+  id: 'old', createdAt: '2020-01-01T10:00:00Z', summary: '动作调整',
+  adjustments: [{ kind: 'swap', from: pullUp, to: '高位下拉' }], applied: []
+};
+const submitToday = app => vm.runInContext('applyAction({fid:"old",idx:0,scope:"today",a:__fb.adjustments[0]})', app.ctx);
+
+test('old feedback and selected date cannot redirect today-only writes', async () => {
+  const app = createApp();
+  await app.seedFeedback(exerciseFeedback);
+  const today = vm.runInContext('todayStr()', app.ctx);
+  const old = { date: '2020-01-01', meals: [], workout: { done: true, exercises: [{ name: pullUp, sets: [] }] } };
+  app.docs.set('days/' + old.date, old);
+  const key = vm.runInContext('ORDER.find(k => PROGRAM[k].ex.some(e => e.name === __fb.adjustments[0].from))', app.ctx);
+  const unrelated = { name: '高位下拉', sets: [] };
+  app.docs.set('days/' + today, { date: today, meals: [], workout: {
+    done: true, key, exercises: Array(10).fill(unrelated)
+  } });
+  vm.runInContext('S.date = "2020-01-01"', app.ctx);
+  const before = JSON.stringify([...app.docs]);
+  await submitToday(app);
+  assert.equal(JSON.stringify([...app.docs]), before);
+  assert.match(app.toasts.at(-1), /今天已保存的训练里没有.*长期调整/);
+});
+
+test('failed profile, day or feedback writes leave adoption and undo retryable', async () => {
+  let rejected;
+  const app = createApp({ rejectPath: () => rejected });
+  await app.seedFeedback(exerciseFeedback);
+  const todayPath = 'days/' + vm.runInContext('todayStr()', app.ctx);
+  const paths = ['app/profile', todayPath, 'feedback/old'];
+  const snapshot = () => JSON.stringify([...app.docs]);
+  const before = snapshot();
+  for (rejected of paths) {
+    await submitToday(app);
+    assert.equal(snapshot(), before);
+    assert.match(app.toasts.at(-1), /保存失败/);
+    assert.deepEqual(Array.from(vm.runInContext('S.feedback[0].applied', app.ctx)), []);
+  }
+  rejected = null;
+  await submitToday(app);
+  const adopted = snapshot();
+  const id = app.docs.get('app/profile').adjustLog[0].id;
+  for (rejected of paths) {
+    await app.click('undo-adjust', id);
+    assert.equal(snapshot(), adopted);
+    assert.match(app.toasts.at(-1), /保存失败/);
+  }
+  rejected = null;
+  await app.click('undo-adjust', id);
+  assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, true);
+  assert.deepEqual(app.docs.get('feedback/old').applied, []);
+});
+
+test('retry after a lost commit response does not apply a calorie delta again', async () => {
+  const app = createApp();
+  await app.seedFeedback(kcalFeedback);
+  const store = app.ctx.__store;
+  const commit = store.commit;
+  store.commit = async changes => {
+    await commit(changes);
+    throw new Error('simulated lost response');
+  };
+  await submitKcal(app);
+  assert.match(app.toasts.at(-1), /保存失败/);
+  assert.equal(vm.runInContext('S.profile.kcalAdjust', app.ctx), 0);
+  store.commit = commit;
+  await submitKcal(app);
+  assert.equal(app.docs.get('app/profile').kcalAdjust, -100);
+  assert.equal(app.docs.get('app/profile').adjustLog.length, 1);
+  assert.equal(app.toasts.at(-1), '这项建议已采纳');
+});
+
+test('undo refuses an intervening edit committed after it read the old value', async () => {
+  const app = createApp();
+  await app.seedFeedback(kcalFeedback);
+  await submitKcal(app);
+  const { id } = app.docs.get('app/profile').adjustLog[0];
+  const store = app.ctx.__store;
+  const commit = store.commit;
+  store.commit = async changes => {
+    store.commit = commit;
+    const edited = await store.get('app/profile');
+    edited.kcalAdjust = -150;
+    store.set('app/profile', edited);
+    await commit(changes);
+  };
+  await app.click('undo-adjust', id);
+  const profile = app.docs.get('app/profile');
+  assert.equal(profile.kcalAdjust, -150);
+  assert.equal(profile.adjustLog[0].reverted, false);
+  assert.deepEqual(app.docs.get('feedback/race').applied, [0]);
+  assert.match(app.toasts.at(-1), /又被修改过/);
 });
