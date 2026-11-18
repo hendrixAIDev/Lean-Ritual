@@ -144,3 +144,56 @@ test("deletion purges reissued invitation emails and retries after auth user rem
     assert.ok(!JSON.stringify(db.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'"').all()).includes(email), name+" retains email");
   }
 });
+
+test("minimum password length is 8 characters across sign-up, password change, and password reset", { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-minpw-"));
+  const mails = [];
+  const service = await createAuth({ dataDir, baseURL: "http://localhost:8080", secret: "min-password-test-secret-long-enough-123", cookieSecure: false, sendEmail: async mail => mails.push(mail) });
+  t.after(() => { service.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  const request = (route, body, cookie) => service.auth.handler(new Request("http://localhost:8080/api/auth/" + route, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.9", origin: "http://localhost:8080", ...(cookie ? { cookie } : {}) },
+    body: JSON.stringify(body),
+  }));
+
+  const invite = service.invites.issue("min8@example.com");
+
+  // Sign-up rejects 7 characters and accepts 8 characters without wasting the invitation.
+  const tooShortSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "7chars!", invitation: invite.token });
+  assert.equal(tooShortSignup.status, 400);
+  assert.equal((await tooShortSignup.json()).code, "PASSWORD_TOO_SHORT");
+
+  const okSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "8chars!a", invitation: invite.token });
+  assert.equal(okSignup.status, 200, await okSignup.clone().text());
+
+  const verify = mails.find(m => m.kind === "verify");
+  assert.ok(verify);
+  assert.equal((await service.auth.handler(new Request(verify.url))).status, 302);
+
+  const login = await request("sign-in/email", { email: invite.email, password: "8chars!a" });
+  assert.equal(login.status, 200, await login.clone().text());
+  const cookie = login.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+
+  // Password change rejects 7 characters and accepts 8 characters.
+  const tooShortChange = await request("change-password", { currentPassword: "8chars!a", newPassword: "7chars?", revokeOtherSessions: true }, cookie);
+  assert.equal(tooShortChange.status, 400);
+  assert.equal((await tooShortChange.json()).code, "PASSWORD_TOO_SHORT");
+
+  const okChange = await request("change-password", { currentPassword: "8chars!a", newPassword: "8chars!b", revokeOtherSessions: true }, cookie);
+  assert.equal(okChange.status, 200, await okChange.clone().text());
+  assert.equal((await request("sign-in/email", { email: invite.email, password: "8chars!b" })).status, 200);
+
+  // Password reset rejects 7 characters and accepts 8 characters.
+  assert.equal((await request("request-password-reset", { email: invite.email, redirectTo: "/login.html" })).status, 200);
+  const reset = mails.filter(m => m.kind === "reset").at(-1);
+  assert.ok(reset);
+  const token = new URL(reset.url).pathname.split("/").pop();
+
+  const tooShortReset = await request("reset-password", { token, newPassword: "7chars#" });
+  assert.equal(tooShortReset.status, 400);
+  assert.equal((await tooShortReset.json()).code, "PASSWORD_TOO_SHORT");
+
+  const okReset = await request("reset-password", { token, newPassword: "8chars!c" });
+  assert.equal(okReset.status, 200, await okReset.clone().text());
+  assert.equal((await request("sign-in/email", { email: invite.email, password: "8chars!c" })).status, 200);
+});

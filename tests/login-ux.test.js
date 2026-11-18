@@ -207,7 +207,7 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
       route: "/api/auth/sign-up/email",
       status: 400,
       body: { code: "PASSWORD_TOO_SHORT", message: "Password too short" },
-      expect: "密码太短，至少需要 12 位。"
+      expect: "密码太短，至少需要 8 位。"
     },
     {
       name: "resend: email validation error from better-call",

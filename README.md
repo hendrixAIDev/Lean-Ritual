@@ -44,7 +44,7 @@ node --env-file=.env server.js
 node --env-file=.env scripts/auth-admin.js invite you@example.com
 ```
 
-管理员命令输出私密邀请链接。只交给对应受邀者，不要贴到公开日志或工单。打开链接、设置至少 12 位密码，再完成邮箱验证。开发模式的邮件在 `DATA_DIR/mail/`，仅供本机调试，不向外发送。`MAIL_MODE=file` 不允许公共域名；正式环境必须配置 SMTP。
+管理员命令输出私密邀请链接。只交给对应受邀者，不要贴到公开日志或工单。打开链接、设置至少 8 位密码，再完成邮箱验证。开发模式的邮件在 `DATA_DIR/mail/`，仅供本机调试，不向外发送。`MAIL_MODE=file` 不允许公共域名；正式环境必须配置 SMTP。
 
 ## 原账号迁移
 

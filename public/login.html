@@ -35,13 +35,13 @@ button.primary:disabled{opacity:.6}
     <div class="tabs" id="tabs"><button type="button" data-m="login">登录</button><button type="button" data-m="register">凭邀请注册</button></div>
     <label id="nw" hidden>称呼<input id="n" maxlength="80" autocomplete="nickname"></label>
     <label id="ew">邮箱<input id="e" type="email" autocomplete="email" required autocapitalize="off"></label>
-    <label id="pw">密码<input id="p" type="password" autocomplete="current-password" required minlength="12" maxlength="200"></label>
+    <label id="pw">密码<input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden>邀请码<input id="i" autocomplete="off"></label>
     <p class="err" id="err" role="status" aria-live="polite"></p>
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>
     <button type="button" id="resend">重新发送验证邮件</button>
-    <p class="hint">仅受邀邮箱可以注册。密码至少 12 位；完成邮箱验证后才能登录。<a href="/privacy.html">隐私说明</a></p>
+    <p class="hint">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。<a href="/privacy.html">隐私说明</a></p>
   </form>
 </main>
 <script>
@@ -55,7 +55,7 @@ button.primary:disabled{opacity:.6}
     EMAIL_NOT_VERIFIED: "邮箱尚未验证，请查收验证邮件后再登录。",
     EMAIL_ALREADY_VERIFIED: "该邮箱已完成验证，请直接登录。",
     EMAIL_MISMATCH: "输入的邮箱与当前账号不一致。",
-    PASSWORD_TOO_SHORT: "密码太短，至少需要 12 位。",
+    PASSWORD_TOO_SHORT: "密码太短，至少需要 8 位。",
     PASSWORD_TOO_LONG: "密码太长，最多 200 位。",
     USER_ALREADY_EXISTS: "该邮箱已注册，请直接登录或重置密码。",
     USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: "该邮箱已注册，请直接登录或重置密码。",
@@ -107,7 +107,7 @@ button.primary:disabled{opacity:.6}
     "email not verified": "邮箱尚未验证，请查收验证邮件后再登录。",
     "email is already verified": "该邮箱已完成验证，请直接登录。",
     "email mismatch": "输入的邮箱与当前账号不一致。",
-    "password too short": "密码太短，至少需要 12 位。",
+    "password too short": "密码太短，至少需要 8 位。",
     "password too long": "密码太长，最多 200 位。",
     "user already exists": "该邮箱已注册，请直接登录或重置密码。",
     "user already exists. use another email": "该邮箱已注册，请直接登录或重置密码。",
@@ -125,7 +125,7 @@ button.primary:disabled{opacity:.6}
     const rawMsg = j && typeof j.message === "string" ? j.message.trim() : "";
     if(code === "VALIDATION_ERROR"){
       if(/\bemail\b/i.test(rawMsg)) return "请输入有效的邮箱地址。";
-      if(/password/i.test(rawMsg)) return "请填写符合要求的密码（至少 12 位）。";
+      if(/password/i.test(rawMsg)) return "请填写符合要求的密码（至少 8 位）。";
       if(/invitation/i.test(rawMsg)) return "需要有效邀请码才能注册。";
       return "填写的信息格式不正确，请检查后重试。";
     }
