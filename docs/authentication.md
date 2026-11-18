@@ -24,7 +24,7 @@ This preserves the existing `u_...` ID. It does not copy passwords, accept old c
 
 The invitation claim runs inside Better Auth's signup transaction on the same connection. Failure creating the account rolls back the invitation. A database INSERT trigger also guards alternate user creation paths. Concurrent signup produces one account. Better Auth intentionally catches mail delivery failures: an account remains unverified and its invitation remains consumed. Users can resend verification from the login page; monitor server delivery errors. Email changes and public alternate identity providers are unavailable.
 
-Passwords require 12–200 characters. Verification expires in one hour. Password reset uses Better Auth's single-use token and revokes all existing sessions; the user must sign in again. Session checks query the database without cookie caching. Changing a password from the app should pass `revokeOtherSessions:true` to `/api/auth/change-password`; logout uses `/api/auth/sign-out`.
+Passwords require 8–200 characters. Verification expires in one hour. Password reset uses Better Auth's single-use token and revokes all existing sessions; the user must sign in again. Session checks query the database without cookie caching. Changing a password from the app should pass `revokeOtherSessions:true` to `/api/auth/change-password`; logout uses `/api/auth/sign-out`.
 
 `npm test` includes verified login, password reset/replay/revocation, invitation mismatch/reuse/expiry/revocation, concurrent signup, failed-account rollback, and internal creation bypass checks. SMTP configuration is validated locally; sending through a real provider requires deployment credentials and has not been performed here.
 

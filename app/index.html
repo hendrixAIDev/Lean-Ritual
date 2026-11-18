@@ -1671,7 +1671,7 @@ function viewHostedAccount(){
     ${u.mustChange && !pw ? `<div class="banner">这个账号还在用初始密码，请先改一个只有你知道的密码。</div>` : ""}
     ${pw ? `<div class="stack" style="gap:6px">
       <label>原密码<input id="pw-old" type="password" autocomplete="current-password"></label>
-      <label>新密码（至少 12 位）<input id="pw-new" type="password" autocomplete="new-password"></label>
+      <label>新密码（至少 8 位）<input id="pw-new" type="password" autocomplete="new-password"></label>
       <label>再输一次新密码<input id="pw-new2" type="password" autocomplete="new-password"></label>
       ${pw.msg ? `<p class="small" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${pw.busy ? "保存中…" : "保存"}</button><button class="btn" data-act="pw-cancel">取消</button></div></div>`
@@ -1741,7 +1741,7 @@ document.addEventListener("click", async ev => {
     case "pw-save": {
       const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
       if (!o) { S.pwEdit = {msg:"请填写原密码"}; render(); break; }
-      if (n.length < 12) { S.pwEdit = {msg:"新密码至少 12 位"}; render(); break; }
+      if (n.length < 8) { S.pwEdit = {msg:"新密码至少 8 位"}; render(); break; }
       if (n !== n2) { S.pwEdit = {msg:"两次输入的新密码不一样"}; render(); break; }
       S.pwEdit = {busy:true}; render();
       try { await window.ritual.changePassword(o, n); S.pwEdit = null; if (S.hostUser) S.hostUser.mustChange = false; toast("密码已更新，其他设备需要重新登录"); }
