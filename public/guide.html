@@ -1,12 +1,23 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F4F1EA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="薄肌日课">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>薄肌训练与饮食纲领</title>
 <style>
 :root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;color-scheme:light}
 @media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;color-scheme:dark}}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;line-height:1.7;font-size:15px}
-main{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+main{max-width:760px;margin:0 auto;padding:calc(32px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(64px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 h1{font-size:24px;line-height:1.3}h2{font-size:19px;margin-top:2em;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:16px;margin-top:1.5em}
 a{color:var(--accent)}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
@@ -197,6 +208,8 @@ li p{margin:.2em 0}
     const m = META[curLang] || META.zh;
     if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
     if ("title" in document) document.title = m.title;
+    const appTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (appTitleMeta) appTitleMeta.content = curLang === "en" ? "Lean Ritual" : "薄肌日课";
     if (backLink) backLink.textContent = m.back;
     if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", m.aria);
     if (document.querySelectorAll) document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));

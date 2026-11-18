@@ -1,11 +1,22 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="薄肌日课">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>隐私说明 · Lean Ritual</title>
 <style>
-:root{--bg:#faf8f3;--surface:#fffdf8;--ink:#28251f;--muted:#6b655c;--line:#ddd6c8;--accent:#963f2d;--draft-bg:#fff0ce;--draft-bd:#d5b879;color-scheme:light}
+:root{--bg:#FAF8F3;--surface:#fffdf8;--ink:#28251f;--muted:#6b655c;--line:#ddd6c8;--accent:#963f2d;--draft-bg:#fff0ce;--draft-bd:#d5b879;color-scheme:light}
 @media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201e1b;--ink:#eee9df;--muted:#a39c90;--line:#38342e;--accent:#e07a5f;--draft-bg:#2e2514;--draft-bd:#7a6232;color-scheme:dark}}
 [hidden]{display:none!important}
-body{max-width:760px;margin:40px auto;padding:0 20px 48px;font:16px/1.75 "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+body{max-width:760px;margin:40px auto;padding:env(safe-area-inset-top,0px) max(20px,env(safe-area-inset-right,0px)) calc(48px + env(safe-area-inset-bottom,0px)) max(20px,env(safe-area-inset-left,0px));font:16px/1.75 "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 a{color:var(--accent)}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
 .lang-sw{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex-shrink:0}
@@ -94,6 +105,8 @@ h1,h2{line-height:1.3}
     const m = META[curLang] || META.zh;
     if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
     if ("title" in document) document.title = m.title;
+    const appTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (appTitleMeta) appTitleMeta.content = curLang === "en" ? "Lean Ritual" : "薄肌日课";
     if (backLink) backLink.textContent = m.back;
     if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", m.aria);
     if (document.querySelectorAll) document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));

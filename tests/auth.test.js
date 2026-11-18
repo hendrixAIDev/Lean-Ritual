@@ -197,3 +197,44 @@ test("minimum password length is 8 characters across sign-up, password change, a
   assert.equal(okReset.status, 200, await okReset.clone().text());
   assert.equal((await request("sign-in/email", { email: invite.email, password: "8chars!c" })).status, 200);
 });
+
+test("verification link from a deleted account cannot verify a re-invited user on the same email", { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-reinvite-verify-"));
+  const mails = [];
+  let service;
+  service = await createAuth({
+    dataDir, baseURL: "http://localhost:8080", secret: "reinvite-verify-secret-long-enough-123456", cookieSecure: false,
+    sendEmail: async mail => mails.push(mail), onDeleteRequested: async () => {},
+    onDeleteCompleted: async user => service.purgeDeletedArtifacts(user.id),
+  });
+  t.after(() => { service.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+  const request = (route, body, cookie) => service.auth.handler(new Request("http://localhost:8080/api/auth/" + route, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.15", origin: "http://localhost:8080", ...(cookie ? { cookie } : {}) },
+    body: JSON.stringify(body),
+  }));
+  const email = "recycled@example.com";
+  const pw = "recycled-strong-password";
+  const firstInvite = service.invites.issue(email, { userId: "u_first_owner" });
+  assert.equal((await request("sign-up/email", { email, name: "First", password: pw, invitation: firstInvite.token, callbackURL: "/login.html?verified=1" })).status, 200);
+  const firstVerifyUrl = mails.at(-1).url;
+  assert.equal((await service.auth.handler(new Request(firstVerifyUrl))).status, 302);
+  const firstLogin = await request("sign-in/email", { email, password: pw });
+  const firstCookie = firstLogin.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  const delRes = await request("delete-user", { password: pw }, firstCookie);
+  assert.equal(delRes.status, 200);
+  assert.ok(delRes.headers.getSetCookie().some(c => c.includes("session_token=") && /Max-Age=0/i.test(c)));
+
+  const secondInvite = service.invites.issue(email, { userId: "u_second_owner" });
+  assert.equal((await request("sign-up/email", { email, name: "Second", password: pw, invitation: secondInvite.token, callbackURL: "/login.html?verified=1" })).status, 200);
+  const secondVerifyUrl = mails.at(-1).url;
+
+  // Stale link minted for u_first_owner must be rejected with INVALID_TOKEN and leave u_second_owner unverified.
+  const staleRes = await service.auth.handler(new Request(firstVerifyUrl));
+  assert.equal(staleRes.status, 302);
+  assert.match(staleRes.headers.get("location") || "", /error=INVALID_TOKEN/);
+  assert.equal((await request("sign-in/email", { email, password: pw })).status, 403);
+
+  assert.equal((await service.auth.handler(new Request(secondVerifyUrl))).status, 302);
+  assert.equal((await request("sign-in/email", { email, password: pw })).status, 200);
+});

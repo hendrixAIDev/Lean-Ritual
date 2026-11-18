@@ -121,7 +121,7 @@ function streamFile(file, res, headers){
     pipeline(stream, res, error => { if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") console.error("file stream failed", error.code || "error"); });
   });
 }
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 function serveStatic(req, res, user){
   let p;
   try { p = decodeURIComponent(new URL(req.url, "http://x").pathname); } catch { throw httpErr(400, "bad_path"); }
