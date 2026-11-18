@@ -406,7 +406,7 @@ button.primary:disabled{opacity:.6}
     if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};
     try{
       let r;
-      try{r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});}
+      try{r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Ritual-Lang":curLang},body:JSON.stringify(body)});}
       catch{setErr("msg.network");return}
       const j=await r.json().catch(()=>({}));
       if(!r.ok){setErr(authErrorKey(j,r.status));return}

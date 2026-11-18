@@ -391,6 +391,16 @@ const GUIDE_TEXT = `纲领要点（BLS 理论 + 薄肌战神计划）：
 - 有氧：日均 8000–10000 步；平台期再加每周 2 次 20 分钟间歇。睡眠 7–9 小时。
 - 补剂：肌酸 3–5 g/天；蛋白粉补缺口；咖啡因练前 3–5 mg/kg 且中午前；维 D、鱼油按需；不用燃脂补剂。
 - 阶段：体脂 >13% 减脂，到 10% 左右维持，≤11% 可精益增肌，涨到 13–15% 再减。`;
+const GUIDE_TEXT_EN = `Program Principles (Bigger Leaner Stronger foundation + Lean Ritual plan):
+- 3 workouts/week: Push / Pull / Legs+Shoulders. Compounds 3×4–6 reps (3 min rest); isolations 8–15 reps (lateral raises & face pulls 10–15).
+- Double progression: add reps at the same weight; once set 1 hits the top of the range, increase load next session (+5 kg for lower body/deadlift, +2.5 kg for bench/press/row, +1–2 kg per dumbbell); if set 1 drops below 4 reps after increasing, step back. Stop 1–2 reps shy of failure on most working sets; never take squats or deadlifts to failure. If stalled for 3 sessions, check sleep and calories before swapping variations. Maintaining strength on a cut counts as success.
+- Deload 1 week every 8–10 weeks (~60% weight, half sets), or earlier if joints ache, strength slides repeatedly, or sleep is poor.
+- Calories & macros: BMR (Katch-McArdle when body fat is known, else Mifflin-St Jeor) × activity factor = TDEE. Cut: TDEE×0.75–0.8, protein 2.2 g/kg, fat 0.6–0.8 g/kg; Maintain: TDEE, protein 1.8–2.0 g/kg; Lean Bulk: TDEE×1.05–1.1, protein 1.6–2.0 g/kg. Carbs fill the remaining calories.
+- Calibration (7-day average weight only): Cut losing <0.5%/wk for 2 straight weeks → −100–150 kcal/day or +2,000 daily steps; losing >1%/wk with strength dropping → +100–150 kcal/day. Lean Bulk gaining >1%/month → −100 kcal/day.
+- Food rules: split protein across 3–4 meals (30–50 g each); include protein + carbs within 2 hours pre- and post-workout; 80–90% of calories from whole foods; avoid added sugar by default and skip sugary drinks; no cheat meals (after 8+ weeks cutting, optional maintenance-calorie high-carb refeed day every 1–2 weeks).
+- Cardio & recovery: 8,000–10,000 steps/day default; add two 20-min low-impact interval sessions/wk only at a plateau. Sleep 7–9 hours.
+- Supplements: creatine 3–5 g/day; whey protein to fill daily gaps; caffeine 3–5 mg/kg pre-workout before noon; vitamin D3 and fish oil as needed; no fat burners.
+- Phases: >13% BF Cut, ~10% BF Maintain, ≤11% BF Lean Bulk, cut again once reaching 13–15% BF.`;
 
 /* ============ 多语言 (i18n) ============ */
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -1176,6 +1186,7 @@ const API_ERR_EN = {
   session_expired:"Session expired. Please sign in again.",
   export_busy:"An export is already in progress.",
   not_found:"Not found.",
+  method:"Method not allowed.",
   bad_type:"Unsupported image format. Use JPG, PNG, or WebP.",
   bad_idempotency_key:"Invalid upload key.",
   rate_limited:"Too many requests. Please try again later.",
@@ -1187,12 +1198,62 @@ const API_ERR_EN = {
   invalid_json:"Invalid AI response format. Please try again.",
   missing_feedback:"This feedback entry no longer exists.",
   server_error:"Server error. Please try again later.",
+  http_400:"Invalid request.",
+  http_401:"Session expired. Please sign in again.",
+  http_403:"Access denied.",
+  http_404:"Not found.",
+  http_405:"Method not allowed.",
+  http_409:"Updated in another tab. Please retry.",
+  http_410:"Please use the sign-in page.",
+  http_413:"Payload is too large.",
+  http_415:"Unsupported image format. Use JPG, PNG, or WebP.",
+  http_423:"Account deletion is in progress.",
+  http_429:"Too many requests. Please try again later.",
+  http_500:"Server error. Please try again later.",
+  http_502:"Server is temporarily unavailable. Please try again.",
+  http_503:"Server is temporarily unavailable. Please try again.",
+  http_504:"Server timed out. Please try again.",
   INVALID_PASSWORD:"Incorrect password.",
   PASSWORD_TOO_SHORT:"Password must be at least 8 characters.",
   PASSWORD_TOO_LONG:"Password cannot exceed 200 characters.",
   TOO_MANY_REQUESTS:"Too many attempts. Please try again later.",
   SESSION_EXPIRED:"Session expired. Please sign in again.",
-  SESSION_NOT_FRESH:"Session expired. Please sign in again."
+  SESSION_NOT_FRESH:"Session expired. Please sign in again.",
+  USER_NOT_FOUND:"Account not found.",
+  ACCOUNT_NOT_FOUND:"Account not found.",
+  CREDENTIAL_ACCOUNT_NOT_FOUND:"Account not found.",
+  FAILED_TO_UPDATE_USER:"Could not update account. Please try again later.",
+  INVALID_ORIGIN:"Origin check failed. Refresh and try again.",
+  MISSING_OR_NULL_ORIGIN:"Origin check failed. Refresh and try again.",
+  CROSS_SITE_NAVIGATION_LOGIN_BLOCKED:"Origin check failed. Refresh and try again."
+};
+const API_ERR_ZH = {
+  network:"连不上服务器",
+  doc_conflict:"数据已在其他页面更新，请重试",
+  doc_rate_limited:"保存过于频繁，请稍后重试",
+  doc_quota:"文档存储已达上限，请删除不需要的记录或联系管理员",
+  too_large:"内容太大",
+  bad_json:"数据格式无效",
+  bad_path:"路径无效",
+  bad_request:"请求参数无效",
+  forbidden:"只能访问自己的数据",
+  csrf:"请求来源不对",
+  auth_endpoint_retired:"请使用新的账号页面",
+  session_expired:"请先登录",
+  export_busy:"已有导出正在进行",
+  not_found:"未找到记录",
+  method:"不支持的请求方式",
+  bad_type:"照片格式无效，请使用 JPG、PNG 或 WebP",
+  bad_idempotency_key:"请求标识无效",
+  rate_limited:"请求太频繁或已达今日上限，请稍后再试",
+  storage_quota:"照片存储空间已达上限，请删除不需要的照片或联系管理员",
+  account_deleting:"账号删除处理中，不能再写入或读取记录",
+  sampling_disabled:"服务器没有配置 AI",
+  ai_failed:"AI 服务暂时不可用，请稍后再试或手动填写",
+  truncated:"AI 的回答太长被截断了",
+  invalid_json:"AI 回答格式无效",
+  missing_feedback:"这条反馈已不存在",
+  server_error:"服务器出错"
 };
 const API_ERR_ZH_BY_MSG = {
   "invalid password":"密码不正确。",
@@ -1200,7 +1261,14 @@ const API_ERR_ZH_BY_MSG = {
   "password too long":"密码太长，最多 200 位。",
   "confirm your password to delete the account":"请输入密码以确认删除账号。",
   "too many requests":"操作过于频繁，请稍后再试。",
-  "too many requests. please try again later":"操作过于频繁，请稍后再试."
+  "too many requests. please try again later":"操作过于频繁，请稍后再试.",
+  "session expired":"登录状态已过期，请重新登录。",
+  "session is not fresh":"登录状态已过期，请重新登录。",
+  "user not found":"未找到对应账号。",
+  "account not found":"未找到对应账号。",
+  "credential account not found":"未找到对应账号。",
+  "failed to update user":"更新账号信息失败，请稍后再试。",
+  "invalid origin":"请求来源校验未通过，请刷新后重试。"
 };
 const API_ERR_EN_BY_MSG = {
   "invalid password":"Incorrect password.",
@@ -1208,7 +1276,14 @@ const API_ERR_EN_BY_MSG = {
   "password too long":"Password cannot exceed 200 characters.",
   "confirm your password to delete the account":"Enter your password to confirm account deletion.",
   "too many requests":"Too many attempts. Please try again later.",
-  "too many requests. please try again later":"Too many attempts. Please try again later."
+  "too many requests. please try again later":"Too many attempts. Please try again later.",
+  "session expired":"Session expired. Please sign in again.",
+  "session is not fresh":"Session expired. Please sign in again.",
+  "user not found":"Account not found.",
+  "account not found":"Account not found.",
+  "credential account not found":"Account not found.",
+  "failed to update user":"Could not update account. Please try again later.",
+  "invalid origin":"Origin check failed. Refresh and try again."
 };
 
 const I18N_WARNED = new Set();
@@ -1279,7 +1354,25 @@ const mobilityText = k => hasOwn(MOBILITY, k) ? t(`mobility.${k}`) : "";
 const weekdayChip = d => getLang() === "en" ? EN_WEEKDAYS[d] : "周" + WEEKDAYS[d];
 const joinList = arr => arr.join(getLang() === "en" ? ", " : "、");
 const fmtRest = r => getLang() === "en" ? String(r ?? "").replace(/\s*分钟/g, " min") : String(r ?? "");
-const fmtConfidence = c => getLang() === "en" ? ({"低":"Low","中":"Medium","高":"High"}[c] || c) : c;
+const fmtConfidence = c => {
+  const s = String(c ?? "").trim(), low = s.toLowerCase();
+  if (getLang() === "en") return {"低":"Low","中":"Medium","高":"High","low":"Low","medium":"Medium","high":"High"}[low] || {"低":"Low","中":"Medium","高":"High"}[s] || s;
+  return {"low":"低","medium":"中","high":"高"}[low] || s;
+};
+function fmtImgErr(raw){
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const m = s.match(/^([A-Za-z0-9_.-]+)(?:\s*[:：]\s*([\s\S]*))?$/);
+  const code = m ? m[1] : "";
+  if (getLang() === "en") {
+    if (code && hasOwn(API_ERR_EN, code)) return API_ERR_EN[code];
+    if (m && m[2] && !/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/.test(m[2])) return `${code}: ${m[2]}`;
+    if (!/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/.test(s)) return s;
+    return code || t("common.unknown");
+  }
+  if (m && !m[2] && hasOwn(API_ERR_ZH, code)) return API_ERR_ZH[code];
+  return s;
+}
 function fmtWhy(w){
   const s = String(w ?? "");
   if (!s || getLang() !== "en") return s;
@@ -1424,10 +1517,11 @@ function apiErrMsg(e, fallback){
   if (getLang() === "en") {
     if (code && hasOwn(API_ERR_EN, code)) return API_ERR_EN[code];
     if (norm && hasOwn(API_ERR_EN_BY_MSG, norm)) return API_ERR_EN_BY_MSG[norm];
-    if (rawMsg && !/[\u4e00-\u9fff]/.test(rawMsg)) return rawMsg;
+    if (rawMsg && !/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/.test(rawMsg)) return rawMsg;
     return fallback;
   }
   if (norm && hasOwn(API_ERR_ZH_BY_MSG, norm)) return API_ERR_ZH_BY_MSG[norm];
+  if (!rawMsg && code && hasOwn(API_ERR_ZH, code)) return API_ERR_ZH[code];
   return rawMsg || fallback;
 }
 function formatSaveErr(e){
@@ -1437,16 +1531,18 @@ function formatSaveErr(e){
     const norm = rawMsg.toLowerCase().replace(/[.!]+$/, "");
     const mapped = (code && hasOwn(API_ERR_EN, code) ? API_ERR_EN[code] : "") || (norm && hasOwn(API_ERR_EN_BY_MSG, norm) ? API_ERR_EN_BY_MSG[norm] : "");
     if (mapped) return "Save failed: " + mapped;
-    if (rawMsg && !/[\u4e00-\u9fff]/.test(rawMsg)) return "Save failed: " + rawMsg;
+    if (rawMsg && !/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/.test(rawMsg)) return "Save failed: " + rawMsg;
     return "Save failed (" + (code || "network error") + "). Please try again.";
   }
-  return e?.message ? "保存失败：" + e.message : "保存失败（" + (e?.code || "网络问题") + "），请稍后再试";
+  const code = typeof e?.code === "string" ? e.code.trim() : "";
+  const msg = e?.message || (code && hasOwn(API_ERR_ZH, code) ? API_ERR_ZH[code] : "");
+  return msg ? "保存失败：" + msg : "保存失败（" + (code || "网络问题") + "），请稍后再试";
 }
 const queues = {};
 function write(path, data){
   const p = (queues[path] || Promise.resolve()).catch(()=>{}).then(() => S.store.set(path, data));
   queues[path] = p;
-  return p.catch(e => { toast(getLang() === "en" ? formatSaveErr(e) : ("保存失败：" + (e?.message || e?.code || "请稍后再试"))); throw e; });
+  return p.catch(e => { toast(formatSaveErr(e)); throw e; });
 }
 /* 数据规则：只加字段不删字段；读到旧数据先补默认值；写入时保留所有未知字段 */
 const SCHEMA_VERSION = 2;
@@ -2068,11 +2164,24 @@ function openEditor(i){
   const longTerm = !!(S.profile.exEdits || {})[e.orig];
   S.ed = {date:S.date, i, orig:e.orig, name:exName(e.name), sets:e.sets, lo:e.lo, hi:e.hi, why:"", ai:[], scope: plan.saved ? "once" : longTerm ? "always" : "once", rec:!!plan.saved};
 }
-async function aiSuggest(){
-  const ed = S.ed, p = S.profile, plan = planFor(ed.date), e = plan.ex[ed.i];
-  ed.aiBusy = true; ed.aiErr = null; render();
-  const prompt = `你是力量训练教练。学员想替换今天课表里的一个动作，请推荐 3 个替代动作。
-今天：${plan.title}，其他动作：${plan.ex.filter((_,k)=>k!==ed.i).map(x=>x.name).join("、")}
+function buildSuggestPrompt(ed = S.ed, p = S.profile, plan = planFor(ed.date), e = plan.ex[ed.i], lang = getLang()){
+  const others = plan.ex.filter((_,k)=>k!==ed.i);
+  if (lang === "en") {
+    const exDisp = n => hasOwn(EX_EN, n) ? EX_EN[n] : n;
+    const dayTitle = plan.key === "custom" ? I18N.en["prog.custom"] : PROGRAM[plan.key] ? I18N.en[`prog.${plan.key}.title`] : I18N.en["prog.workout"];
+    const injList = (p.injuries||[]).map(k => I18N.en["inj." + k] || k).join(", ") || "None";
+    return `You are a strength training coach. The trainee wants to swap one exercise in today's session — suggest 3 replacement exercises in English.
+Today's session: ${dayTitle}; other exercises: ${others.map(x => exDisp(x.name)).join(", ")}
+Exercise to replace: ${exDisp(e.name)} (original plan slot "${exDisp(e.orig)}", ${e.sets} sets × ${e.lo}–${e.hi} reps)
+Equipment: ${p.equipment === "home" ? "Home (bodyweight, resistance bands, pull-up bar, weighted backpack)" : "Gym"}
+Injuries / sensitivities: ${injList}${p.injNote ? " (" + p.injNote + ")" : ""}
+Training experience: ${{new:"Under 1 year",mid:"1–3 years",adv:"3+ years"}[p.exp] || "Unknown"}
+Reason for swap: ${ed.why || "Not specified"}
+Principles: train the same target muscle group; avoid loading or risky positions on injured joints; 4–8 reps for compounds, 8–15 reps for isolations; use common English exercise names and write the reason in English.
+Reply ONLY with a JSON array: [{"name":"Exercise Name","sets":3,"lo":8,"hi":12,"why":"One-sentence reason in English"}]`;
+  }
+  return `你是力量训练教练。学员想替换今天课表里的一个动作，请推荐 3 个替代动作。
+今天：${plan.title}，其他动作：${others.map(x=>x.name).join("、")}
 要替换的：${e.name}（原课表动作「${e.orig}」，${e.sets} 组 × ${e.lo}–${e.hi} 次）
 训练地点：${p.equipment==="home"?"在家（自重、弹力带、单杠、背包负重）":"健身房"}
 伤病：${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"}${p.injNote?"（"+p.injNote+"）":""}
@@ -2080,6 +2189,11 @@ async function aiSuggest(){
 想换的原因：${ed.why || "没说"}
 原则：练到同一块肌肉；伤病部位不负重、不做有风险的姿势；复合动作 4–8 次，孤立动作 8–15 次；动作名用中文常见叫法。
 只回复一个 JSON 数组：[{"name":"动作名","sets":3,"lo":8,"hi":12,"why":"一句话理由"}]`;
+}
+async function aiSuggest(){
+  const ed = S.ed, p = S.profile, plan = planFor(ed.date), e = plan.ex[ed.i];
+  ed.aiBusy = true; ed.aiErr = null; render();
+  const prompt = buildSuggestPrompt(ed, p, plan, e);
   try {
     const r = await S.sample.json(prompt, {modelTier:"default"});
     const n = (v, d) => { v = Math.round(+v); return v > 0 && v < 50 ? v : d; };
@@ -2187,7 +2301,7 @@ function mealCard(m){
     </div>
     ${e.calc ? `<p class="small muted">${esc(e.by==="label"?t("food.calcByLabel"):t("food.calcBasis"))}${getLang()==="en"?": ":"："}${esc(fmtLabelCalc(e.calc, e.by))}</p>` : ""}
     ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${esc(e.label ? t("food.ocrLabel") : t("food.ocrNoLabel"))}</p>` : ""}
-    ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">${esc(t("food.photoNotUsed", {reason:e.imgErr ? t("food.photoNotUsedReason", {err:e.imgErr}) : ""}))}</p>` : ""}
+    ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">${esc(t("food.photoNotUsed", {reason:e.imgErr ? t("food.photoNotUsedReason", {err:fmtImgErr(e.imgErr)}) : ""}))}</p>` : ""}
     ${m.photoErr && !m.photo ? (() => { const canRetry = !!(S.files[m.id]?.blob && S.assets && m.photoErr !== "decode"); return `<p class="tip warn small">${esc(PHOTO_ERR(m.photoErr, canRetry))}${canRetry ? ` <button class="chip" data-act="retry-photo" data-v="${esc(m.id)}">${esc(t("food.retryPhoto"))}</button>` : ""}</p>`; })() : ""}
     ${m.visionReq?.status === "pending" ? `<p class="tip small">${esc(t("food.legacyPending"))}</p>` : ""}${e.by === "claude-vision" ? `<p class="tip small">${esc(visionText)}</p>` : e.by === "manual" ? `<p class="small muted">${esc(t("food.manualNote"))}</p>` : ""}
     ${e.tip ? `<p class="tip">${esc(e.tip)}${e.confidence?` <span class="muted">${esc(t("food.confidence", {c:fmtConfidence(e.confidence)}))}</span>`:""}</p>` : ""}
@@ -2425,24 +2539,36 @@ async function binarize(blob){
   } catch { return blob; } finally { URL.revokeObjectURL(url); }
 }
 const withTimeout = (p, ms, code) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({code}), ms))]);
-async function estimateMeal(date, id, manual, prov){
-  const day = S.days[date]; const m = day?.meals?.find(x => x.id === id);
-  if (!m || !S.sample) return;
-  const tg = targets();
-  S.busy["meal-"+id] = true; render();
-  const img = await loadPhoto(m);
-  const extras = [];
-  for (let i = 0; i < (m.more || []).length && extras.length < 3; i++) { const b = await loadMore(m, i).catch(() => null); if (b) extras.push({b, tag:m.more[i].tag}); }
-  const imgs = [img, ...extras.map(x => x.b)].filter(Boolean);
-  const multi = imgs.length > 1, left = extras.some(x => x.tag === "剩下");
+const OCR_LABEL_RE = /能量|能重|蛋白|脂肪|碳水|kJ|kcal|NRV|营养|\b(?:calories?|energy|protein|fat|carb(?:ohydrate)?s?|nutrition\s*facts|serving)\b/i;
+function buildMealPrompt({ m, tg = targets(), withImg = false, imgs = [], img = null, extras = [], multi = false, left = false, ocrText = "" }, lang = getLang()){
+  if (lang === "en") {
+    const stName = I18N.en["stage." + tg.st] || tg.st;
+    const mType = I18N.en["mealType." + m.type] || m.type;
+    const imgListEn = () => [...(img ? [left ? "before eating (as served)" : "first photo"] : []), ...extras.map(x => x.tag === "剩下" ? "leftovers after eating" : "additional photo")].map((tx, i) => `Photo ${i+1}: ${tx}`).join("; ");
+    const mentionsLabel = /成分表|营养表|nutrition\s*(?:facts|label|table)|per\s*100\s*(?:g|ml)/i.test(m.text || "");
+    const body = withImg
+      ? `${multi || !img ? `Attached ${imgs.length} photo(s) in order: ${imgListEn()}. ${left && !img ? "No before-eating photo: estimate the served portion from the text description, subtract the leftovers shown in the photo, and show both amounts in calc." : left ? "With both before-eating and leftovers photos, estimate the served total first, then subtract the leftovers; calculate macros as (served − leftovers) and write both sides in calc." : "Photos are in upload order. First determine their relationship: if they show the same meal before eating vs leftovers afterward, calculate macros as (served − leftovers), write both sides in calc, and set cmp to true; if they show different angles or dishes of the same meal, combine them without double-counting and set cmp to false."}\n` : ""}The attached photo(s) show this meal. First check whether a packaged "Nutrition Facts / Nutrition Information" label is visible:
+- If yes, read the exact numbers from the table (Energy/Calories, Protein, Fat, Carbohydrates), noting whether the basis is per 100g, per 100mL, or per serving; convert kJ using 1 kcal = 4.184 kJ. Multiply by the amount actually eaten (from the user's text weight/servings, or package net weight if unspecified). Always prioritize the nutrition label over generic food estimates, and set label to true.
+- If there is no nutrition label, estimate portion sizes from the photo(s); if text and photo conflict on weight, trust the explicit weight in the text.`
+      : ocrText
+      ? `You cannot see the photo, but local browser OCR extracted the following text from the photo (may contain typos or misalignment):
+"""
+${ocrText}
+"""
+- If it contains a nutrition label/table (Energy/Calories, Protein, Fat, Carbohydrates, etc.), calculate from those numbers: check whether the basis is per 100g, per 100mL, or per serving; convert kJ via 1 kcal = 4.184 kJ; multiply by the amount eaten (from user text, or extracted net weight if unspecified), set label to true, and show the math in calc in English. If OCR numbers are clearly incomplete, note that in calc and fill in reasonable values for that food.
+- If no nutrition table is present, ignore the OCR text and estimate from the user's description (assume a standard single-person serving if unspecified).`
+      : `No photo is available — estimate from the text description only (assume a standard single-person serving if unspecified).${mentionsLabel ? ' The user mentioned a nutrition label, which you cannot see: note in calc that the nutrition label image was not visible, or calculate from any label numbers written in the text.' : ""}`;
+    return `You are a sports nutritionist helping a lifter in the "${stName}" phase estimate the nutrition of a meal. Write all natural-language fields (items[].name, items[].amount, calc, tip) in English.
+Meal: ${mType}
+User description: ${m.text || "(none provided)"}
+${body}
+Daily targets: ${tg.kcal} kcal, protein ${tg.protein} g, carbs ${tg.carbs} g, fat ${tg.fat} g. Principles: 30–50 g protein per meal, avoid added sugar by default, no sugary drinks.
+Reply ONLY with a JSON object in this exact schema:
+{"items":[{"name":"Steamed rice","amount":"~200g"}],"label":false,"calc":"One-sentence basis in English; if from a label, show the math, e.g. Label per 100g: 370 kJ (88 kcal), P 2.8g..., × 2.2 = ...","kcal":650,"protein":40,"carbs":70,"fat":20,"confidence":"Medium","tip":"One-sentence actionable tip in English tailored to their targets","cmp":false}
+label indicates whether macros were calculated from a nutrition label; cmp indicates whether before-vs-leftovers comparison was used. kcal is an integer; protein, carbs, and fat have at most 1 decimal place; confidence must be one of Low / Medium / High.`;
+  }
   const imgList = () => [...(img ? [left ? "吃之前（端上来时）" : "第一张"] : []), ...extras.map(x => x.tag === "剩下" ? "吃完剩下的" : "后加的照片")].map((tx, i) => `图${i+1}：${tx}`).join("；");
-  let ocrText = "", ocrErr = null, ocrRan = false;
-  const needOCR = () => (img || imgs[0]) && !ocrRan && !ocrErr;
-  const doOCR = async () => {
-    toast(t("toast.ocrReading"), 20000);
-    try { const txt = await withTimeout(ocrImage(img || imgs[0]), 90000, "ocr_timeout"); ocrRan = true; if (/能量|能重|蛋白|脂肪|碳水|kJ|kcal|NRV|营养/i.test(txt)) ocrText = txt; } catch (e) { console.warn("ocr failed", e); ocrErr = String(e?.code || e?.message || "ocr_failed"); }
-  };
-  const prompt = withImg => `你是运动营养师，帮一位正在执行“${STAGE[tg.st]}”阶段的健身者估算一餐的营养。
+  return `你是运动营养师，帮一位正在执行“${STAGE[tg.st]}”阶段的健身者估算一餐的营养。
 餐次：${m.type}
 他的文字描述：${m.text || "（没写）"}
 ${withImg ? `${multi || !img ? `附了 ${imgs.length} 张照片，按顺序是：${imgList()}。${left && !img ? "没有吃之前的照片：按他的文字描述估端上来的量，再减去照片里剩下的，calc 里写出两边各多少。" : left ? "有吃之前和吃完剩下的照片时，先估端上来的总量，再估剩下的量，这一餐的营养按“端上来 − 剩下”算，calc 里写出两边各多少。" : "照片按添加顺序排列。先判断它们的关系：如果是同一份食物吃之前和吃完剩下的（盘里变少、剩饭剩菜），先估端上来的总量再估剩下的，这一餐按“端上来 − 剩下”算，calc 写出两边各多少，cmp 设为 true；如果是同一餐的不同角度或不同的菜，合起来估算，不要重复计算同一份食物，cmp 设为 false。"}
@@ -2458,6 +2584,24 @@ ${ocrText}
 只回复一个 JSON 对象，格式：
 {"items":[{"name":"米饭","amount":"约200g"}],"label":false,"calc":"一句话写出依据；用了成分表就写换算过程，例如：成分表每100g 370kJ(88kcal)、蛋白2.8g…，×2.2 = …","kcal":650,"protein":40,"carbs":70,"fat":20,"confidence":"中","tip":"一句中文建议，针对这餐怎么更贴合目标","cmp":false}
 label 表示是否按照片里的营养成分表计算；cmp 表示是否按吃之前和吃完剩下的照片对比算。kcal 为整数，蛋白、碳水、脂肪保留 1 位小数，confidence 只能是 低/中/高。`;
+}
+async function estimateMeal(date, id, manual, prov){
+  const day = S.days[date]; const m = day?.meals?.find(x => x.id === id);
+  if (!m || !S.sample) return;
+  const tg = targets();
+  S.busy["meal-"+id] = true; render();
+  const img = await loadPhoto(m);
+  const extras = [];
+  for (let i = 0; i < (m.more || []).length && extras.length < 3; i++) { const b = await loadMore(m, i).catch(() => null); if (b) extras.push({b, tag:m.more[i].tag}); }
+  const imgs = [img, ...extras.map(x => x.b)].filter(Boolean);
+  const multi = imgs.length > 1, left = extras.some(x => x.tag === "剩下");
+  let ocrText = "", ocrErr = null, ocrRan = false;
+  const needOCR = () => (img || imgs[0]) && !ocrRan && !ocrErr;
+  const doOCR = async () => {
+    toast(t("toast.ocrReading"), 20000);
+    try { const txt = await withTimeout(ocrImage(img || imgs[0]), 90000, "ocr_timeout"); ocrRan = true; if (OCR_LABEL_RE.test(txt)) ocrText = txt; } catch (e) { console.warn("ocr failed", e); ocrErr = String(e?.code || e?.message || "ocr_failed"); }
+  };
+  const prompt = withImg => buildMealPrompt({ m, tg, withImg, imgs, img, extras, multi, left, ocrText });
   const ask = async withImg => {
     const opts = {modelTier:"quick", cache:false};
     if (withImg) opts.images = imgs.slice(0, 4);
@@ -2474,7 +2618,7 @@ label 表示是否按照片里的营养成分表计算；cmp 表示是否按吃�
   try {
     try { r = await ask(tryImg); if (tryImg) S.imgOK = true; }
     catch (e) {
-      if (tryImg && !hard(e?.code)) { console.warn("sample with image failed", e); imgErr = String(e?.code || "unknown") + (e?.message ? "：" + String(e.message).slice(0,120) : ""); photoUsed = false; S.imgOK = false; if (needOCR()) await doOCR(); if (skipProv()) return; r = await ask(false); }
+      if (tryImg && !hard(e?.code)) { console.warn("sample with image failed", e); imgErr = String(e?.code || "unknown"); photoUsed = false; S.imgOK = false; if (needOCR()) await doOCR(); if (skipProv()) return; r = await ask(false); }
       else throw e;
     }
     const n1 = v => Math.max(0, Math.round((+v || 0)*10)/10);
@@ -2486,7 +2630,7 @@ label 表示是否按照片里的营养成分表计算；cmp 表示是否按吃�
     if (imgs.length && !photoUsed && ocrText) toast(est.label ? t("toast.ocrUsedLabel") : t("toast.ocrUsedText"), 6000);
     else if (imgs.length && !photoUsed && ocrRan) toast(t("toast.ocrNone"), 7000);
     else if (imgs.length && !photoUsed && prov) toast(t("toast.provText"), 6000);
-    else if (imgs.length && !photoUsed) toast(t("toast.photoSendFail", {reason: imgErr || (S.imgOK === false ? t("toast.photoFailOnce") : t("common.unknown"))}), 7000);
+    else if (imgs.length && !photoUsed) toast(t("toast.photoSendFail", {reason: (imgErr ? fmtImgErr(imgErr) : "") || (S.imgOK === false ? t("toast.photoFailOnce") : t("common.unknown"))}), 7000);
   } catch (e) { console.warn("estimate failed", e); toast(sampleErr(e)); }
   finally { delete S.busy["meal-"+id]; render(); }
 }
@@ -2524,7 +2668,7 @@ function sampleErr(e, task = "estimate"){
   const c = e?.code;
   if (HOSTED && (c === "not_granted" || c === "sampling_disabled")) return t("err.aiNotConfiguredHosted");
   if (HOSTED && c === "session_expired") return t("err.sessionExpired");
-  if (c === "not_granted" || c === "sampling_disabled") return t("err.aiUnavailable");
+  if (c === "not_granted" || c === "sampling_disabled" || c === "ai_failed") return t("err.aiUnavailable");
   if (c === "rate_limited") return t("err.rateLimited");
   if (c === "image_rejected") return t("err.imageRejected");
   if (c === "truncated") return t("err.truncated");
@@ -2534,6 +2678,8 @@ function sampleErr(e, task = "estimate"){
   if (c === "or_key") return t("err.or_key");
   if (c === "or_credit") return t("err.or_credit");
   if (c === "network") return t("err.aiNetwork");
+  if (c && getLang() === "en" && hasOwn(API_ERR_EN, c)) return API_ERR_EN[c];
+  if (c && getLang() !== "en" && hasOwn(API_ERR_ZH, c)) return API_ERR_ZH[c];
   const pfx = task === "suggest" ? "err.suggest" : task === "analyze" ? "err.analyze" : "err.estimate";
   if (c) return t(pfx + "Code", {code:c});
   return t(pfx);
@@ -2667,8 +2813,12 @@ function balanceChart(ser, planBal){
     ${bars}
   </svg><p class="small muted">${esc(t("log.balLegend", {plan:planBal !== 0 ? t("log.balLegendPlan") : ""}))}</p>`;
 }
-function balanceText(){
+function balanceText(lang = getLang()){
   const full = balanceSeries(14).filter(d => !d.none && !d.partial && !d.today);
+  if (lang === "en") {
+    if (!full.length) return "No days with 3+ estimated meals in the last 14 days";
+    return `Across ${full.length} fully logged day(s) in the last 14 days, avg ${Math.round(mean(full.map(d => d.bal)))} kcal/day (intake − est. TDEE; negative = deficit)`;
+  }
   if (!full.length) return "最近 14 天没有记全三顿的日子";
   return `最近 14 天记全的 ${full.length} 天，平均每天 ${Math.round(mean(full.map(d => d.bal)))} kcal（吃进 − 估算TDEE，负数是缺口）`;
 }
@@ -2822,7 +2972,8 @@ function normAction(raw){
       const s = Math.round(a.sets), lo = Math.round(a.lo), hi = Math.round(a.hi);
       return s >= 1 && s <= 8 && lo >= 1 && hi >= lo ? {...a, sets:s, lo, hi, hasNums:true} : null;
     }
-    const m = String(a.text || "").match(/(?:做|改为|改成)\s*(\d+)\s*(?:组\s*[×xX*]?\s*|[×xX])\s*(\d+)\s*[-–—~至到]\s*(\d+)\s*次?/);
+    const m = String(a.text || "").match(/(?:做|改为|改成)\s*(\d+)\s*(?:组\s*[×xX*]?\s*|[×xX])\s*(\d+)\s*[-–—~至到]\s*(\d+)\s*次?/)
+      || String(a.text || "").match(/\b(\d+)\s*(?:sets?\s*(?:of|[×xX*])\s*|[×xX])\s*(\d+)\s*[-–—~]\s*(\d+)(?:\s*reps?)?\b/i);
     if (m) {
       const s = +m[1], lo = +m[2], hi = +m[3];
       if (s >= 1 && s <= 8 && lo >= 1 && hi >= lo && hi <= 60) return {...a, sets:s, lo, hi, hasNums:true};
@@ -2872,9 +3023,37 @@ function fbCard(f){
     ${f.adjustments?.length ? `<div class="stack" style="gap:8px"><b class="small">${esc(t("fb.suggestions"))}</b>${f.adjustments.map((a,i) => { const dec = !(f.applied||[]).includes(i) && (f.declined||[]).includes(i); return `<div class="ins ${dec?"declined":"info"}"><span class="s"></span><div class="b"><p class="small">${esc(a.text)}</p>${actionBtn(a, "ai", f.id, i)}</div></div>`; }).join("")}</div>` : ""}
   </section>`;
 }
-function dataDigest(){
+function dataDigest(lang = getLang()){
   const today = todayStr(), p = S.profile, t = targets();
   const lines = [];
+  if (lang === "en") {
+    const exDisp = n => hasOwn(EX_EN, n) ? EX_EN[n] : n;
+    const feelEn = ["", I18N.en["feel.1"], I18N.en["feel.2"], I18N.en["feel.3"], I18N.en["feel.4"], I18N.en["feel.5"]];
+    for (let i = 13; i >= 0; i--) {
+      const date = addDays(today, -i), d = S.days[date]; if (!d) continue;
+      const c = d.checkin || {}, w = d.workout, m = dayMacros(date);
+      let s = `${date}: `;
+      if (c.weight) s += `weight ${c.weight}kg `; if (c.steps) s += `steps ${c.steps} `; if (c.sleep) s += `sleep ${c.sleep}h `; if (c.bf) s += `BF ${c.bf}% `; if (c.waist) s += `waist ${c.waist}cm `;
+      if (w?.done) {
+        const wTitle = PROGRAM[w.key] ? I18N.en[`prog.${w.key}.title`] : (w.key === "custom" ? I18N.en["prog.custom"] : I18N.en["prog.workout"]);
+        s += `| Workout ${wTitle} feel:${feelEn[w.feel]||"unlogged"} pain:${w.pain==="pain"?"clear("+(w.painArea||"")+")":w.pain==="mild"?"mild("+(w.painArea||"")+")":"none"} ` + (w.exercises||[]).map(e => `${exDisp(e.name)} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("; ") + (w.note?` note:${w.note}`:"");
+      }
+      if (m.n) s += ` | Meals ${m.n}` + (m.est ? ` est ${m.kcal}kcal P${m.protein}g C${m.carbs}g F${m.fat}g` : "") + ": " + d.meals.map(x => `${I18N.en["mealType."+x.type]||x.type}:${(x.text||"").slice(0,40)}`).join("; ");
+      lines.push(s);
+    }
+    const plan = planFor(today);
+    const planTitle = plan.key ? (PROGRAM[plan.key] ? I18N.en[`prog.${plan.key}.title`] : (plan.key === "custom" ? I18N.en["prog.custom"] : I18N.en["prog.workout"])) : "";
+    const canonPairs = [...new Set(ORDER.flatMap(k => PROGRAM[k].ex.map(e => e.name)))].map(z => `"${z}" (${exDisp(z)})`).join(", ");
+    return `Profile: ${p.sex==="f"?"Female":"Male"} ${p.age}yo ${p.height}cm current 7-day avg weight ${t.w?.toFixed?.(1)}kg BF ${t.bf??"unknown"}%${t.bfAvg?" (14-day scale avg)":""} experience:${{new:"<1 yr",mid:"1–3 yrs",adv:"3+ yrs"}[p.exp]} phase:${I18N.en["stage."+t.st]||t.st} equipment:${p.equipment==="home"?"Home":"Gym"} training days:${(p.trainDays||[]).map(d=>EN_WEEKDAYS[d]).join(", ")} slot:${I18N.en["slot."+p.slot]||p.slot} injuries:${(p.injuries||[]).map(k=>I18N.en["inj."+k]||k).join(", ")||"None"} ${p.injNote?"("+p.injNote+")":""} supplements:${(p.supps||[]).join(", ")||"None"}
+Current targets: ${t.kcal} kcal (incl. adopted adjustment ${p.kcalAdjust||0}), protein ${t.protein}g carbs ${t.carbs}g fat ${t.fat}g; est. TDEE ~${t.tdee}. Plan week ${weekIndex(today)+1}.
+Calorie balance: ${balanceText("en")}
+Today's plan: ${plan.key ? planTitle + ": " + plan.ex.map(e=>exDisp(e.name)).join(", ") : "Rest"}
+Canonical plan exercise keys for swap/edit "from" (MUST copy the exact Chinese key string): ${canonPairs}
+Current active execution (canonical "from" key → active exercise sets×reps):
+${ORDER.map(k => I18N.en[`prog.${k}.title`] + ": " + PROGRAM[k].ex.map(resolveEx).map(e => `${e.orig} (${exDisp(e.orig)})${e.name!==e.orig?" → "+exDisp(e.name):""} ${e.sets}×${e.lo}–${e.hi}`).join("; ")).join("\n")}
+Last 14 days log:
+${lines.join("\n") || "(no logs yet)"}`;
+  }
   for (let i = 13; i >= 0; i--) {
     const date = addDays(today, -i), d = S.days[date]; if (!d) continue;
     const c = d.checkin || {}, w = d.workout, m = dayMacros(date);
@@ -2887,7 +3066,7 @@ function dataDigest(){
   const plan = planFor(today);
   return `个人资料：${p.sex==="f"?"女":"男"} ${p.age}岁 ${p.height}cm 当前7日均重${t.w?.toFixed?.(1)}kg 体脂${t.bf??"未知"}%${t.bfAvg?"(体脂秤14日均)":""} 训练经验:${{new:"不到1年",mid:"1–3年",adv:"3年以上"}[p.exp]} 阶段:${STAGE[t.st]} 地点:${p.equipment==="home"?"在家":"健身房"} 训练日:${p.trainDays.map(d=>"周"+WEEKDAYS[d]).join("")} 时段:${SLOT[p.slot]} 伤病:${(p.injuries||[]).map(k=>INJ[k]).join("、")||"无"} ${p.injNote?"("+p.injNote+")":""} 补剂:${(p.supps||[]).join(",")||"无"}
 当前目标：${t.kcal} kcal（含已采纳调整 ${p.kcalAdjust||0}），蛋白${t.protein}g 碳水${t.carbs}g 脂肪${t.fat}g；TDEE约${t.tdee}。计划第${weekIndex(today)+1}周。
-热量收支：${balanceText()}
+热量收支：${balanceText("zh")}
 今天计划：${plan.key ? plan.title + "：" + plan.ex.map(e=>e.name).join("、") : "休息"}
 当前课表动作名（可用于 swap/edit 的 from）：${[...new Set(ORDER.flatMap(k => PROGRAM[k].ex.map(e => e.name)))].join("、")}
 当前实际执行（from 原动作名 → 现在的动作 组数×次数）：
@@ -2895,30 +3074,48 @@ ${ORDER.map(k => PROGRAM[k].title + "：" + PROGRAM[k].ex.map(resolveEx).map(e =
 最近 14 天记录：
 ${lines.join("\n") || "（还没有记录）"}`;
 }
+function buildFeedbackPrompt(userText = "", lang = getLang()){
+  const cleanText = String(userText || "").trim().slice(0, 1000);
+  if (lang === "en") {
+    return `You are a rigorous strength and nutrition coach. Below are the trainee's program principles and last 14 days of logs. Review their progress against the program and propose up to 4 concrete adjustments. Never invent data not present in the logs; state clearly if logs are insufficient. Write all natural-language fields (summary, good, issues, and each adjustment's text) in English.
+${cleanText ? 'Trainee\'s note (address this first in summary; if pain is mentioned, swap to a pain-free variation or reduce load and advise seeing a doctor if pain worsens; do not overhaul the whole program from a single note):\n"' + cleanText + '"\n' : ""}
+${GUIDE_TEXT_EN}
+
+${dataDigest("en")}
+
+Reply ONLY with a JSON object:
+{"summary":"2–3 sentence overall review in English","good":["What is going well"],"issues":["Points to watch out for"],"adjustments":[{"kind":"kcal","delta":-120,"text":"Reason and action in English"},{"kind":"swap","from":"Canonical Chinese plan exercise key","to":"Common English exercise name","sets":3,"lo":4,"hi":6,"text":"Reason in English"},{"kind":"edit","from":"Canonical Chinese plan exercise key","to":"Common English exercise name, or leave empty to keep current exercise","sets":3,"lo":8,"hi":12,"text":"Reason in English"},{"kind":"deload","text":"Reason in English"},{"kind":"note","text":"Other advice (sleep, steps, food choices) in English"}]}
+kind must be one of kcal / swap / edit / deload / note. For kcal, delta must be between -250 and 250. For swap and edit, "from" MUST be one of the exact canonical Chinese plan exercise keys listed above (so it matches the stored plan key), while "to" may be a common English exercise name (leave empty on edit if keeping the same exercise). Use swap to replace an exercise (include sets/lo/hi if also recommending a set/rep scheme, otherwise omit them); use edit to change sets and rep range (sets 1–6, lo<=hi, reps 1–30), optionally swapping the exercise too. Any replacement exercise must suit the trainee's equipment and injuries. Write every text item in concise English (1–2 sentences).`;
+  }
+  return `你是一位严谨的力量训练和营养教练。下面是学员的纲领和最近 14 天记录。请按纲领给出反馈，并提出不超过 4 条具体调整。不要编造记录里没有的数据；数据不足就直说。
+${cleanText ? "学员这次写的反馈（最优先回应，summary 先回答它；涉及疼痛就换成无痛的替代动作或降低负荷，并提醒疼痛加重要就医；不要因为一次反馈大改整个计划）：\n「" + cleanText + "」\n" : ""}
+${GUIDE_TEXT}
+
+${dataDigest("zh")}
+
+只回复一个 JSON 对象：
+{"summary":"两三句中文总评","good":["做得好的点"],"issues":["需要注意的问题"],"adjustments":[{"kind":"kcal","delta":-120,"text":"原因和做法"},{"kind":"swap","from":"课表里的原动作名","to":"新动作名","sets":3,"lo":4,"hi":6,"text":"原因"},{"kind":"edit","from":"课表里的原动作名","to":"新动作名或留空表示不换动作","sets":3,"lo":8,"hi":12,"text":"原因"},{"kind":"deload","text":"原因"},{"kind":"note","text":"其他建议，例如睡眠、步数、饮食结构"}]}
+kind 只能是 kcal / swap / edit / deload / note。kcal 的 delta 在 -250 到 250 之间；swap 和 edit 的 from 必须是上面列出的原动作名之一；swap 用来换动作（如同时建议组数和次数范围可带 sets/lo/hi，否则省略）；edit 用来改组数和次数范围（sets 1–6，lo≤hi，次数 1–30），可同时换动作；换的新动作要适合学员的场地和伤病。每项 text 用中文，一两句话。`;
+}
 async function runAI(){
   if (!S.sample) return;
   const userText = String($("#fb-text")?.value ?? lsGet("bj-fbtext","")).trim().slice(0, 1000);
   const ctl = new AbortController();
   S.ai = {running:true, ctl}; render();
-  const prompt = `你是一位严谨的力量训练和营养教练。下面是学员的纲领和最近 14 天记录。请按纲领给出反馈，并提出不超过 4 条具体调整。不要编造记录里没有的数据；数据不足就直说。
-${userText ? "学员这次写的反馈（最优先回应，summary 先回答它；涉及疼痛就换成无痛的替代动作或降低负荷，并提醒疼痛加重要就医；不要因为一次反馈大改整个计划）：\n「" + userText + "」\n" : ""}
-${GUIDE_TEXT}
-
-${dataDigest()}
-
-只回复一个 JSON 对象：
-{"summary":"两三句中文总评","good":["做得好的点"],"issues":["需要注意的问题"],"adjustments":[{"kind":"kcal","delta":-120,"text":"原因和做法"},{"kind":"swap","from":"课表里的原动作名","to":"新动作名","sets":3,"lo":4,"hi":6,"text":"原因"},{"kind":"edit","from":"课表里的原动作名","to":"新动作名或留空表示不换动作","sets":3,"lo":8,"hi":12,"text":"原因"},{"kind":"deload","text":"原因"},{"kind":"note","text":"其他建议，例如睡眠、步数、饮食结构"}]}
-kind 只能是 kcal / swap / edit / deload / note。kcal 的 delta 在 -250 到 250 之间；swap 和 edit 的 from 必须是上面列出的原动作名之一；swap 用来换动作（如同时建议组数和次数范围可带 sets/lo/hi，否则省略）；edit 用来改组数和次数范围（sets 1–6，lo≤hi，次数 1–30），可同时换动作；换的新动作要适合学员的场地和伤病。每项 text 用中文，一两句话。`;
+  const prompt = buildFeedbackPrompt(userText);
   try {
     const r = await S.sample.json(prompt, {signal:ctl.signal, onText:() => { if (!S.ai.stream) { S.ai.stream = true; render(); } }});
+    const isProgEx = n => ORDER.some(k => PROGRAM[k].ex.some(e => e.name === n));
     const f = {id:uid(), createdAt:new Date().toISOString(), userText, summary:String(r.summary||""), good:(r.good||[]).map(String).slice(0,6), issues:(r.issues||[]).map(String).slice(0,6),
       adjustments:(r.adjustments||[]).slice(0,4).map(a => {
         const kind = String(a.kind||"note"), s = Math.round(+a.sets), lo = Math.round(+a.lo), hi = Math.round(+a.hi);
         const swapNums = kind === "swap" && a.sets != null && a.lo != null && a.hi != null && s >= 1 && s <= 8 && lo >= 1 && hi >= lo && hi <= 60;
-        return {kind, delta: kind==="kcal" ? Math.max(-250, Math.min(250, Math.round(+a.delta||0))) : undefined, from:a.from?String(a.from):undefined, to:a.to?String(a.to).trim():undefined, ...(kind === "edit" || swapNums ? {sets:s, lo, hi} : {}), text:String(a.text||"")};
+        const rawFrom = a.from ? String(a.from).trim() : undefined;
+        const from = rawFrom && !isProgEx(rawFrom) ? canonExName(rawFrom) : rawFrom;
+        return {kind, delta: kind==="kcal" ? Math.max(-250, Math.min(250, Math.round(+a.delta||0))) : undefined, from, to:a.to?String(a.to).trim():undefined, ...(kind === "edit" || swapNums ? {sets:s, lo, hi} : {}), text:String(a.text||"")};
       })
         .map(a => { const k = Object.keys(a).filter(x => a[x] === undefined); k.forEach(x => delete a[x]); return a; })
-        .filter(a => !["swap","edit"].includes(a.kind) || (a.from && ORDER.some(k => PROGRAM[k].ex.some(e => e.name === a.from))))
+        .filter(a => !["swap","edit"].includes(a.kind) || (a.from && isProgEx(a.from)))
         .filter(a => a.kind !== "swap" || a.to)
         .map(a => a.kind === "edit" && !(a.sets >= 1 && a.sets <= 6 && a.lo >= 1 && a.hi >= a.lo && a.hi <= 30) ? {kind:"note", text:a.text} : a), applied:[], declined:[]};
     S.feedback.unshift(f); S.ai = null; lsSet("bj-fbtext", ""); render();
