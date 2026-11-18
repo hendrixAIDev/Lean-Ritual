@@ -36,6 +36,12 @@ const CFG = {
 
 const releaseDataAccess = require("./lib/data-access").shared(CFG.dataDir);
 process.once("exit", releaseDataAccess);
+if (process.argv[2] === "import-account") {
+  const { runImportAccountCli } = require("./lib/import-export");
+  runImportAccountCli(process.argv.slice(3), { dataDir: CFG.dataDir, env: process.env })
+    .then(() => { releaseDataAccess(); process.exit(0); }, e => { console.error(e.message); releaseDataAccess(); process.exit(1); });
+  return;
+}
 fs.mkdirSync(path.join(CFG.dataDir, "blobs"), { recursive: true });
 const db = new DatabaseSync(path.join(CFG.dataDir, "bojin.db"));
 db.exec(`
@@ -278,10 +284,21 @@ async function cli(args){
   const [cmd, a, b] = args;
   if (["create-user", "set-password", "invite", "revoke-invite"].includes(cmd)) throw new Error("Use scripts/auth-admin.js for invitations; use email recovery to reset passwords.");
   if (cmd === "import") { importDir(a, path.resolve(b)); return true; }
+  if (cmd === "import-account") {
+    const { runImportAccountCli } = require("./lib/import-export");
+    await runImportAccountCli(args.slice(1), { dataDir: CFG.dataDir, db, docQuota, accountData, env: process.env });
+    return true;
+  }
   return false;
 }
 
 (async () => {
+  const args = process.argv.slice(2);
+  if (args.length) {
+    try { if (await cli(args)) { db.close(); releaseDataAccess(); process.exit(0); } }
+    catch (e) { console.error(e.message); try { db.close(); } catch {} releaseDataAccess(); process.exit(1); }
+    console.error("不认识的命令：" + args[0]); try { db.close(); } catch {} releaseDataAccess(); process.exit(1);
+  }
   const { createAuth } = require("./lib/auth");
   const { createMailer } = require("./lib/mail");
   authentication = await createAuth({dataDir: CFG.dataDir, baseURL: CFG.authBaseURL, secret: CFG.authSecret,
@@ -294,8 +311,6 @@ async function cli(args){
     if (!authentication.isUserPresent(uid)) { try {authentication.purgeDeletedArtifacts(uid);accountData.completeDeletion(uid);} catch {console.error("Account deletion cleanup needs attention");} }
   }} catch { console.error("Account deletion retry check failed; will retry"); } };
   retryDeletes();setInterval(retryDeletes,60000).unref();
-  const args = process.argv.slice(2);
-  if (args.length) { try { if (await cli(args)) process.exit(0); } catch (e) { console.error(e.message); process.exit(1); } console.error("不认识的命令：" + args[0]); process.exit(1); }
   const server = http.createServer((req, res) => {
     handle(req, res).catch(e => {
       const status = e.status || 500; if (status >= 500) console.error("request failed", e.code || "server_error");
