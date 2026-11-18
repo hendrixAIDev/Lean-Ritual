@@ -671,6 +671,23 @@ async function runEnglishJourney(browser, jpegFixture) {
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     assert.equal(await page.evaluate(() => localStorage.getItem('bj-lang')), 'en');
 
+    // 1b. privacy.html and guide.html open in English with zero Chinese UI/heading leakage and support manual switch
+    await page.goto(srv.base + '/privacy.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.match(await page.locator('h1').textContent(), /Privacy Notice/);
+    await assertZeroChineseVisible(page, 'privacy.html (en)');
+    await page.locator('#lang-switch [data-lang="zh"]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-CN');
+    assert.match(await page.locator('h1').textContent(), /隐私说明/);
+    await page.locator('#lang-switch [data-lang="en"]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    await assertZeroChineseVisible(page, 'privacy.html (switched back to en)');
+
+    await page.goto(srv.base + '/guide.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.match(await page.locator('h1').textContent(), /Lean Ritual Training & Nutrition Guide/);
+    await assertZeroChineseVisible(page, 'guide.html (en)');
+
     // 2. Invite -> register -> verify -> wrong password error -> sign in (all in English)
     const inv = srv.invite(email);
     await page.goto(inv.url);
@@ -681,6 +698,8 @@ async function runEnglishJourney(browser, jpegFixture) {
 
     const verifyMail = readMails(srv.dir).find(m => m.kind === 'verify' && m.to === email);
     assert.ok(verifyMail);
+    assert.equal(verifyMail.lang, 'en');
+    assert.equal(verifyMail.subject, 'Lean Ritual · Verify your email');
     await page.goto(verifyMail.url);
     await page.getByText('Email verified. Please sign in.', { exact: true }).waitFor();
 

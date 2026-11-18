@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#F4F1EA" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,19 +15,32 @@
 <style>
 :root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;color-scheme:light}
 @media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;color-scheme:dark}}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;line-height:1.7;font-size:15px}
-main{max-width:760px;margin:0 auto;padding:32px 16px 64px}
+main{max-width:760px;margin:0 auto;padding:calc(32px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(64px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 h1{font-size:24px;line-height:1.3}h2{font-size:19px;margin-top:2em;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:16px;margin-top:1.5em}
 a{color:var(--accent)}
+.top-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
+.lang-sw{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex-shrink:0}
+.lang-sw button{border:none;background:none;color:var(--muted);padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
+.lang-sw button.on{background:var(--accent);color:#fff;font-weight:700}
 .tw{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:14px;background:var(--surface)}
 th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
 th{background:var(--bg)}
 pre{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;font-size:13px}
 li p{margin:.2em 0}
-.back{font-size:14px}
-</style></head><body><main>
-<p class="back"><a href="/">‹ 回到薄肌日课</a></p>
+.back{font-size:14px;margin:0}
+</style></head><body><main id="doc-root">
+<div class="top-row">
+  <p class="back"><a id="back-link" href="/">‹ 回到薄肌日课</a></p>
+  <div class="lang-sw" id="lang-switch" role="group" aria-label="语言">
+    <button type="button" data-lang="zh" class="on">中文</button>
+    <button type="button" data-lang="en">English</button>
+  </div>
+</div>
+
+<article id="doc-zh">
 <h1 id="薄肌训练与饮食纲领bls-理论版">薄肌训练与饮食纲领（BLS 理论版）</h1>
 
 <h2 id="总纲">总纲</h2>
@@ -81,5 +94,139 @@ li p{margin:.2em 0}
 <h2 id="书与薄肌战神计划对照">书与薄肌战神计划对照</h2>
 <p>两者在核心原则上高度一致，分歧主要在训练量、孤立动作次数、肌酸剂量和欺骗餐上。下表“采纳”一列就是本纲领的最终做法。</p>
 <div class="tw"><table><thead><tr><th>维度</th><th>BLS 的做法</th><th>薄肌战神</th><th>采纳</th></tr></thead><tbody><tr><td>训练频率</td><td>有 3/4/5 天版本，越多越好但 3 天可行</td><td>每周 3 天</td><td>每周 3 天；以后时间充裕可加第 4 天上肢补强</td></tr><tr><td>分化方式</td><td>3 天版即推/拉/腿</td><td>推/拉/腿+肩</td><td>一致，保留你的“腿+肩”日</td></tr><tr><td>复合动作次数</td><td>4–6 次为主，组间 2–4 分钟</td><td>3 × 4–6</td><td>一致</td></tr><tr><td>孤立动作次数</td><td>多数也走大重量低次数</td><td>8–12 次</td><td>按你的来；侧平举、面拉放宽到 10–15 次，小肌群低次数易伤且难进步</td></tr><tr><td>腿部训练量</td><td>深蹲外还有腿举、腿后侧动作</td><td>只有深蹲</td><td>加一个罗马尼亚硬拉或腿举，防止下肢明显落后</td></tr><tr><td>加重方式</td><td>达到次数上限即加重</td><td>每次多 1 次或加重</td><td>一致，写成双重渐进规则</td></tr><tr><td>减载</td><td>每 8–10 周减载或休息一周</td><td>未提</td><td>采纳 BLS</td></tr><tr><td>蛋白质</td><td>减脂约 2.2 g/kg</td><td>体重斤数克（≈ 2 g/kg）</td><td>基本一致，保留你的口诀</td></tr><tr><td>热量缺口</td><td>约 TDEE 的 20–25%，按公式计算</td><td>定性分为小/中/大缺口</td><td>用 BLS 的定量公式，按体重趋势校准</td></tr><tr><td>添加糖</td><td>灵活饮食，少量可以</td><td>零人造添加糖</td><td>默认不吃，含糖饮料绝对禁；偶尔一点计入宏量即可，不当失败</td></tr><tr><td>欺骗餐</td><td>允许每周一顿适度的欺骗餐</td><td>不设欺骗餐</td><td>不设欺骗餐；减脂超过 8 周后，每 1–2 周设一天维持热量的高碳水日</td></tr><tr><td>有氧</td><td>高强度间歇为主，每周总量约 1–2 小时封顶</td><td>饭后散步 1 万步</td><td>散步为默认，平台期才加间歇训练</td></tr><tr><td>肌酸</td><td>5 g/天</td><td>5–10 g/天</td><td>3–5 g/天</td></tr><tr><td>咖啡因</td><td>训练前 3–6 mg/kg</td><td>按需，中午前</td><td>两者结合：3–5 mg/kg，中午前</td></tr><tr><td>减脂补剂</td><td>推荐多种</td><td>未提</td><td>不采纳</td></tr><tr><td>增减脂切换</td><td>男性减到约 10% 再增肌，增到 15–17% 再减</td><td>按胖瘦分策略，目标 10%</td><td>采纳 BLS 阈值，上限收紧到 13–15%，贴合薄肌目标</td></tr></tbody></table></div>
+</article>
 
-</main></body></html>
+<article id="doc-en" hidden>
+<h1 id="lean-ritual-training-and-nutrition-guide">Lean Ritual Training &amp; Nutrition Guide (BLS Edition)</h1>
+
+<h2 id="overview">Overview</h2>
+<p>The goal is to preserve and build muscle while bringing body fat down to around 10% and maintaining it sustainably in the 10–13% range. An athletic "lean" physique is not a special kind of muscle — it is simply enough muscle mass paired with low body fat.</p>
+<p>This guide uses the methodology of Michael Matthews's <em>Bigger, Leaner, Stronger</em> (BLS) as its theoretical foundation and the Lean Ritual program as its execution framework. References to the book are our own summary of its concepts rather than verbatim excerpts. BLS distills into six core principles:</p>
+<ol><li><p><strong>Progressive overload is the primary driver of muscle growth</strong>: lift heavy on compound movements and steadily build strength over time so muscle continues to grow. Chasing a pump or soreness is not the goal.</p></li><li><p><strong>Calories dictate weight direction; protein dictates whether you lose fat or muscle</strong>: fat loss requires a calorie deficit, muscle gain requires a modest surplus, and protein stays high in every phase.</p></li><li><p><strong>Track macros while keeping food choices flexible</strong>: get most calories from nutrient-dense whole foods, leaving a small margin of flexibility for long-term adherence.</p></li><li><p><strong>Cardio is a supporting tool</strong>: keep it modest and low-impact so it never cuts into recovery from strength training.</p></li><li><p><strong>Supplements are minor extras</strong>: only a handful have solid evidence, and none matter unless training and nutrition are dialed in.</p></li><li><p><strong>Periodization</strong>: switch between Cut, Maintain, and Lean Bulk phases by body-fat thresholds, and schedule periodic deload weeks so joints and the nervous system recover.</p></li></ol>
+
+<h2 id="personal-parameters">Personal Parameters</h2>
+<p>Each user fills in the items below during the 1-minute setup in Lean Ritual, and the app applies the formulas to compute daily calories, macros, and current phase. This guide page itself stores no personal data. Estimate body fat via a smart scale or visual reference chart — what matters most is measuring consistently with the same method.</p>
+<div class="tw"><table><thead><tr><th>Parameter</th><th>How to Enter</th><th>Purpose</th></tr></thead><tbody><tr><td>Sex / Age</td><td>Entered during setup</td><td>Mifflin-St Jeor formula</td></tr><tr><td>Height (cm)</td><td>Entered during setup</td><td>Mifflin-St Jeor formula</td></tr><tr><td>Weight (kg)</td><td>7-day morning fasted average</td><td>Calories, protein, and fat in g/kg</td></tr><tr><td>Body fat (%)</td><td>Scale or visual estimate (leave blank if unknown)</td><td>Determines phase; enables Katch-McArdle when present</td></tr><tr><td>Lean body mass LBM (kg)</td><td>Weight × (1 − body fat %)</td><td>Derived automatically when body fat is known</td></tr><tr><td>Weekly training days</td><td>Pick 3 non-consecutive days</td><td>Workout rotation schedule</td></tr><tr><td>Daily steps</td><td>7-day phone or wearable average</td><td>Sets activity multiplier</td></tr><tr><td>Training experience</td><td>Beginner / 1–3 yrs / 3+ yrs</td><td>Sets progression cadence</td></tr><tr><td>Injuries</td><td>Prior issues (lower back, shoulder, knee, etc.)</td><td>Auto-swaps joint-unfriendly exercises</td></tr><tr><td>Supplements</td><td>Select what you currently take</td><td>Daily supplement reminders</td></tr><tr><td>Current phase</td><td>Auto by body-fat thresholds below, or manual</td><td>Cut / Maintain / Lean Bulk calorie target</td></tr></tbody></table></div>
+<p>Once entered, daily calories and macros follow the three steps in the Nutrition section below — those exact formulas power the numbers shown in the app.</p>
+
+<h2 id="training">Training</h2>
+<p>Train 3 days per week on a Push / Pull / Legs + Shoulders split: heavy compound lifts for 4–6 reps and isolation movements for 8–15 reps, progressing via double progression. This mirrors the 3-day BLS structure with an added posterior-chain leg movement on Day 3.</p>
+<h3 id="weekly-schedule">Weekly Schedule</h3>
+<div class="tw"><table><thead><tr><th>Session</th><th>Exercise</th><th>Sets × Reps</th><th>Rest</th></tr></thead><tbody><tr><td>Day 1 Push</td><td>Incline Barbell Bench Press</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Barbell Bench Press</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Standing Barbell Overhead Press</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Lateral Raise</td><td>3 × 10–15</td><td>1–2 min</td></tr><tr><td></td><td>Overhead Triceps Extension (Cable/DB)</td><td>3 × 8–12</td><td>1–2 min</td></tr><tr><td>Day 2 Pull</td><td>Deadlift</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Pull-Up (Weighted After 6 Reps)</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Barbell Row</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Face Pull</td><td>3 × 12–15</td><td>1–2 min</td></tr><tr><td></td><td>Bicep Curl</td><td>3 × 8–12</td><td>1–2 min</td></tr><tr><td>Day 3 Legs + Shoulders</td><td>Barbell Squat</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Romanian Deadlift or Leg Press (added)</td><td>3 × 6–8</td><td>2–3 min</td></tr><tr><td></td><td>Barbell or Dumbbell Overhead Press</td><td>3 × 4–6</td><td>3 min</td></tr><tr><td></td><td>Lateral Raise</td><td>3 × 10–15</td><td>1–2 min</td></tr><tr><td></td><td>Face Pull or Rear Delt Fly</td><td>3 × 12–15</td><td>1–2 min</td></tr><tr><td></td><td>Abs (Hanging Leg Raise / Machine Crunch)</td><td>3 × 10–15</td><td>1 min</td></tr></tbody></table></div>
+<p>Leave at least one rest day between lifting sessions. Glute bridges can be added at the end of Day 3 and dropped first whenever time is tight.</p>
+
+<h3 id="double-progression">Progression Rules (Double Progression)</h3>
+<ol><li><p>Add reps at the same working weight until your first working set hits the top of the prescribed rep range (6 reps on compounds).</p></li><li><p>Increase load next session: +5 kg on lower-body lifts and deadlifts, +2.5 kg on bench/press/row, and +1–2 kg per dumbbell.</p></li><li><p>If set 1 drops below 4 reps after moving up, return to the previous weight and consolidate for another session or two.</p></li><li><p>End most working sets 1–2 reps shy of failure and stop as soon as form breaks. Never take squats or deadlifts to failure.</p></li><li><p>Log weight × reps every workout; if an exercise stalls for 3 consecutive sessions, check sleep and calories first before swapping to a variation.</p></li></ol>
+<p>During a cut, holding onto your strength is a win — you do not need to force weight increases every week.</p>
+
+<h3 id="warmup-and-deload">Warm-Up &amp; Deloads</h3>
+<ul><li><p>Warm-up sets (first compound lift of the day): 50% × 10, 70% × 4, and 90% × 1 of working weight, resting ~1 minute between warm-up sets. Follow-up compounds need only 1–2 light ramp-up sets.</p></li><li><p>Deload: every 8–10 weeks of continuous training, take 1 deload week (~60% working weight and half the sets) or full rest. Deload early if joints ache, strength drops across multiple sessions, or sleep suffers.</p></li><li><p>No-equipment fallback: push-ups, pull-ups, and bodyweight/single-leg/backpack squats using the same reps-then-load progression.</p></li></ul>
+
+<h2 id="nutrition">Nutrition</h2>
+<p>Estimate TDEE (total daily energy expenditure) first, set calories for your current phase, lock in protein and fat, and allocate the remaining calories to carbs. Formulas are only a starting point — calibrate from your 2-week weight trend.</p>
+<h3 id="step-1-bmr">Step 1: Basal Metabolic Rate (BMR)</h3>
+<p>When body fat % is known, use Katch-McArdle (aligned with BLS's lean-mass approach):</p>
+<pre><code class="language-latex">\text{BMR} = 370 + 21.6 \times \text{LBM}_{kg}, \quad \text{LBM} = \text{Weight} \times (1 - \text{BodyFat})</code></pre>
+<p>When body fat % is unknown, use Mifflin-St Jeor (male):</p>
+<pre><code class="language-latex">\text{BMR} = 10 \times \text{Weight}_{kg} + 6.25 \times \text{Height}_{cm} - 5 \times \text{Age} + 5</code></pre>
+<h3 id="step-2-tdee">Step 2: TDEE &amp; Phase Calories</h3>
+<pre><code class="language-latex">\text{TDEE} = \text{BMR} \times \text{ActivityFactor}</code></pre>
+<p>Starting activity multipliers: 1.35 for 3 workouts/week + under 5,000 daily steps; 1.45–1.5 for 3 workouts/week + ~10,000 daily steps.</p>
+<div class="tw"><table><thead><tr><th>Phase</th><th>Calories</th><th>Protein</th><th>Fat</th><th>Target Rate of Change</th></tr></thead><tbody><tr><td>Cut</td><td>TDEE × 0.75–0.80</td><td>2.2 g/kg body weight</td><td>0.6–0.8 g/kg</td><td>−0.5% to −1% per week</td></tr><tr><td>Maintain</td><td>TDEE</td><td>1.8–2.0 g/kg</td><td>0.8–1.0 g/kg</td><td>Within ±1 kg</td></tr><tr><td>Lean Bulk</td><td>TDEE × 1.05–1.10</td><td>1.6–2.0 g/kg</td><td>0.8–1.0 g/kg</td><td>+0.5% to +1% per month</td></tr></tbody></table></div>
+<p>A simple rule of thumb of ~2 g/kg (~0.9–1 g/lb) closely matches the BLS cutting recommendation. When body fat exceeds 20%, calculate protein from goal weight or 2.5 g/kg LBM instead so protein isn't overestimated.</p>
+<h3 id="step-3-carbs">Step 3: Carbs Take the Remainder</h3>
+<pre><code class="language-latex">\text{Carbs}_{g} = \frac{\text{TargetCalories} - 4 \times \text{Protein}_{g} - 9 \times \text{Fat}_{g}}{4}</code></pre>
+<p>Example (illustrative numbers): 65 kg, 15% body fat, 10,000 daily steps. LBM ≈ 55 kg, BMR ≈ 1,560 kcal, TDEE ≈ 2,260 kcal, Cut target ≈ 1,770 kcal: 143 g protein, 45 g fat, ~197 g carbs.</p>
+
+<h3 id="calibration-rules">Calibration Rules</h3>
+<ul><li><p>Weigh yourself every morning fasted after using the bathroom, and evaluate only the 7-day average.</p></li><li><p>Cutting and losing less than 0.5%/week for 2 straight weeks: reduce daily intake by 100–150 kcal (from carbs or fat) or add 2,000 daily steps.</p></li><li><p>Losing faster than 1%/week with noticeable strength loss: add back 100–150 kcal/day.</p></li><li><p>Lean bulking and gaining faster than 1%/month: trim 100 kcal/day.</p></li></ul>
+
+<h3 id="food-rules">Food &amp; Lifestyle Rules</h3>
+<ul><li><p>Split protein across 3–4 meals (30–50 g per meal), including a meal with protein and carbs within 2 hours before and after lifting.</p></li><li><p>Get 80–90% of calories from minimally processed whole foods: rice, potatoes, oats, fruit, vegetables, eggs, meat, fish, and dairy.</p></li><li><p>Skip sugary drinks and added-sugar snacks by default (sodas and sweetened teas first). Occasional small treats fitted inside your daily macros do not ruin progress.</p></li><li><p>Cardio: default to 8,000–10,000 daily steps. Late in a cut if needed, add two 20-minute low-impact cycling or rowing interval sessions per week, keeping weekly cardio under half your total lifting time.</p></li><li><p>Sleep 7–9 hours per night — the most underrated factor in preserving muscle during a cut.</p></li></ul>
+
+<h2 id="supplements">Supplements</h2>
+<p>Stick to the three supplements backed by the strongest evidence: whey protein, creatine, and caffeine. Add micronutrients only to cover gaps, and skip commercial "fat burners."</p>
+<div class="tw"><table><thead><tr><th>Supplement</th><th>Tier</th><th>Dosage</th><th>Notes</th></tr></thead><tbody><tr><td>Creatine monohydrate</td><td>Core</td><td>3–5 g daily, anytime (no loading needed)</td><td>Above 5 g adds little benefit; an initial 0.5–1.5 kg scale bump is intracellular water, not fat</td></tr><tr><td>Whey protein</td><td>Core (as needed)</td><td>25–30 g protein per scoop to close daily gaps</td><td>Food rather than medicine — count toward macros; pick whey isolate if lactose-sensitive</td></tr><tr><td>Caffeine</td><td>Core (as needed)</td><td>3–5 mg/kg 30–60 min pre-workout, before noon</td><td>Avoid high daily doses to prevent tolerance; reduce if sleep is affected</td></tr><tr><td>Vitamin D3</td><td>As needed</td><td>1,000–2,000 IU daily</td><td>Useful in winter or with limited sun exposure</td></tr><tr><td>Fish oil</td><td>As needed</td><td>1–2 g combined EPA+DHA daily</td><td>Useful when eating fatty fish fewer than twice per week</td></tr></tbody></table></div>
+<p>BLS also discusses fat-loss adjuncts such as yohimbine and synephrine. Because the author operates a supplement company and their practical effect is small, this guide omits them.</p>
+
+<h2 id="periodization">Periodization &amp; Tracking</h2>
+<p>Switch phases by body fat %: cut first when above 15% until reaching ~10%, stabilize at maintenance, then lean bulk if desired until 13–15% before cutting again. Run training in 8–10 week mesocycles ending with a deload week.</p>
+<div class="tw"><table><thead><tr><th>Phase</th><th>Entry Trigger</th><th>Exit Trigger</th><th>Key Focus</th></tr></thead><tbody><tr><td>Cut</td><td>Body fat &gt; 13%, or bulk reaches 15%</td><td>Body fat reaches ~10%</td><td>Beginners can recomp; insert 1–2 maintenance weeks if cutting past 12 weeks</td></tr><tr><td>Maintain</td><td>End of a cut</td><td>Enter Lean Bulk after 2–4 weeks, or stay long-term</td><td>Stabilize body weight and dial in true maintenance calories</td></tr><tr><td>Lean Bulk</td><td>Body fat ≤ 11% and aiming to add size</td><td>Body fat reaches 13–15%</td><td>Modest surplus with progressive strength gains as primary signal</td></tr></tbody></table></div>
+<p>Start every phase from the formula estimate, run it consistently for 2 weeks, and adjust using the calibration rules.</p>
+
+<h3 id="weekly-tracking">Tracking Cadence</h3>
+<div class="tw"><table><thead><tr><th>Frequency</th><th>What to Track</th></tr></thead><tbody><tr><td>Every workout</td><td>Weight × reps × sets for every exercise</td></tr><tr><td>Daily</td><td>Morning weight, total calories, protein grams, steps, sleep hours</td></tr><tr><td>Weekly</td><td>7-day average weight &amp; rate of change, waist (at navel), compound lift progress</td></tr><tr><td>Every 4 weeks</td><td>Estimated body fat %, front/side/back photos in consistent lighting, phase check</td></tr></tbody></table></div>
+<p>What to expect: 3–6 months of consistent execution produces unmistakable visual change. First-year lifters gain muscle fastest, with rates naturally tapering in subsequent years.</p>
+
+<h2 id="comparison">BLS vs. Lean Ritual Plan Comparison</h2>
+<p>Both approaches align closely on fundamentals, differing mainly on leg volume, isolation rep ranges, creatine dosing, and cheat meals. The "Adopted" column reflects what Lean Ritual implements.</p>
+<div class="tw"><table><thead><tr><th>Dimension</th><th>BLS Approach</th><th>Original Plan</th><th>Adopted in Lean Ritual</th></tr></thead><tbody><tr><td>Training frequency</td><td>3/4/5-day options; 3 days works well</td><td>3 days/week</td><td>3 days/week; optional 4th upper-body bonus session when schedule allows</td></tr><tr><td>Split</td><td>Push / Pull / Legs on 3-day plan</td><td>Push / Pull / Legs + Shoulders</td><td>Keep Push / Pull / Legs + Shoulders</td></tr><tr><td>Compound rep range</td><td>Primarily 4–6 reps, 2–4 min rest</td><td>3 × 4–6</td><td>Same (3 × 4–6, 3 min rest)</td></tr><tr><td>Isolation rep range</td><td>Often heavier / lower reps too</td><td>8–12 reps</td><td>8–12 reps, widened to 10–15 on lateral raises &amp; face pulls to protect small joints</td></tr><tr><td>Leg volume</td><td>Squats plus leg press &amp; hamstring work</td><td>Squats only</td><td>Add Romanian deadlift or leg press so lower body stays balanced</td></tr><tr><td>Progression</td><td>Add weight at top of rep range</td><td>Add 1 rep or weight each session</td><td>Unified into explicit double-progression rules</td></tr><tr><td>Deloads</td><td>1 week every 8–10 weeks</td><td>Not specified</td><td>Adopt BLS deload every 8–10 weeks</td></tr><tr><td>Protein</td><td>~2.2 g/kg on a cut</td><td>~2 g/kg rule of thumb</td><td>Essentially identical; 2.2 g/kg on Cut</td></tr><tr><td>Calorie deficit</td><td>20–25% below TDEE via formula</td><td>Qualitative small/medium/large deficit</td><td>Quantitative TDEE formula calibrated by 7-day weight trend</td></tr><tr><td>Added sugar</td><td>Flexible dieting in moderation</td><td>Zero added sugar</td><td>Avoid by default &amp; skip sugary drinks; occasional small amounts logged in macros are fine</td></tr><tr><td>Cheat meals</td><td>One moderate cheat meal per week</td><td>No cheat meals</td><td>No cheat meals; after 8+ weeks cutting, optional maintenance high-carb refeed every 1–2 weeks</td></tr><tr><td>Cardio</td><td>HIIT focus, capped at ~1–2 hrs/week</td><td>10,000 daily steps (post-meal walks)</td><td>Walking as default; add low-impact intervals only at plateaus</td></tr><tr><td>Creatine</td><td>5 g/day</td><td>5–10 g/day</td><td>3–5 g/day</td></tr><tr><td>Caffeine</td><td>3–6 mg/kg pre-workout</td><td>As needed, before noon</td><td>Combined: 3–5 mg/kg pre-workout, before noon</td></tr><tr><td>Fat-loss supplements</td><td>Recommends several</td><td>Not mentioned</td><td>Omitted</td></tr><tr><td>Phase thresholds</td><td>Men cut to ~10%, bulk to 15–17%</td><td>Target ~10% by starting build</td><td>Adopt BLS floor (~10%) with tighter 13–15% ceiling for a year-round lean look</td></tr></tbody></table></div>
+</article>
+</main>
+<script>
+(function(){
+  const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
+  const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
+  const lsWrite = (k, v) => { try { if (typeof localStorage !== "undefined") localStorage.setItem(k, v); } catch {} };
+  function markExplicitLang(l){
+    lsWrite("bj-lang", l);
+    lsWrite("bj-lang-set-at", String(Date.now()));
+    lsWrite("bj-lang-pending", l);
+  }
+  function detectBrowserLang(nav){
+    const list = Array.isArray(nav?.languages) && nav.languages.length ? nav.languages : (typeof nav?.language === "string" && nav.language.trim() ? [nav.language] : []);
+    if (!list.length) return "zh";
+    return list.some(l => String(l || "").trim().toLowerCase().startsWith("zh")) ? "zh" : "en";
+  }
+  function queryLang(search){
+    const s = String(search || "").replace(/^\?/, "");
+    if (!s) return null;
+    for (const part of s.split("&")) {
+      const eq = part.indexOf("=");
+      const k = eq < 0 ? part : part.slice(0, eq);
+      if (k === "lang") {
+        try { return validLang(decodeURIComponent(eq < 0 ? "" : part.slice(eq + 1))); } catch { return null; }
+      }
+    }
+    return null;
+  }
+  function resolveLang({ search = "", savedLang = null, nav = null } = {}){
+    const q = queryLang(search);
+    if (q) return q;
+    return validLang(savedLang) || detectBrowserLang(nav);
+  }
+  const META = {
+    zh: { title: "薄肌训练与饮食纲领", back: "‹ 回到薄肌日课", aria: "语言" },
+    en: { title: "Lean Ritual Training & Nutrition Guide", back: "‹ Back to Lean Ritual", aria: "Language" }
+  };
+  const root = document.querySelector("#doc-root"), zhDoc = document.querySelector("#doc-zh"), enDoc = document.querySelector("#doc-en");
+  const backLink = document.querySelector("#back-link"), lsw = document.querySelector("#lang-switch");
+  const qLang = queryLang(location.search || "");
+  if (qLang) markExplicitLang(qLang);
+  let curLang = resolveLang({ search: location.search || "", savedLang: lsRead("bj-lang"), nav: typeof navigator !== "undefined" ? navigator : null });
+  function applyLangUI(){
+    const m = META[curLang] || META.zh;
+    if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
+    if ("title" in document) document.title = m.title;
+    const appTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (appTitleMeta) appTitleMeta.content = curLang === "en" ? "Lean Ritual" : "薄肌日课";
+    if (backLink) backLink.textContent = m.back;
+    if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", m.aria);
+    if (document.querySelectorAll) document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));
+    const active = curLang === "en" ? enDoc : zhDoc, inactive = curLang === "en" ? zhDoc : enDoc;
+    if (inactive) { inactive.hidden = true; if (inactive.parentNode) inactive.parentNode.removeChild(inactive); }
+    if (active) { active.hidden = false; if (!active.parentNode && root) root.appendChild(active); }
+  }
+  function setLang(next){
+    const l = validLang(next);
+    if (!l) return;
+    curLang = l;
+    markExplicitLang(l);
+    applyLangUI();
+  }
+  if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
+  applyLangUI();
+  if (typeof window !== "undefined") window.ritualPageI18n = { getLang: () => curLang, setLang, resolveLang, detectBrowserLang };
+})();
+</script>
+</body></html>

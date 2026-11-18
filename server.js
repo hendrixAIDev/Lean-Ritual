@@ -325,6 +325,7 @@ async function cli(args){
   const { createMailer } = require("./lib/mail");
   authentication = await createAuth({dataDir: CFG.dataDir, baseURL: CFG.authBaseURL, secret: CFG.authSecret,
     cookieSecure: CFG.cookieSecure, clientIP,
+    getUserLang: user => { try { return user?.id ? getDoc(`data/users/${user.id}/app/app/profile`)?.lang : null; } catch { return null; } },
     onDeleteRequested: user => accountData.requestDeletion(user),
     onDeleteCompleted: user => { authentication.purgeDeletedArtifacts(user.id); accountData.completeDeletion(user.id); },
     sendEmail: createMailer(process.env, {dataDir: CFG.dataDir, baseURL: CFG.authBaseURL})});

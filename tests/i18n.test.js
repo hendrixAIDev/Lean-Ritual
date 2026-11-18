@@ -141,6 +141,7 @@ function createAppEnv({
     },
     URL,
     URLSearchParams,
+    AbortController,
     Date: MockDate,
     Math,
     JSON,
@@ -845,4 +846,391 @@ test('switching language to English and saving keeps stored keys (workout, swaps
   vm.runInContext('S.tab = "fb"; render();', env.ctx);
   assert.match(env.appEl.innerHTML, /训练稳定推进/);
   assert.match(env.appEl.innerHTML, /Barbell Squat → Leg Press/);
+});
+
+test('AI prompt construction in both zh and en across meal estimate, OCR fallback, exercise swaps, and periodic feedback (no real API calls)', async () => {
+  const today = '2026-11-18';
+  const d1 = '2026-11-17';
+  const docs = {
+    'app/profile': {
+      sex: 'm', age: 29, height: 178, weight: 74, bf: 16, steps: 9500,
+      exp: 'mid', stage: 'cut', trainDays: [1, 3, 5], slot: 'am', equipment: 'gym',
+      injuries: ['shoulder'], injNote: 'Right shoulder pinch at bottom of bench',
+      supps: ['protein', 'creatine'], startDate: '2026-10-05', kcalAdjust: -100, lang: 'zh'
+    },
+    [`days/${d1}`]: {
+      date: d1,
+      checkin: { weight: 73.8, steps: 9800, sleep: 7.5, bf: 15.8 },
+      workout: {
+        done: true, key: 'push', slot: 'am', deload: false,
+        exercises: [{ name: '上斜杠铃卧推', sets: [{ w: 60, r: 6 }, { w: 60, r: 5 }] }],
+        feel: 3, pain: 'mild', painArea: 'front delt', note: 'Solid tempo'
+      },
+      meals: [
+        { id: 'ma', type: '早餐', text: 'Oats & whey', est: { kcal: 480, protein: 38, carbs: 58, fat: 9, by: 'manual' } },
+        { id: 'mb', type: '午餐', text: 'Chicken bowl', est: { kcal: 690, protein: 52, carbs: 74, fat: 16, by: 'manual' } },
+        { id: 'mc', type: '晚餐', text: 'Salmon rice', est: { kcal: 640, protein: 44, carbs: 62, fat: 20, by: 'manual' } }
+      ]
+    },
+    [`days/${today}`]: {
+      date: today,
+      meals: [
+        { id: 'm_est', type: '午餐', time: '12:30', text: '200g chicken breast + rice, see Nutrition Facts label' }
+      ]
+    }
+  };
+
+  const env = createAppEnv({ languages: ['zh-CN'], docs, fixedIso: `${today}T12:00:00` });
+  await vm.runInContext('loadAll()', env.ctx);
+  const capturedPrompts = [];
+  env.ctx.__mockSample = {
+    async json(prompt) {
+      capturedPrompts.push(prompt);
+      if (prompt.includes('JSON 数组') || prompt.includes('JSON array')) {
+        return [
+          { name: 'Dumbbell Floor Press', sets: 3, lo: 6, hi: 10, why: 'Limits bottom range to protect shoulder' },
+          { name: 'Cable Chest Press', sets: 3, lo: 8, hi: 12, why: 'Constant tension and joint-friendly path' }
+        ];
+      }
+      if (prompt.includes('"items"')) {
+        return {
+          items: [{ name: 'Chicken breast', amount: '200g' }],
+          label: false,
+          calc: '200g chicken breast + 150g cooked rice',
+          kcal: 540, protein: 52, carbs: 56, fat: 9,
+          confidence: 'High',
+          tip: 'Great high-protein lunch for your cut.',
+          cmp: false
+        };
+      }
+      return {
+        summary: 'Consistent training and protein intake.',
+        good: ['Hit protein targets consistently'],
+        issues: ['Mild front delt irritation on incline press'],
+        adjustments: [
+          { kind: 'swap', from: '上斜杠铃卧推', to: 'Incline Dumbbell Press (Neutral Grip)', sets: 3, lo: 6, hi: 8, text: 'Neutral grip reduces shoulder stress' },
+          { kind: 'swap', from: '平板杠铃卧推', to: 'Cable Chest Press', text: 'Smooth resistance profile' },
+          { kind: 'kcal', delta: -100, text: 'Nudge deficit slightly' }
+        ]
+      };
+    }
+  };
+  vm.runInContext(`S.date = "${today}"; S.ready = true; S.sample = __mockSample;`, env.ctx);
+
+  // --- 1. Meal estimate & OCR fallback prompts (zh vs en) ---
+  const zhMealPhoto = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: true, imgs: [1, 2], img: 1, extras: [{ tag: "剩下" }], multi: true, left: true })', env.ctx);
+  const zhMealOcr = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: false, ocrText: "能量 800kJ 蛋白质 12g" })', env.ctx);
+  const zhMealText = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: false, ocrText: "" })', env.ctx);
+  assert.match(zhMealPhoto, /你是运动营养师/);
+  assert.match(zhMealPhoto, /吃之前.*吃完剩下的/);
+  assert.match(zhMealOcr, /文字识别（OCR）/);
+  assert.match(zhMealText, /这次没有照片，只按文字估算/);
+
+  await vm.runInContext('setLang("en")', env.ctx);
+  const enMealPhoto = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: true, imgs: [1, 2], img: 1, extras: [{ tag: "剩下" }], multi: true, left: true })', env.ctx);
+  const enMealOcr = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: false, ocrText: "Nutrition Facts Serving Size 100g Calories 190 Protein 21g" })', env.ctx);
+  const enMealText = vm.runInContext('buildMealPrompt({ m: S.days[S.date].meals[0], withImg: false, ocrText: "" })', env.ctx);
+  for (const p of [enMealPhoto, enMealOcr, enMealText]) {
+    assert.match(p, /You are a sports nutritionist/);
+    assert.match(p, /Write all natural-language fields.*in English/);
+    assert.doesNotMatch(p, CJK_RE, 'English meal prompt should contain zero CJK');
+    for (const k of ['"items"', '"label"', '"calc"', '"kcal"', '"protein"', '"carbs"', '"fat"', '"confidence"', '"tip"', '"cmp"']) {
+      assert.ok(p.includes(k), `English meal prompt preserves JSON key ${k}`);
+    }
+  }
+  assert.match(enMealPhoto, /before eating.*leftovers after eating/);
+  assert.match(enMealOcr, /local browser OCR extracted/);
+  assert.match(enMealText, /nutrition label image was not visible/);
+  // Verify English Nutrition Facts keywords trigger OCR_LABEL_RE
+  assert.equal(vm.runInContext('OCR_LABEL_RE.test("Nutrition Facts\\nCalories 240\\nTotal Fat 8g\\nProtein 22g")', env.ctx), true);
+
+  // Run estimateMeal in English with mocked S.sample -> stores High confidence & renders cleanly in both en and zh
+  capturedPrompts.length = 0;
+  await vm.runInContext('estimateMeal(S.date, "m_est", true)', env.ctx);
+  assert.equal(capturedPrompts.length, 1);
+  assert.match(capturedPrompts[0], /You are a sports nutritionist/);
+  assert.equal(vm.runInContext('fmtConfidence(S.days[S.date].meals[0].est.confidence)', env.ctx), 'High');
+  await vm.runInContext('setLang("zh")', env.ctx);
+  assert.equal(vm.runInContext('fmtConfidence(S.days[S.date].meals[0].est.confidence)', env.ctx), '高');
+
+  // --- 2. Exercise suggestion/swap prompts (zh vs en) ---
+  vm.runInContext('S.days[S.date].override = "push"; openEditor(1); S.ed.why = "Bench occupied and shoulder feels tight";', env.ctx);
+  const zhSug = vm.runInContext('buildSuggestPrompt()', env.ctx);
+  assert.match(zhSug, /你是力量训练教练/);
+  assert.match(zhSug, /动作名用中文常见叫法/);
+
+  await vm.runInContext('setLang("en"); openEditor(1); S.ed.why = "Bench occupied and shoulder feels tight";', env.ctx);
+  const enSug = vm.runInContext('buildSuggestPrompt()', env.ctx);
+  assert.match(enSug, /You are a strength training coach/);
+  assert.match(enSug, /suggest 3 replacement exercises in English/);
+  assert.match(enSug, /Dumbbell Floor Press/);
+  assert.match(enSug, /Barbell Bench Press/);
+  assert.doesNotMatch(enSug, CJK_RE, 'English exercise suggestion prompt should contain zero CJK');
+  for (const k of ['"name"', '"sets"', '"lo"', '"hi"', '"why"']) assert.ok(enSug.includes(k));
+
+  capturedPrompts.length = 0;
+  await vm.runInContext('aiSuggest()', env.ctx);
+  assert.equal(capturedPrompts.length, 1);
+  assert.match(capturedPrompts[0], /You are a strength training coach/);
+  // Picking AI option 0 ("Dumbbell Floor Press") and saving maps back to canonical Chinese key ("哑铃地板卧推")
+  await env.clickAct('ed-ai-pick', '0');
+  await env.clickAct('ed-scope', 'always');
+  await env.clickAct('ed-save');
+  assert.equal((await env.store.get('app/profile')).exEdits['平板杠铃卧推'].name, '哑铃地板卧推');
+
+  // --- 3. Periodic feedback/analysis prompts (zh vs en) + canonical Chinese `from` matching ---
+  await vm.runInContext('setLang("zh")', env.ctx);
+  const zhFb = vm.runInContext('buildFeedbackPrompt("这周肩有点紧")', env.ctx);
+  assert.match(zhFb, /你是一位严谨的力量训练和营养教练/);
+  assert.match(zhFb, /两三句中文总评/);
+
+  await vm.runInContext('setLang("en")', env.ctx);
+  const enFb = vm.runInContext('buildFeedbackPrompt("Front delt felt slightly tight on incline bench")', env.ctx);
+  assert.match(enFb, /You are a rigorous strength and nutrition coach/);
+  assert.match(enFb, /Write all natural-language fields \(summary, good, issues, and each adjustment's text\) in English/);
+  assert.match(enFb, /"from" MUST be one of the exact canonical Chinese plan exercise keys listed above/);
+  assert.match(enFb, /"to" may be a common English exercise name/);
+  // Canonical Chinese keys must be listed in the English feedback prompt so AI can return exact `from` matches
+  assert.match(enFb, /"上斜杠铃卧推" \(Incline Barbell Bench Press\)/);
+  assert.match(enFb, /"深蹲" \(Barbell Squat\)/);
+  for (const k of ['"summary"', '"good"', '"issues"', '"adjustments"', '"kind"', '"delta"', '"from"', '"to"', '"sets"', '"lo"', '"hi"', '"text"']) {
+    assert.ok(enFb.includes(k), `English feedback prompt preserves JSON key ${k}`);
+  }
+
+  // Run runAI() in English with mocked response -> matches canonical `from`, adopts both mapped and custom English `to`, displays cleanly
+  capturedPrompts.length = 0;
+  await vm.runInContext('runAI()', env.ctx);
+  assert.equal(capturedPrompts.length, 1);
+  assert.match(capturedPrompts[0], /You are a rigorous strength and nutrition coach/);
+  const fb = vm.runInContext('JSON.parse(JSON.stringify(S.feedback[0]))', env.ctx);
+  assert.equal(fb.adjustments.length, 3);
+  assert.equal(fb.adjustments[0].from, '上斜杠铃卧推');
+  assert.equal(fb.adjustments[0].to, 'Incline Dumbbell Press (Neutral Grip)');
+  assert.equal(fb.adjustments[1].from, '平板杠铃卧推');
+  assert.equal(fb.adjustments[1].to, 'Cable Chest Press');
+
+  // Adopt adjustment 0 (mapped English `to`) -> stored canonically as 上斜哑铃卧推（中立握）
+  await vm.runInContext(`applyAction({ fid: "${fb.id}", idx: 0, scope: "long", a: S.feedback[0].adjustments[0] })`, env.ctx);
+  assert.equal((await env.store.get('app/profile')).exEdits['上斜杠铃卧推'].name, '上斜哑铃卧推（中立握）');
+  // Adopt adjustment 1 (custom English `to`) -> stored as "Cable Chest Press" under canonical key "平板杠铃卧推"
+  await vm.runInContext(`applyAction({ fid: "${fb.id}", idx: 1, scope: "long", a: S.feedback[0].adjustments[1] })`, env.ctx);
+  assert.equal((await env.store.get('app/profile')).swaps['平板杠铃卧推'], 'Cable Chest Press');
+
+  vm.runInContext('S.tab = "fb"; render();', env.ctx);
+  assert.deepEqual(findUnexpectedChineseInHtml(env.appEl.innerHTML), [], 'Feedback view after English AI run');
+});
+
+test('login.html passes UI language via X-Ritual-Lang header on auth requests', async () => {
+  const seen = [];
+  const login = createLoginEnv({
+    languages: ['en-US'],
+    fetchImpl: async (url, opts) => {
+      seen.push({ url, headers: opts?.headers || {} });
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+  });
+  login.clickMode('register');
+  await login.submit();
+  assert.equal(seen.at(-1).url, '/api/auth/sign-up/email');
+  assert.equal(seen.at(-1).headers['X-Ritual-Lang'], 'en');
+
+  login.clickLang('zh');
+  login.clickMode('forgot');
+  await login.submit();
+  assert.equal(seen.at(-1).url, '/api/auth/request-password-reset');
+  assert.equal(seen.at(-1).headers['X-Ritual-Lang'], 'zh');
+});
+
+test('privacy.html and guide.html language selection, faithful parity, deployment checks, and zero Chinese leakage in English mode', () => {
+  const privacyHtml = fs.readFileSync(path.join(__dirname, '../public/privacy.html'), 'utf8');
+  const guideHtml = fs.readFileSync(path.join(__dirname, '../public/guide.html'), 'utf8');
+
+  // 1. Static check-public-deployment.py assertions still pass on privacy.html
+  assert.ok(privacyHtml.includes('杰瑞智能技术服务部'));
+  assert.ok(privacyHtml.includes('hendrix.ai.dev@gmail.com'));
+  assert.ok(!privacyHtml.includes('尚未部署'));
+  assert.ok(privacyHtml.includes('Resend'));
+
+  function parseStaticArticles(html, label) {
+    const zhMatch = html.match(/<article id="doc-zh">([\s\S]*?)<\/article>/);
+    const enMatch = html.match(/<article id="doc-en" hidden>([\s\S]*?)<\/article>/);
+    assert.ok(zhMatch && enMatch, `${label} must have #doc-zh and #doc-en articles`);
+    const countTag = (s, tag) => (s.match(new RegExp(`<${tag}\\b`, 'gi')) || []).length;
+    return { zh: zhMatch[1], en: enMatch[1], countTag };
+  }
+
+  // 2. Structural & content parity + zero CJK in #doc-en (headings and full body)
+  const priv = parseStaticArticles(privacyHtml, 'privacy.html');
+  for (const tag of ['h1', 'h2', 'p', 'a']) {
+    assert.equal(priv.countTag(priv.en, tag), priv.countTag(priv.zh, tag), `privacy.html <${tag}> parity`);
+  }
+  const privEnHeadings = [...priv.en.matchAll(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/g)].map(m => m[1]);
+  assert.equal(privEnHeadings.length, 9);
+  for (const h of privEnHeadings) assert.doesNotMatch(h, CJK_RE, `privacy heading leaked Chinese: ${h}`);
+  assert.doesNotMatch(priv.en, CJK_RE, 'privacy.html #doc-en must have zero CJK characters');
+  for (const term of ['hendrix.ai.dev@gmail.com', 'Resend', 'OpenRouter', 'Google Gemini', 'Alibaba Cloud US West', 'NDJSON', 'localStorage', '7 days']) {
+    assert.ok(priv.en.includes(term), `privacy.html English version preserves commitment/fact: ${term}`);
+  }
+
+  const guide = parseStaticArticles(guideHtml, 'guide.html');
+  for (const tag of ['h1', 'h2', 'h3', 'table', 'tr', 'ol', 'ul', 'pre']) {
+    assert.equal(guide.countTag(guide.en, tag), guide.countTag(guide.zh, tag), `guide.html <${tag}> parity`);
+  }
+  const guideEnHeadings = [...guide.en.matchAll(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/g)].map(m => m[1]);
+  assert.ok(guideEnHeadings.length >= 14);
+  for (const h of guideEnHeadings) assert.doesNotMatch(h, CJK_RE, `guide heading leaked Chinese: ${h}`);
+  assert.doesNotMatch(guide.en, CJK_RE, 'guide.html #doc-en must have zero CJK characters');
+
+  // 3. Runtime language resolution (?lang= > bj-lang > navigator.languages > zh) and DOM detach toggle on both pages
+  function mountPublicDoc(html, { search = '', storage = {}, languages = [] } = {}) {
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+    const localStorage = makeStorage(storage);
+    const docEl = { lang: 'zh-CN' };
+    const rootChildren = [];
+    const makeArticle = (id, inner) => {
+      const node = {
+        id,
+        innerHTML: inner,
+        hidden: id === 'doc-en',
+        parentNode: null
+      };
+      rootChildren.push(node);
+      node.parentNode = {
+        removeChild(ch) {
+          const i = rootChildren.indexOf(ch);
+          if (i >= 0) { rootChildren.splice(i, 1); ch.parentNode = null; }
+        }
+      };
+      return node;
+    };
+    const root = {
+      appendChild(ch) {
+        if (!rootChildren.includes(ch)) rootChildren.push(ch);
+        ch.parentNode = {
+          removeChild(c) {
+            const i = rootChildren.indexOf(c);
+            if (i >= 0) { rootChildren.splice(i, 1); c.parentNode = null; }
+          }
+        };
+      }
+    };
+    const parts = parseStaticArticles(html, 'doc');
+    const zhDoc = makeArticle('doc-zh', parts.zh);
+    const enDoc = makeArticle('doc-en', parts.en);
+    const backLink = { textContent: '' };
+    const mkBtn = lang => ({
+      dataset: { lang },
+      classList: { set: new Set(), toggle(c, on) { on ? this.set.add(c) : this.set.delete(c); } },
+      closest(s) { return s === 'button' ? this : null; }
+    });
+    const zhBtn = mkBtn('zh'), enBtn = mkBtn('en');
+    const lsw = { attributes: {}, onclick: null, setAttribute(k, v) { this.attributes[k] = v; } };
+    const els = { '#doc-root': root, '#doc-zh': zhDoc, '#doc-en': enDoc, '#back-link': backLink, '#lang-switch': lsw };
+    const window = {};
+    const document = {
+      documentElement: docEl,
+      title: '',
+      querySelector: s => els[s] || null,
+      querySelectorAll: s => (s === '#lang-switch button' ? [zhBtn, enBtn] : [])
+    };
+    const ctx = vm.createContext({
+      window,
+      document,
+      location: { search },
+      localStorage,
+      navigator: { languages },
+      Date
+    });
+    vm.runInContext(script, ctx);
+    return { ctx, window, document, docEl, localStorage, rootChildren, backLink, lsw, zhBtn, enBtn };
+  }
+
+  for (const [name, html, enTitle] of [
+    ['privacy.html', privacyHtml, 'Privacy Notice · Lean Ritual'],
+    ['guide.html', guideHtml, 'Lean Ritual Training & Nutrition Guide']
+  ]) {
+    // Fallback to zh when navigator.languages is empty
+    const dFallback = mountPublicDoc(html, { languages: [] });
+    assert.equal(dFallback.docEl.lang, 'zh-CN', `${name} empty nav -> zh-CN`);
+    assert.deepEqual(dFallback.rootChildren.map(n => n.id), ['doc-zh']);
+
+    // Browser locale en-US -> English
+    const dBrowserEn = mountPublicDoc(html, { languages: ['en-US'] });
+    assert.equal(dBrowserEn.docEl.lang, 'en', `${name} en-US -> en`);
+    assert.equal(dBrowserEn.document.title, enTitle);
+    assert.deepEqual(dBrowserEn.rootChildren.map(n => n.id), ['doc-en']);
+    assert.doesNotMatch(dBrowserEn.backLink.textContent, CJK_RE);
+    assert.doesNotMatch(dBrowserEn.lsw.attributes['aria-label'], CJK_RE);
+    assert.doesNotMatch(dBrowserEn.rootChildren[0].innerHTML, CJK_RE);
+
+    // bj-lang overrides browser locale
+    const dSavedZh = mountPublicDoc(html, { storage: { 'bj-lang': 'zh' }, languages: ['en-US'] });
+    assert.equal(dSavedZh.docEl.lang, 'zh-CN', `${name} bj-lang=zh overrides en-US`);
+    assert.deepEqual(dSavedZh.rootChildren.map(n => n.id), ['doc-zh']);
+
+    // ?lang=en overrides bj-lang=zh and persists bj-lang='en'
+    const dQueryEn = mountPublicDoc(html, { search: '?lang=en', storage: { 'bj-lang': 'zh' }, languages: ['zh-CN'] });
+    assert.equal(dQueryEn.docEl.lang, 'en', `${name} ?lang=en overrides bj-lang=zh`);
+    assert.equal(dQueryEn.localStorage.getItem('bj-lang'), 'en');
+    assert.deepEqual(dQueryEn.rootChildren.map(n => n.id), ['doc-en']);
+
+    // Manual button click toggles cleanly between en and zh
+    dQueryEn.lsw.onclick({ target: dQueryEn.zhBtn });
+    assert.equal(dQueryEn.docEl.lang, 'zh-CN');
+    assert.deepEqual(dQueryEn.rootChildren.map(n => n.id), ['doc-zh']);
+    dQueryEn.lsw.onclick({ target: dQueryEn.enBtn });
+    assert.equal(dQueryEn.docEl.lang, 'en');
+    assert.deepEqual(dQueryEn.rootChildren.map(n => n.id), ['doc-en']);
+  }
+});
+
+test('all server error codes map to English client-side without leaking Chinese server messages', () => {
+  const env = createAppEnv({ languages: ['en-US'] });
+  const serverErrors = [
+    ['network', '连不上服务器'],
+    ['too_large', '内容太大'],
+    ['bad_json', ''],
+    ['bad_path', ''],
+    ['forbidden', '只能访问自己的数据'],
+    ['csrf', '请求来源不对'],
+    ['auth_endpoint_retired', '请使用新的账号页面'],
+    ['session_expired', '请先登录'],
+    ['export_busy', '已有导出正在进行'],
+    ['bad_request', '请提供消息'],
+    ['doc_conflict', '数据已在其他页面更新，请重试'],
+    ['not_found', ''],
+    ['method', ''],
+    ['bad_type', '照片格式无效，请使用 JPG、PNG、WebP 或已转换的 HEIC 照片'],
+    ['bad_idempotency_key', '请求标识无效'],
+    ['rate_limited', '今天的 AI 使用次数已达上限，请手动填写或明天再试'],
+    ['storage_quota', '照片存储空间已达上限，请删除不需要的照片或联系管理员'],
+    ['doc_rate_limited', '保存过于频繁，请稍后重试'],
+    ['doc_quota', '文档存储已达上限，请删除不需要的记录或联系管理员'],
+    ['account_deleting', '账号删除处理中，不能再写入或读取记录'],
+    ['sampling_disabled', '服务器没有配置 AI'],
+    ['ai_failed', 'AI 服务暂时不可用，请稍后再试或手动填写'],
+    ['truncated', 'AI 的回答太长被截断了，请再试一次或缩短反馈。'],
+    ['invalid_json', '回答不是 JSON'],
+    ['server_error', '服务器出错'],
+    ['http_502', '服务器出错'],
+    ['http_429', '请求过多']
+  ];
+
+  for (const [code, zhMessage] of serverErrors) {
+    env.ctx.__err = { code, message: zhMessage };
+    const outs = vm.runInContext(`[
+      apiErrMsg(__err, "Request failed."),
+      formatSaveErr(__err),
+      sampleErr(__err, "estimate"),
+      sampleErr(__err, "suggest"),
+      sampleErr(__err, "analyze"),
+      PHOTO_ERR(__err.code, true),
+      PHOTO_ERR(__err.code, false),
+      fmtImgErr(__err.code + "：" + __err.message)
+    ]`, env.ctx);
+    for (const s of outs) {
+      assert.ok(s.length > 0);
+      assert.doesNotMatch(s, CJK_RE, `code=${code} leaked Chinese in English mode: ${s}`);
+    }
+  }
 });
