@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#0C7560"/>
+  <g fill="#FFFFFF">
+    <!-- Left sleeve & plates -->
+    <rect x="84" y="236" width="20" height="40" rx="9"/>
+    <rect x="112" y="182" width="32" height="148" rx="12"/>
+    <rect x="154" y="140" width="42" height="232" rx="16"/>
+    <!-- Center knurled bar -->
+    <rect x="206" y="238" width="100" height="36" rx="7"/>
+    <!-- Right plates & sleeve -->
+    <rect x="316" y="140" width="42" height="232" rx="16"/>
+    <rect x="368" y="182" width="32" height="148" rx="12"/>
+    <rect x="408" y="236" width="20" height="40" rx="9"/>
+  </g>
+</svg>
