@@ -36,6 +36,16 @@ test('HTTP document quotas: bytes, count, overwrite, deletion, isolation and thr
  assert.equal((await put('one',{x:'大'.repeat(20)})).status,200);
  let r=await put('two',{x:'c'.repeat(60)});assert.equal(r.status,413);assert.equal((await r.json()).error,'doc_quota');
  assert.equal((await put('two',{})).status,200);
+ const commit=changes=>request('/api/doc-commit',{changes},ca);
+ const pathFor=id=>'data/users/'+a.userId+'/app/app/'+id;
+ const current={x:'大'.repeat(20)};
+ const change={path:pathFor('one'),before:current,after:{x:'a'}};
+ const tooLarge={path:pathFor('two'),before:{},after:{x:'b'.repeat(100)}};
+ assert.equal((await commit([change,tooLarge])).status,413);
+ assert.deepEqual((await (await request(doc(a.userId,'one'),null,ca)).json()).data,current);
+ const races=await Promise.all([commit([change]),commit([change])]);
+ assert.deepEqual(races.map(r=>r.status).sort(),[200,409]);
+ assert.equal((await commit([{path:'data/users/'+b.userId+'/app/app/one',before:null,after:{}}])).status,403);
  assert.equal((await put('three',{})).status,413);
  assert.equal((await request(doc(a.userId,'one'),null,ca,'DELETE')).status,200);
  assert.equal((await put('three',{x:'z'.repeat(60)})).status,200);

@@ -95,8 +95,8 @@ function ownPath(p, user, wantDoc){
 }
 const parentOf = p => p.split("/").slice(0, -1).join("/");
 function getDoc(p){ const r = db.prepare("SELECT data FROM docs WHERE path = ?").get(p); return r ? JSON.parse(r.data) : null; }
-function putDoc(p, uid, data){
-  docQuota.write(uid, p, data, serialized => db.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET data = excluded.data, updated = excluded.updated")
+function putDoc(p, uid, data, write = docQuota.write){
+  write(uid, p, data, serialized => db.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET data = excluded.data, updated = excluded.updated")
     .run(p, uid, parentOf(p), serialized, new Date().toISOString()));
 }
 // 和 Firestore 一样的 update：顶层字段合并，值为 {"__delete__":true} 时删掉
@@ -202,6 +202,27 @@ async function handle(req, res){
       return;
     }
     if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: !!CFG.orKey, aiModel: CFG.orModel });
+    if (p === "/api/doc-commit" && m === "POST") {
+      docQuota.throttle(user.id, res);
+      const body = await readJSON(req, 12e6);
+      accountData.ensureActive(user.id);
+      if (!Array.isArray(body?.changes) || !body.changes.length || body.changes.length > 3) throw httpErr(400, "bad_request");
+      const isDoc = value => value && typeof value === "object" && !Array.isArray(value);
+      const changes = body.changes.map(change => {
+        if (!change || !(change.before === null || isDoc(change.before)) || ("after" in change && !isDoc(change.after))) throw httpErr(400, "bad_request");
+        return {...change, path: ownPath(change.path, user, true)};
+      });
+      if (new Set(changes.map(change => change.path)).size !== changes.length) throw httpErr(400, "bad_request");
+      docQuota.transaction(() => {
+        for (const {path, before} of changes) {
+          if (JSON.stringify(getDoc(path)) !== JSON.stringify(before)) throw httpErr(409, "doc_conflict", "数据已在其他页面更新，请重试");
+        }
+        for (const {path, after} of changes) {
+          if (after !== undefined) putDoc(path, user.id, after, docQuota.writeInTransaction);
+        }
+      });
+      return send(res, 200, {ok: true});
+    }
     if (p === "/api/doc") {
       const dp = ownPath(url.searchParams.get("path"), user, true);
       if (["PUT", "PATCH", "DELETE"].includes(m)) docQuota.throttle(user.id, res);

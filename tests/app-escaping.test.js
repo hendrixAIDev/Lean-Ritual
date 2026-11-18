@@ -24,7 +24,7 @@ test('URLs use explicit protocol allowlists', () => {
 });
 test('AI action renderer escapes labels', () => {
  const start=source.indexOf('function actionBtn('), end=source.indexOf('\nfunction fbCard(',start);
- vm.runInContext('const S={feedback:[]};\n'+source.slice(start,end)+'\nthis.actionBtn=actionBtn;',ctx);
+ vm.runInContext('const S={feedback:[]}, pendingAdoptions=new Set();\n'+source.slice(start,end)+'\nthis.actionBtn=actionBtn;',ctx);
  const html=ctx.actionBtn({kind:'swap',from:'test',to:'<img src=x onerror=alert(1)>'});
  assert.ok(!html.includes('<img'));
  assert.ok(html.includes('&lt;img'));
@@ -64,7 +64,9 @@ test('action payload round trips and applyAction validates before writes', async
  const payload=JSON.parse(encoded.replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&'));
  assert.equal(payload.a.from,'中文 & "动作"');
  c.payload=payload;
- vm.runInContext('updateProfile=async fn=>fn(S.profile); toast=()=>{};',c);
+ vm.runInContext(`let savedProfile = clone(S.profile);
+   S.store = {get: async () => clone(savedProfile), commit: async ([change]) => { savedProfile = clone(change.after); }};
+   toast=()=>{};`,c);
  await vm.runInContext('applyAction(payload)',c);
  assert.equal(vm.runInContext('S.profile.exEdits[payload.a.from].sets',c),3);
  assert.doesNotMatch(vm.runInContext('S.profile.adjustLog[0].text',c),/&amp;|&quot;/);

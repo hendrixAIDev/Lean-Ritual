@@ -46,12 +46,14 @@ button{font:inherit;cursor:pointer}
 .btn.block{width:100%;padding:12px}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.danger{color:var(--bad)}
+.btn.small{padding:5px 10px;font-size:13px}
 .link{background:none;border:none;color:var(--accent);padding:0;font-weight:500}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:var(--sunk);font-size:13px;color:var(--ink);border:1px solid transparent;white-space:nowrap}
 .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);font-weight:700}
 .chip.warn{background:var(--warn-soft);color:var(--warn)}
 .chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.muted{color:var(--muted)}
 button.chip{cursor:pointer}
 .tip .chip:not(.on){background:var(--surface);border-color:var(--line)}
 label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -99,7 +101,11 @@ label.chip input[type=file]{display:none}
 .ins{display:grid;grid-template-columns:6px 1fr;gap:10px}
 .ins .s{border-radius:3px;background:var(--muted)}
 .ins.good .s{background:var(--good)} .ins.warn .s{background:var(--warn)} .ins.bad .s{background:var(--bad)} .ins.info .s{background:var(--accent)}
+.ins.declined{opacity:.55} .ins.declined .s{background:var(--line)}
 .ins .b{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ins .chip{white-space:normal;text-align:left}
+.chooser{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.chooser .prev{font-size:14px;font-weight:600}
 .tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);z-index:10}
 .tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:560px}
 .tabs button{background:none;border:none;color:var(--muted);padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
@@ -298,6 +304,7 @@ function mkCloud(db, prefix){
   return {
     async get(p){ const s = await db.doc(P(p)).get(); return s.exists ? clone(s.data()) : null; },
     async set(p, d){ await db.doc(P(p)).set(d); },
+    commit(changes){ return db.commit(changes.map(change => ({...change, path:P(change.path)}))); },
     async del(p){ await db.doc(P(p)).delete(); },
     async list(col, opt={}){ let q = db.collection(P(col)); if (opt.order) q = q.orderBy(opt.order, "desc"); if (opt.limit) q = q.limit(opt.limit); const s = await q.get(); return s.docs.map(d => ({id:d.id, data:clone(d.data())})); }
   };
@@ -330,19 +337,45 @@ function migrateDay(d){ return {meals:[], ...d, meals:Array.isArray(d.meals) ? d
 function snapTargets(){ const t = targets(); return {kcal:t.kcal, protein:t.protein, carbs:t.carbs, fat:t.fat, st:t.st, w:Math.round(t.w*10)/10, tdee:t.tdee}; }
 // 当天的营养目标存一份快照；以后改计划，这一天仍按当时的目标显示
 function stampTargets(d){ if (S.profile && (!d.targets || d.date === todayStr())) d.targets = snapTargets(); }
-/* 防丢数据：每次写入前先读服务器上的最新版本，只改这次操作涉及的部分再写回。
-   这样另一个打开着的页面（另一台设备、旧窗口）不会用它手里的旧数据覆盖新记录。读不到最新版本就不写。 */
+// Serialize overlapping writes in this tab. The server checks every snapshot
+// in one transaction before committing changes from any tab.
 const locks = {};
+function withDocLocks(paths, fn){
+  const pending = Promise.all(paths.map(path => locks[path]?.catch(() => {}))).then(fn);
+  for (const path of paths) locks[path] = pending;
+  return pending;
+}
+function mutateDocs(paths, fn, onSaved){
+  return withDocLocks(paths, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const before = await Promise.all(paths.map(path => S.store.get(path)));
+      const docs = Object.fromEntries(paths.map((path, i) => [path, clone(before[i])]));
+      const result = fn(docs);
+      const changes = paths.map((path, i) => ({path, before:before[i], ...(sameVal(before[i], docs[path]) ? {} : {after:docs[path]})}));
+      try {
+        if (changes.some(change => change.after !== undefined)) await S.store.commit(changes);
+      } catch (e) {
+        if (e.code === "doc_conflict" && attempt < 3) continue;
+        throw e;
+      }
+      onSaved?.(docs);
+      return result;
+    }
+  });
+}
 function mutate(path, fn){
-  const p = (locks[path] || Promise.resolve()).catch(() => {}).then(async () => {
+  if (S.store.commit) return mutateDocs([path], docs => {
+    const next = fn(clone(docs[path]));
+    if (next != null) docs[path] = next;
+    return docs[path];
+  });
+  return withDocLocks([path], async () => {
     const cur = await S.store.get(path);
     const next = fn(cur ? clone(cur) : null);
     if (next == null) return cur;
     await S.store.set(path, next);
     return next;
   });
-  locks[path] = p;
-  return p;
 }
 const saveErr = e => toast(e?.message ? "保存失败：" + e.message : "保存失败（" + (e?.code || "网络问题") + "），请稍后再试");
 const daySeq = {};
@@ -471,8 +504,8 @@ function nextKey(date){
   }
   return nx();
 }
-function resolveEx(ex){
-  const p = S.profile;
+function resolveEx(ex){ return resolveExForProfile(ex, S.profile); }
+function resolveExForProfile(ex, p){
   let o = {name:ex.name, sets:ex.sets, lo:ex.lo, hi:ex.hi, rest:ex.rest, inc:ex.inc, orig:ex.name, why:null};
   const home = p.equipment === "home" && ex.home;
   if (home) { const {subs, ...h} = ex.home; Object.assign(o, h, {why:"居家器械"}); }
@@ -1562,8 +1595,14 @@ function insights(){
 }
 function viewFeedback(){
   const ins = insights(), p = S.profile, ai = S.ai;
+  const logItems = (p.adjustLog || []).slice(-10).reverse().map(a => {
+    const dt = esc((a?.date || "").slice(5)), tx = esc(a?.text || "");
+    if (a?.id && a.reverted) return `<li class="muted"><span style="text-decoration:line-through">${dt} ${tx}</span> <span>（已撤销）</span></li>`;
+    if (a?.id && a.prev && a.after) return `<li>${dt} ${tx} <button class="link" data-act="undo-adjust" data-v="${esc(a.id)}">撤销</button>${S.undoConflict?.id === a.id ? conflictNotice(S.undoConflict) : ""}</li>`;
+    return `<li>${dt} ${tx}</li>`;
+  }).join("");
   return `<div class="stack"><div class="hero"><span class="eyebrow">反馈</span><h1>按纲领自动检查</h1><p class="muted small">根据你的打卡、训练和饮食记录，每次打开都会重新算。</p></div>
-  <section class="card">${ins.map(x => `<div class="ins ${x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${esc(x.text)}</p>${actionBtn(x.action, "rule")}</div></div>`).join("")}</section>
+  <section class="card">${ins.map((x, i) => { const dec = !!S.ruleDeclined?.[`rule:${i}`]; return `<div class="ins ${dec?"declined":x.lv}"><span class="s"></span><div class="b"><b>${x.title}</b><p class="small">${esc(x.text)}</p>${actionBtn(x.action, "rule", null, i)}</div></div>`; }).join("")}</section>
   <section class="card"><div class="row between"><h2>让 AI 看看</h2>${ai?.running?`<button class="chip" data-act="ai-stop">停止</button>`:""}</div>
     <p class="small muted">写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），AI 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。</p>
     <label>我的反馈（可选）<textarea id="fb-text" rows="3" placeholder="例如：深蹲到第三组膝盖有点酸；引体一个都拉不起来；这周睡得不好，训练很吃力" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
@@ -1572,17 +1611,98 @@ function viewFeedback(){
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
   ${S.feedback.slice(0,5).map(fbCard).join("")}
-  ${(p.adjustLog||[]).length ? `<section class="card"><h3>已采纳的调整</h3><ul class="clean small">${p.adjustLog.slice(-8).reverse().map(a => `<li>${esc(a.date.slice(5))} ${esc(a.text)}</li>`).join("")}</ul></section>` : ""}
+  ${(p.adjustLog||[]).length ? `<section class="card"><h3>已采纳的调整</h3><ul class="clean small">${logItems}</ul></section>` : ""}
   </div>`;
 }
-function actionBtn(a, src, fid, idx){
+function actionBtn(rawA, src, fid, idx){
+  const a = normAction(rawA);
   if (!a) return "";
-  a = {...a, delta:num(a.delta), sets:num(a.sets), lo:num(a.lo), hi:num(a.hi)};
-  if ((a.kind === "kcal" && a.delta === "") || (a.kind === "edit" && [a.sets,a.lo,a.hi].includes(""))) return "";
-  const applied = fid && (S.feedback.find(f => f.id === fid)?.applied || []).includes(idx);
-  const label = a.kind === "kcal" ? `采纳：每日 ${a.delta>0?"+":""}${a.delta} kcal` : a.kind === "deload" ? "采纳：本周开始减载" : a.kind === "swap" ? `采纳：${a.from} 换成 ${a.to}` : a.kind === "edit" ? `采纳：${a.to && a.to !== a.from ? `${a.from} 换成 ${a.to}` : a.from} 改为 ${a.sets}×${a.lo}–${a.hi}` : null;
+  const key = fid ? `${fid}:${idx}` : `${src || "rule"}:${idx ?? a.kind}`;
+  if (pendingAdoptions.has(key)) return `<button class="chip" disabled>正在保存…</button>`;
+  const fb = fid ? (S.feedback || []).find(f => f.id === fid) : null;
+  const applied = !!(fb && (fb.applied || []).includes(idx));
+  const declined = !applied && !!(fb ? (fb.declined || []).includes(idx) : S.ruleDeclined?.[key]);
+  const label = a.kind === "kcal" ? `采纳：每日 ${a.delta>0?"+":""}${a.delta} kcal` : a.kind === "deload" ? "采纳：本周开始减载" : a.kind === "swap" ? (a.hasNums ? `采纳：${a.from} 换成 ${a.to} ${a.sets}×${a.lo}–${a.hi}` : `采纳：${a.from} 换成 ${a.to}`) : a.kind === "edit" ? `采纳：${a.to && a.to !== a.from ? `${a.from} 换成 ${a.to}` : a.from} 改为 ${a.sets}×${a.lo}–${a.hi}` : null;
   if (!label) return "";
-  return `<div><button class="chip ${applied?"":"on"}" data-act="apply" data-v='${esc(JSON.stringify({a, fid:fid||null, idx:idx??null}))}' ${applied?"disabled":""}>${applied ? "已采纳" : esc(label)}</button></div>`;
+  if (applied) {
+    const log = S.profile?.adjustLog || [];
+    let undoEntry = null;
+    for (let k = log.length - 1; k >= 0; k--) {
+      const e = log[k];
+      if (e?.id && !e.reverted && e.feedbackId === fid && e.idx === idx) { undoEntry = e; break; }
+    }
+    if (undoEntry) return `<div><button class="chip" data-act="undo-adjust" data-v="${esc(undoEntry.id)}">已采纳 · 撤销</button>${S.undoConflict?.id === undoEntry.id ? conflictNotice(S.undoConflict) : ""}</div>`;
+    return `<div><button class="chip" disabled>已采纳</button></div>`;
+  }
+  const cleanA = {kind:a.kind, ...(a.kind==="kcal"?{delta:a.delta}:{}), ...(a.from?{from:a.from}:{}), ...(a.to?{to:a.to}:{}), ...(a.hasNums?{sets:a.sets,lo:a.lo,hi:a.hi}:{})};
+  const payloadObj = {a:cleanA, fid:fid||null, idx:idx??null, key};
+  const pv = esc(JSON.stringify(payloadObj));
+  if (S.adopt === key) {
+    const {preview, hint} = adoptPreview(a);
+    const isEx = a.kind === "swap" || a.kind === "edit";
+    return `<div class="chooser"><div class="prev">${esc(preview)}</div>${hint ? `<p class="small muted">${esc(hint)}</p>` : ""}<div class="row">${isEx
+      ? `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"today"}))}'>只改今天</button><button class="btn small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>长期调整</button>`
+      : `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>采纳</button>`}<button class="btn small" data-act="adopt-decline" data-v='${pv}'>不采纳</button><button class="link small" data-act="adopt-cancel">取消</button></div></div>`;
+  }
+  if (declined) return `<div><span class="chip muted">已不采纳</span> <button class="link small" data-act="adopt-open" data-v='${pv}'>重新选择</button></div>`;
+  return `<div><button class="chip on" data-act="adopt-open" data-v='${pv}'>${esc(label)}</button></div>`;
+}
+function normAction(raw){
+  if (!raw || typeof raw !== "object") return null;
+  const a = {...raw, delta:num(raw.delta), sets:num(raw.sets), lo:num(raw.lo), hi:num(raw.hi)};
+  if (a.kind === "kcal") return a.delta === "" ? null : a;
+  if (a.kind === "deload") return a;
+  if (a.kind === "edit") {
+    if (!a.from || [a.sets, a.lo, a.hi].includes("")) return null;
+    const s = Math.round(a.sets), lo = Math.round(a.lo), hi = Math.round(a.hi);
+    return s >= 1 && s <= 8 && lo >= 1 && hi >= lo ? {...a, sets:s, lo, hi, hasNums:true} : null;
+  }
+  if (a.kind === "swap") {
+    if (!a.from || !a.to) return null;
+    if (raw.sets !== undefined || raw.lo !== undefined || raw.hi !== undefined) {
+      if ([a.sets, a.lo, a.hi].includes("")) return null;
+      const s = Math.round(a.sets), lo = Math.round(a.lo), hi = Math.round(a.hi);
+      return s >= 1 && s <= 8 && lo >= 1 && hi >= lo ? {...a, sets:s, lo, hi, hasNums:true} : null;
+    }
+    const m = String(a.text || "").match(/(?:做|改为|改成)\s*(\d+)\s*(?:组\s*[×xX*]?\s*|[×xX])\s*(\d+)\s*[-–—~至到]\s*(\d+)\s*次?/);
+    if (m) {
+      const s = +m[1], lo = +m[2], hi = +m[3];
+      if (s >= 1 && s <= 8 && lo >= 1 && hi >= lo && hi <= 60) return {...a, sets:s, lo, hi, hasNums:true};
+    }
+    return {...a, sets:"", lo:"", hi:"", hasNums:false};
+  }
+  return null;
+}
+function conflictNotice(c){
+  if (!c) return "";
+  const links = [];
+  if (c.kind === "swap" || c.kind === "edit") {
+    links.push(`<button class="link" data-act="clear-exedits">全部恢复默认</button>`);
+    links.push(`<button class="link" data-act="clear-swaps">恢复原动作</button>`);
+  } else if (c.kind === "kcal") links.push(`<button class="link" data-act="reset-kcal">热量调整归零</button>`);
+  else if (c.kind === "deload") links.push(`<button class="link" data-act="stop-deload">结束减载</button>`);
+  links.push(`<button class="link muted" data-act="dismiss-conflict">知道了</button>`);
+  return `<div class="tip warn small stack" style="gap:4px;margin-top:4px"><span>${esc(c.msg || "这项调整之后又被修改过，不能直接恢复到采纳前的值。")}</span><div class="row" style="gap:10px">${links.join("")}</div></div>`;
+}
+function adoptPreview(a){
+  if (a.kind === "kcal") {
+    const preview = S.profile && typeof targets === "function" ? (() => { const curK = targets().kcal, nextK = targets({...S.profile, kcalAdjust:(num(S.profile.kcalAdjust)||0)+a.delta}).kcal; return `每日热量目标：${curK} kcal → ${nextK} kcal（${a.delta>0?"+":""}${a.delta} kcal）`; })() : `每日热量 ${a.delta>0?"+":""}${a.delta} kcal`;
+    return {preview, hint:"采纳后会更新每日热量目标，随时可以撤销。"};
+  }
+  if (a.kind === "deload") return {preview:"从今天开始减载一周（训练重量约 60%，组数减半）", hint:"采纳后从今天起进入减载周，随时可以撤销。"};
+  const progEx = typeof PROGRAM !== "undefined" && typeof ORDER !== "undefined" ? ORDER.flatMap(k => PROGRAM[k].ex).find(e => e.name === a.from) : null;
+  const cur = progEx && S.profile && typeof resolveEx === "function" ? resolveEx(progEx) : null;
+  const leftName = cur && cur.name !== a.from ? `${a.from}（当前：${cur.name}）` : a.from;
+  const leftSpec = cur ? ` ${num(cur.sets)}×${num(cur.lo)}–${num(cur.hi)}` : "";
+  const toName = a.to || cur?.name || a.from;
+  const toSets = a.hasNums ? a.sets : cur?.sets, toLo = a.hasNums ? a.lo : cur?.lo, toHi = a.hasNums ? a.hi : cur?.hi;
+  const rightSpec = toSets != null && toSets !== "" ? ` ${num(toSets)}×${num(toLo)}–${num(toHi)}` : "";
+  const td = resolveAdoptDate(a.from);
+  const savedDone = !!(td && S.days?.[td]?.workout?.done);
+  const hint = savedDone ? "今天这练已保存：选「只改今天」会直接更新已保存记录里的这项动作（填过的组数重量保留）；选「长期调整」从下次训练开始生效。"
+    : (!td && S.profile ? "今天的训练已保存且不含这项动作；想改以后课表请选「长期调整」。"
+    : "选「只改今天」只影响当天；选「长期调整」会更新以后每次课表。");
+  return {preview:`${leftName}${leftSpec} → ${toName}${rightSpec}`, hint};
 }
 function fbCard(f){
   return `<section class="card"><div class="row between"><span class="eyebrow">AI 反馈 · ${esc((f.createdAt||"").slice(0,10))}</span></div>
@@ -1590,7 +1710,7 @@ function fbCard(f){
     <p>${esc(f.summary)}</p>
     ${f.good?.length ? `<div><b class="small">做得好</b><ul class="clean small">${f.good.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
     ${f.issues?.length ? `<div><b class="small">要注意</b><ul class="clean small">${f.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
-    ${f.adjustments?.length ? `<div class="stack" style="gap:8px"><b class="small">建议调整</b>${f.adjustments.map((a,i) => `<div class="ins info"><span class="s"></span><div class="b"><p class="small">${esc(a.text)}</p>${actionBtn(a, "ai", f.id, i)}</div></div>`).join("")}</div>` : ""}
+    ${f.adjustments?.length ? `<div class="stack" style="gap:8px"><b class="small">建议调整</b>${f.adjustments.map((a,i) => { const dec = !(f.applied||[]).includes(i) && (f.declined||[]).includes(i); return `<div class="ins ${dec?"declined":"info"}"><span class="s"></span><div class="b"><p class="small">${esc(a.text)}</p>${actionBtn(a, "ai", f.id, i)}</div></div>`; }).join("")}</div>` : ""}
   </section>`;
 }
 function dataDigest(){
@@ -1628,40 +1748,378 @@ ${GUIDE_TEXT}
 ${dataDigest()}
 
 只回复一个 JSON 对象：
-{"summary":"两三句中文总评","good":["做得好的点"],"issues":["需要注意的问题"],"adjustments":[{"kind":"kcal","delta":-120,"text":"原因和做法"},{"kind":"swap","from":"课表里的原动作名","to":"新动作名","text":"原因"},{"kind":"edit","from":"课表里的原动作名","to":"新动作名或留空表示不换动作","sets":3,"lo":8,"hi":12,"text":"原因"},{"kind":"deload","text":"原因"},{"kind":"note","text":"其他建议，例如睡眠、步数、饮食结构"}]}
-kind 只能是 kcal / swap / edit / deload / note。kcal 的 delta 在 -250 到 250 之间；swap 和 edit 的 from 必须是上面列出的原动作名之一；edit 用来改组数和次数范围（sets 1–6，lo≤hi，次数 1–30），可同时换动作；换的新动作要适合学员的场地和伤病。每项 text 用中文，一两句话。`;
+{"summary":"两三句中文总评","good":["做得好的点"],"issues":["需要注意的问题"],"adjustments":[{"kind":"kcal","delta":-120,"text":"原因和做法"},{"kind":"swap","from":"课表里的原动作名","to":"新动作名","sets":3,"lo":4,"hi":6,"text":"原因"},{"kind":"edit","from":"课表里的原动作名","to":"新动作名或留空表示不换动作","sets":3,"lo":8,"hi":12,"text":"原因"},{"kind":"deload","text":"原因"},{"kind":"note","text":"其他建议，例如睡眠、步数、饮食结构"}]}
+kind 只能是 kcal / swap / edit / deload / note。kcal 的 delta 在 -250 到 250 之间；swap 和 edit 的 from 必须是上面列出的原动作名之一；swap 用来换动作（如同时建议组数和次数范围可带 sets/lo/hi，否则省略）；edit 用来改组数和次数范围（sets 1–6，lo≤hi，次数 1–30），可同时换动作；换的新动作要适合学员的场地和伤病。每项 text 用中文，一两句话。`;
   try {
     const r = await S.sample.json(prompt, {signal:ctl.signal, onText:() => { if (!S.ai.stream) { S.ai.stream = true; render(); } }});
     const f = {id:uid(), createdAt:new Date().toISOString(), userText, summary:String(r.summary||""), good:(r.good||[]).map(String).slice(0,6), issues:(r.issues||[]).map(String).slice(0,6),
-      adjustments:(r.adjustments||[]).slice(0,4).map(a => ({kind:String(a.kind||"note"), delta: a.kind==="kcal" ? Math.max(-250, Math.min(250, Math.round(+a.delta||0))) : undefined, from:a.from?String(a.from):undefined, to:a.to?String(a.to).trim():undefined, ...(a.kind === "edit" ? {sets:Math.round(+a.sets), lo:Math.round(+a.lo), hi:Math.round(+a.hi)} : {}), text:String(a.text||"")}))
+      adjustments:(r.adjustments||[]).slice(0,4).map(a => {
+        const kind = String(a.kind||"note"), s = Math.round(+a.sets), lo = Math.round(+a.lo), hi = Math.round(+a.hi);
+        const swapNums = kind === "swap" && a.sets != null && a.lo != null && a.hi != null && s >= 1 && s <= 8 && lo >= 1 && hi >= lo && hi <= 60;
+        return {kind, delta: kind==="kcal" ? Math.max(-250, Math.min(250, Math.round(+a.delta||0))) : undefined, from:a.from?String(a.from):undefined, to:a.to?String(a.to).trim():undefined, ...(kind === "edit" || swapNums ? {sets:s, lo, hi} : {}), text:String(a.text||"")};
+      })
         .map(a => { const k = Object.keys(a).filter(x => a[x] === undefined); k.forEach(x => delete a[x]); return a; })
         .filter(a => !["swap","edit"].includes(a.kind) || (a.from && ORDER.some(k => PROGRAM[k].ex.some(e => e.name === a.from))))
         .filter(a => a.kind !== "swap" || a.to)
-        .map(a => a.kind === "edit" && !(a.sets >= 1 && a.sets <= 6 && a.lo >= 1 && a.hi >= a.lo && a.hi <= 30) ? {kind:"note", text:a.text} : a), applied:[]};
+        .map(a => a.kind === "edit" && !(a.sets >= 1 && a.sets <= 6 && a.lo >= 1 && a.hi >= a.lo && a.hi <= 30) ? {kind:"note", text:a.text} : a), applied:[], declined:[]};
     S.feedback.unshift(f); S.ai = null; lsSet("bj-fbtext", ""); render();
     await write("feedback/" + f.id, JSON.parse(JSON.stringify(f)));
   } catch (e) { S.ai = {error: e?.code === "cancelled" ? null : sampleErr(e).replace("估算","分析")}; render(); }
 }
+function sameVal(a, b){
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== typeof b) return false;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameVal(x, b[i]));
+  if (typeof a === "object") {
+    const ka = Object.keys(a).filter(k => a[k] !== undefined).sort(), kb = Object.keys(b).filter(k => b[k] !== undefined).sort();
+    return ka.length === kb.length && ka.every((k, i) => k === kb[i] && sameVal(a[k], b[k]));
+  }
+  return false;
+}
+function findSavedExIndex(w, orig){
+  if (!w?.done || !Array.isArray(w.exercises)) return -1;
+  const pl = savedPlan(w);
+  const i = pl.findIndex((e, idx) => !e?.extra && e?.orig === orig && w.exercises[idx]);
+  if (i >= 0) return i;
+  return w.exercises.findIndex((e, idx) => !pl[idx]?.extra && !pl[idx]?.orig && e?.name === orig);
+}
+const pendingAdoptions = new Set();
+function resolveAdoptDate(orig){
+  const today = todayStr(), workout = S.days[today]?.workout;
+  return workout?.done && findSavedExIndex(workout, orig) < 0 ? null : today;
+}
+function changeFeedback(d, idx, applied){
+  if (applied) {
+    if (!(d.applied || []).includes(idx)) d.applied = [...(d.applied || []), idx];
+    if (Array.isArray(d.declined)) d.declined = d.declined.filter(i => i !== idx);
+  } else if (d.applied?.includes(idx)) {
+    d.applied = d.applied.filter(i => i !== idx);
+  }
+}
+function mutateAdjustment(date, fid, idx, fn){
+  const profilePath = "app/profile";
+  const dayPath = date ? "days/" + date : null;
+  const feedbackPath = fid && idx != null ? "feedback/" + fid : null;
+  const paths = [profilePath, dayPath, feedbackPath].filter(Boolean);
+  return mutateDocs(paths, docs => {
+    const profile = migrateProfile(docs[profilePath] || {});
+    const day = dayPath ? migrateDay(docs[dayPath] || {date}) : null;
+    const feedback = feedbackPath ? docs[feedbackPath] : null;
+    const result = fn(profile, day, feedback);
+    if (result.written) {
+      docs[profilePath] = profile;
+      if (dayPath) { stampTargets(day); docs[dayPath] = day; }
+    }
+    return result;
+  }, docs => {
+    S.profile = migrateProfile(docs[profilePath]);
+    if (docs[dayPath]) S.days[date] = migrateDay(docs[dayPath]);
+    const local = S.feedback.find(f => f.id === fid);
+    if (local && docs[feedbackPath]) Object.assign(local, docs[feedbackPath]);
+  });
+}
+async function declineAction(payload){
+  if (!payload) return;
+  const {fid, idx, key} = payload;
+  if (pendingAdoptions.has(fid ? `${fid}:${idx}` : key)) return;
+  S.adopt = null;
+  if (fid && idx != null) {
+    const f = (S.feedback || []).find(x => x.id === fid);
+    if (S.store) {
+      try {
+        const next = await mutate("feedback/" + fid, cur => {
+          const d = cur || (f ? clone(f) : {id:fid, applied:[], declined:[]});
+          if (d.applied?.includes(idx)) return null;
+          d.declined = [...new Set([...(d.declined || []), idx])];
+          if (Array.isArray(d.applied)) d.applied = d.applied.filter(x => x !== idx);
+          return d;
+        });
+        if (f && next) { f.declined = next.declined; f.applied = next.applied || []; }
+        if (next?.applied?.includes(idx)) { render(); return toast("这项建议已采纳"); }
+      } catch (e) { render(); saveErr(e); return; }
+    } else if (f) {
+      f.declined = [...new Set([...(f.declined || []), idx])];
+      if (Array.isArray(f.applied)) f.applied = f.applied.filter(x => x !== idx);
+    }
+  } else if (key) {
+    S.ruleDeclined = {...(S.ruleDeclined || {}), [key]: true};
+  }
+  render();
+  toast("已标记为不采纳");
+}
 async function applyAction(payload){
-  let {a, fid, idx} = payload;
-  const date = todayStr();
-  if (!a) return;
-  a = {...a, delta:num(a.delta), sets:num(a.sets), lo:num(a.lo), hi:num(a.hi)};
-  if ((a.kind === "kcal" && a.delta === "") || (a.kind === "edit" && [a.sets,a.lo,a.hi].includes(""))) return "";
-  if (fid) { const f = S.feedback.find(x => x.id === fid); if (f) { f.applied = [...(f.applied||[]), idx]; mutate("feedback/" + fid, cur => ({...(cur || JSON.parse(JSON.stringify(f))), applied:[...new Set([...((cur||{}).applied||[]), idx])]})).catch(()=>{}); } }
+  if (!payload) return "";
+  const a = normAction(payload.a);
+  if (!a) return "";
+  const fid = payload.fid || null, idx = payload.idx ?? null;
+  const scope = (a.kind === "swap" || a.kind === "edit") && payload.scope === "today" ? "today" : "long";
+  const today = todayStr();
+  const dayDate = scope === "today" ? today : null;
+  const key = fid ? `${fid}:${idx}` : (payload.key || a.kind);
+  if (pendingAdoptions.has(key)) return;
+  pendingAdoptions.add(key);
+  render();
   try {
-    await updateProfile(p => {
-      p.adjustLog = p.adjustLog || [];
-      if (a.kind === "kcal") { p.kcalAdjust = (num(p.kcalAdjust)||0) + a.delta; p.adjustLog.push({date, text:`每日热量 ${a.delta>0?"+":""}${a.delta} kcal`}); }
-      else if (a.kind === "deload") { p.deloadFrom = date; p.adjustLog.push({date, text:"开始减载周"}); }
-      else if (a.kind === "swap") { p.swaps = {...(p.swaps||{}), [a.from]:a.to}; if ((p.exEdits||{})[a.from]) p.exEdits = {...p.exEdits, [a.from]:{...p.exEdits[a.from], name:a.to}}; p.adjustLog.push({date, text:`${a.from} 换成 ${a.to}`}); }
-      else if (a.kind === "edit") {
-        const cur = (p.exEdits||{})[a.from], name = a.to || cur?.name || a.from, meta = exMeta(name);
-        const val = {...(cur||{}), name, sets:a.sets, lo:a.lo, hi:a.hi, inc: cur && name === cur.name ? cur.inc : (meta?.inc ?? (a.hi <= 8 ? 2.5 : 1)), rest: cur && name === cur.name ? cur.rest : (meta?.rest || (a.hi <= 8 ? "2–3 分钟" : "1–2 分钟"))};
-        p.exEdits = {...(p.exEdits||{}), [a.from]:val}; p.adjustLog.push({date, text:`「${a.from}」长期换成 ${name} ${a.sets}×${a.lo}–${a.hi}（根据反馈）`});
+    const result = await mutateAdjustment(dayDate, fid, idx, (p, day, feedback) => {
+      if (fid && idx != null) {
+        if ((p.adjustLog || []).some(e => e?.id && !e.reverted && e.feedbackId === fid && e.idx === idx)) {
+          if (feedback) changeFeedback(feedback, idx, true);
+          return {already:true};
+        }
+        if (feedback?.applied?.includes(idx)) return {already:true};
+        if (!feedback) throw new Error("这条反馈已不存在");
       }
+      p.adjustLog = p.adjustLog || [];
+      let entry, savedW;
+      if (day) {
+        const w = day.workout;
+        const exIdx = w?.done ? findSavedExIndex(w, a.from) : -1;
+        if (w?.done && exIdx < 0) return {missingExercise:true};
+        if (w?.done) {
+          const hadPlan = Array.isArray(w.plan) && w.plan.length > 0;
+          const prevPlanItem = hadPlan && w.plan[exIdx] ? clone(w.plan[exIdx]) : null;
+          const prevExercise = clone(w.exercises[exIdx]);
+          const pl = savedPlan(w), base = pl[exIdx] || {};
+          const name = a.to || base.name || w.exercises[exIdx].name || a.from;
+          const sets = a.hasNums ? a.sets : (+base.sets || (w.exercises[exIdx].sets || []).length || 3);
+          const meta = exMeta(name);
+          const lo = a.hasNums ? a.lo : (base.lo !== "" && base.lo != null ? base.lo : (meta?.lo ?? 8));
+          const hi = a.hasNums ? a.hi : (base.hi !== "" && base.hi != null ? base.hi : (meta?.hi ?? 12));
+          pl[exIdx] = {...base, name, sets, lo, hi, inc: meta?.inc ?? base.inc, rest: meta?.rest || base.rest, orig: base.orig || a.from, why:"记录后手动改过"};
+          w.plan = pl;
+          const ex = w.exercises[exIdx]; ex.name = name;
+          while (ex.sets.length < sets) ex.sets.push({w:"", r:""});
+          if (ex.sets.length > sets && ex.sets.slice(sets).every(x => x.w === "" && x.r === "")) ex.sets.length = sets;
+          savedW = clone(w);
+          entry = {
+            id: uid(), date: today, dayDate, scope: "today", kind: a.kind, from: a.from, to: name,
+            sets, lo, hi,
+            prev: {mode:"savedWorkout", exIdx, hadPlan, planItem:prevPlanItem, exercise:prevExercise},
+            after: {mode:"savedWorkout", exIdx, planItem:clone(w.plan[exIdx]), exercise:clone(w.exercises[exIdx])},
+            feedbackId: fid, idx, reverted: false,
+            text: `只改今天（已保存记录）：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
+          };
+        } else {
+          const progEx = ORDER.flatMap(k => PROGRAM[k].ex).find(e => e.name === a.from);
+          const base = progEx ? resolveExForProfile(progEx, p) : null;
+          const prevDayEdit = (day.exEdits || {})[a.from] ? clone(day.exEdits[a.from]) : null;
+          const cur = prevDayEdit ? {...(base || {}), ...prevDayEdit} : base;
+          const name = a.to || cur?.name || a.from;
+          const meta = exMeta(name);
+          const sets = a.hasNums ? a.sets : (cur?.sets ?? meta?.sets ?? 3);
+          const lo = a.hasNums ? a.lo : (cur?.lo ?? meta?.lo ?? 8);
+          const hi = a.hasNums ? a.hi : (cur?.hi ?? meta?.hi ?? 12);
+          const val = {
+            name, sets, lo, hi,
+            inc: cur && name === cur.name && cur.inc != null ? cur.inc : (meta?.inc ?? (hi <= 8 ? 2.5 : 1)),
+            rest: cur && name === cur.name && cur.rest ? cur.rest : (meta?.rest || (hi <= 8 ? "2–3 分钟" : "1–2 分钟"))
+          };
+          day.exEdits = {...(day.exEdits || {}), [a.from]: clone(val)};
+          entry = {
+            id: uid(), date: today, dayDate, scope: "today", kind: a.kind, from: a.from, to: name,
+            sets, lo, hi,
+            prev: {mode:"dayEdit", dayEdit:prevDayEdit},
+            after: {mode:"dayEdit", dayEdit:clone(val)},
+            feedbackId: fid, idx, reverted: false,
+            text: `只改今天：「${a.from}」→ ${name} ${sets}×${lo}–${hi}`
+          };
+        }
+        p.adjustLog.push(entry);
+      } else if (a.kind === "kcal") {
+        const prevK = num(p.kcalAdjust) || 0, nextK = prevK + a.delta;
+        p.kcalAdjust = nextK;
+        p.adjustLog.push({
+          id: uid(), date: today, scope: "long", kind: "kcal", delta: a.delta,
+          prev: {kcalAdjust: prevK}, after: {kcalAdjust: nextK},
+          feedbackId: fid, idx, reverted: false,
+          text: `每日热量 ${a.delta>0?"+":""}${a.delta} kcal`
+        });
+      } else if (a.kind === "deload") {
+        const prevD = p.deloadFrom ?? null;
+        p.deloadFrom = today;
+        p.adjustLog.push({
+          id: uid(), date: today, scope: "long", kind: "deload",
+          prev: {deloadFrom: prevD}, after: {deloadFrom: today},
+          feedbackId: fid, idx, reverted: false,
+          text: "开始减载周"
+        });
+      } else if (a.kind === "swap" && !a.hasNums) {
+        const prevSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, a.from) ? p.swaps[a.from] : null;
+        const prevExEdit = (p.exEdits || {})[a.from] ? clone(p.exEdits[a.from]) : null;
+        p.swaps = {...(p.swaps || {}), [a.from]: a.to};
+        let afterExEdit = null;
+        if (prevExEdit) {
+          afterExEdit = {...prevExEdit, name: a.to};
+          p.exEdits = {...p.exEdits, [a.from]: clone(afterExEdit)};
+        }
+        p.adjustLog.push({
+          id: uid(), date: today, scope: "long", kind: "swap", from: a.from, to: a.to,
+          prev: {swap: prevSwap, exEdit: prevExEdit}, after: {swap: a.to, exEdit: afterExEdit},
+          feedbackId: fid, idx, reverted: false,
+          text: `${a.from} 换成 ${a.to}`
+        });
+      } else if (a.kind === "edit" || (a.kind === "swap" && a.hasNums)) {
+        const prevSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, a.from) ? p.swaps[a.from] : null;
+        const cur = (p.exEdits || {})[a.from];
+        const prevExEdit = cur ? clone(cur) : null;
+        const name = a.to || cur?.name || prevSwap || a.from, meta = exMeta(name);
+        const val = {
+          ...(cur || {}), name, sets: a.sets, lo: a.lo, hi: a.hi,
+          inc: cur && name === cur.name ? cur.inc : (meta?.inc ?? (a.hi <= 8 ? 2.5 : 1)),
+          rest: cur && name === cur.name ? cur.rest : (meta?.rest || (a.hi <= 8 ? "2–3 分钟" : "1–2 分钟"))
+        };
+        p.exEdits = {...(p.exEdits || {}), [a.from]: clone(val)};
+        p.adjustLog.push({
+          id: uid(), date: today, scope: "long", kind: a.kind, from: a.from, to: name,
+          sets: a.sets, lo: a.lo, hi: a.hi,
+          prev: {swap: prevSwap, exEdit: prevExEdit}, after: {swap: prevSwap, exEdit: clone(val)},
+          feedbackId: fid, idx, reverted: false,
+          text: `「${a.from}」长期换成 ${name} ${a.sets}×${a.lo}–${a.hi}（根据反馈）`
+        });
+      }
+      if (feedback) changeFeedback(feedback, idx, true);
+      return {written:true, savedW};
     });
-    toast("已采纳，计划已更新");
+    if (result.missingExercise) {
+      toast(`今天已保存的训练里没有「${a.from}」，如需改以后请选「长期调整」`, 4000);
+      return;
+    }
+    S.adopt = null; S.undoConflict = null;
+    if (result.already) return toast("这项建议已采纳");
+    if (result.savedW) {
+      backupWorkout(dayDate, result.savedW);
+      Object.keys(S.drafts).filter(k => k.startsWith(dayDate)).forEach(k => delete S.drafts[k]);
+      persistDrafts();
+    }
+    if (dayDate) return toast(result.savedW ? "已只改今天（已更新今天保存的训练记录）" : "已只改今天");
+    if (a.kind === "kcal") toast(`已采纳：每日热量 ${a.delta>0?"+":""}${a.delta} kcal`);
+    else if (a.kind === "deload") toast("已采纳：本周开始减载");
+    else {
+      const todaySaved = !!S.days[today]?.workout?.done;
+      const todayHasEx = !todaySaved && S.profile && (planFor(today).ex || []).some(e => !e.extra && e.orig === a.from && !(S.days[today]?.exEdits || {})[a.from]);
+      toast(todayHasEx ? "已长期调整，今天及以后课表已更新" : "已长期调整，从下次训练开始生效");
+    }
+  } catch (e) { saveErr(e); }
+  finally { pendingAdoptions.delete(key); render(); }
+}
+function isLongConflict(p, e){
+  if (!p || !e?.after) return true;
+  if (e.kind === "kcal") return (num(p.kcalAdjust) || 0) !== e.after.kcalAdjust;
+  if (e.kind === "deload") return (p.deloadFrom ?? null) !== e.after.deloadFrom;
+  if (e.kind === "swap" || e.kind === "edit") {
+    const curSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, e.from) ? p.swaps[e.from] : null;
+    const curEdit = (p.exEdits || {})[e.from] ?? null;
+    return curSwap !== (e.after.swap ?? null) || !sameVal(curEdit, e.after.exEdit ?? null);
+  }
+  return true;
+}
+function restoreLongPrev(p, e){
+  if (e.kind === "kcal") p.kcalAdjust = e.prev.kcalAdjust ?? 0;
+  else if (e.kind === "deload") p.deloadFrom = e.prev.deloadFrom ?? null;
+  else if (e.kind === "swap" || e.kind === "edit") {
+    p.swaps = {...(p.swaps || {})};
+    if (e.prev.swap == null) delete p.swaps[e.from]; else p.swaps[e.from] = e.prev.swap;
+    p.exEdits = {...(p.exEdits || {})};
+    if (e.prev.exEdit == null) delete p.exEdits[e.from]; else p.exEdits[e.from] = clone(e.prev.exEdit);
+  }
+}
+function isTodayConflict(day, e){
+  if (!day || !e?.after) return true;
+  if (e.after.mode === "dayEdit") {
+    if (day.workout?.done) return true;
+    return !sameVal((day.exEdits || {})[e.from] ?? null, e.after.dayEdit ?? null);
+  }
+  if (e.after.mode === "savedWorkout") {
+    const w = day.workout, i = e.after.exIdx;
+    if (!w?.done || i == null) return true;
+    return !sameVal(w.plan?.[i] ?? null, e.after.planItem ?? null) || !sameVal(w.exercises?.[i] ?? null, e.after.exercise ?? null);
+  }
+  return true;
+}
+function restoreTodayPrev(day, e){
+  if (e.prev.mode === "dayEdit") {
+    day.exEdits = {...(day.exEdits || {})};
+    if (e.prev.dayEdit == null) delete day.exEdits[e.from];
+    else day.exEdits[e.from] = clone(e.prev.dayEdit);
+    if (!Object.keys(day.exEdits).length) delete day.exEdits;
+    return null;
+  }
+  if (e.prev.mode === "savedWorkout") {
+    const w = day.workout, i = e.prev.exIdx;
+    w.exercises[i] = clone(e.prev.exercise);
+    if (e.prev.hadPlan) w.plan[i] = clone(e.prev.planItem);
+    else {
+      const generated = savedPlan({...w, plan:null});
+      w.plan[i] = generated[i];
+      if (sameVal(w.plan, generated)) delete w.plan;
+    }
+    return clone(w);
+  }
+  return null;
+}
+async function undoAdjust(entryId){
+  const entry = (S.profile?.adjustLog || []).find(x => x?.id === entryId);
+  if (!entry || !entry.prev || !entry.after) return;
+  const dayDate = entry.scope === "today" ? (entry.dayDate || entry.date) : null;
+  try {
+    const result = await mutateAdjustment(dayDate, entry.feedbackId, entry.idx, (p, day, feedback) => {
+      const current = p.adjustLog?.find(x => x?.id === entryId);
+      if (!current || current.reverted) return {already:true};
+      if (day ? isTodayConflict(day, current) : isLongConflict(p, current)) return {conflict:true};
+      let savedW;
+      if (day) savedW = restoreTodayPrev(day, current);
+      else restoreLongPrev(p, current);
+      current.reverted = true;
+      if (feedback) changeFeedback(feedback, current.idx, false);
+      return {written:true, savedW};
+    });
+    if (result.already) {
+      render();
+      return toast("这项调整已撤销");
+    }
+    if (result.conflict) {
+      const msg = dayDate ? "这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。" : "这项调整之后又被修改过，不能直接恢复到采纳前的值。";
+      S.undoConflict = {id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null, msg};
+      render();
+      return toast(msg, 4000);
+    }
+    if (dayDate) {
+      if (result.savedW) backupWorkout(dayDate, result.savedW);
+      Object.keys(S.drafts).filter(k => k.startsWith(dayDate + "|")).forEach(k => {
+        if (result.savedW || !hasDraftData(S.drafts[k])) delete S.drafts[k];
+      });
+      persistDrafts();
+    }
+    S.undoConflict = null;
+    render();
+    toast("已撤销这项调整");
+  } catch (e) { saveErr(e); }
+}
+
+async function revertSingleExEdit(orig){
+  const log = S.profile?.adjustLog || [];
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e?.id && !e.reverted && e.scope === "long" && e.from === orig && e.after?.exEdit != null && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
+  }
+  const t = todayStr();
+  S.undoConflict = null;
+  try {
+    await updateProfile(p => { p.exEdits = {...(p.exEdits || {})}; delete p.exEdits[orig]; (p.adjustLog = p.adjustLog || []).push({date: t, text: `「${orig}」恢复默认`}); });
+    toast("已恢复默认");
+  } catch {}
+}
+async function revertSingleSwap(orig){
+  const log = S.profile?.adjustLog || [];
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e?.id && !e.reverted && e.scope === "long" && e.kind === "swap" && e.from === orig && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
+  }
+  const t = todayStr();
+  S.undoConflict = null;
+  try {
+    await updateProfile(p => { p.swaps = {...(p.swaps || {})}; delete p.swaps[orig]; (p.adjustLog = p.adjustLog || []).push({date: t, text: `「${orig}」恢复原动作`}); });
+    toast("已恢复原动作");
   } catch {}
 }
 
@@ -1701,8 +2159,8 @@ function viewMe(){
       <span class="muted">开始日期</span><span>${esc(p.startDate)} · 第 ${weekIndex(todayStr())+1} 周</span>
       <span class="muted">减载</span><span>${isDeload(todayStr()) ? "本周减载中" : `每 ${esc(p.deloadEvery||9)} 周减载一周`}</span>
     </div>
-    ${Object.keys(p.exEdits||{}).length ? `<p class="small">课表长期调整：${Object.entries(p.exEdits).map(([a,b]) => `${esc(a)} → ${esc(b.name)} ${esc(b.sets)}×${esc(b.lo)}–${esc(b.hi)}`).join("；")} <button class="link" data-act="clear-exedits">全部恢复默认</button></p>` : ""}
-    ${Object.keys(p.swaps||{}).length ? `<p class="small">已换动作：${Object.entries(p.swaps).map(([a,b]) => `${esc(a)} → ${esc(b)}`).join("；")} <button class="link" data-act="clear-swaps">恢复原动作</button></p>` : ""}
+    ${Object.keys(p.exEdits||{}).length ? `<div class="stack" style="gap:4px"><div class="row between"><span class="small muted">课表长期调整</span><button class="link small" data-act="clear-exedits">全部恢复默认</button></div><ul class="clean small">${Object.entries(p.exEdits).map(([a,b]) => `<li>${esc(a)} → ${esc(b.name)} ${esc(b.sets)}×${esc(b.lo)}–${esc(b.hi)} <button class="link" data-act="del-exedit" data-v="${esc(a)}">撤销</button></li>`).join("")}</ul></div>` : ""}
+    ${Object.keys(p.swaps||{}).length ? `<div class="stack" style="gap:4px"><div class="row between"><span class="small muted">已换动作</span><button class="link small" data-act="clear-swaps">恢复原动作</button></div><ul class="clean small">${Object.entries(p.swaps).map(([a,b]) => `<li>${esc(a)} → ${esc(b)} <button class="link" data-act="del-swap" data-v="${esc(a)}">撤销</button></li>`).join("")}</ul></div>` : ""}
     <div class="row">${isDeload(todayStr())==="manual" ? `<button class="btn" data-act="stop-deload">结束减载</button>` : `<button class="btn" data-act="start-deload">从今天开始减载一周</button>`}
     ${p.kcalAdjust ? `<button class="btn" data-act="reset-kcal">热量调整归零</button>` : ""}</div>
   </section>
@@ -1730,7 +2188,7 @@ document.addEventListener("click", async ev => {
   if (act !== "ex-del") S.exDel = null;
   switch (act) {
     case "reload-data": location.reload(); break;
-    case "tab": S.ed = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
+    case "tab": S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
     case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
     case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
     case "edit": S.editing = true; render(); window.scrollTo(0,0); break;
@@ -1863,10 +2321,16 @@ document.addEventListener("click", async ev => {
     }
     case "ai-run": runAI(); break;
     case "ai-stop": S.ai?.ctl?.abort(); break;
-    case "apply": applyAction(JSON.parse(v)); break;
-    case "start-deload": { const t = todayStr(); updateProfile(p => { p.deloadFrom = t; }).then(()=>toast("本周减载")).catch(()=>{}); break; }
-    case "stop-deload": updateProfile(p => { p.deloadFrom = null; }).catch(()=>{}); break;
-    case "reset-kcal": { const t = todayStr(); updateProfile(p => { p.kcalAdjust = 0; (p.adjustLog = p.adjustLog||[]).push({date:t, text:"热量调整归零"}); }).catch(()=>{}); break; }
+    case "adopt-open": { const p = JSON.parse(v); S.adopt = p.key; S.undoConflict = null; render(); break; }
+    case "adopt-cancel": S.adopt = null; render(); break;
+    case "adopt-confirm": await applyAction(JSON.parse(v)); break;
+    case "adopt-decline": await declineAction(JSON.parse(v)); break;
+    case "undo-adjust": await undoAdjust(v); break;
+    case "dismiss-conflict": S.undoConflict = null; render(); break;
+    case "apply": await applyAction(JSON.parse(v)); break;
+    case "start-deload": { S.undoConflict = null; const t = todayStr(); updateProfile(p => { p.deloadFrom = t; }).then(()=>toast("本周减载")).catch(()=>{}); break; }
+    case "stop-deload": S.undoConflict = null; updateProfile(p => { p.deloadFrom = null; }).catch(()=>{}); break;
+    case "reset-kcal": { S.undoConflict = null; const t = todayStr(); updateProfile(p => { p.kcalAdjust = 0; (p.adjustLog = p.adjustLog||[]).push({date:t, text:"热量调整归零"}); }).catch(()=>{}); break; }
     case "save-lib": {
       const inp = document.getElementById("lib-" + v); const url = (inp?.value || "").trim();
       if (url && !/^https:\/\/\S+$/.test(url)) { toast("请粘贴以 https:// 开头的链接"); return; }
@@ -1896,8 +2360,10 @@ document.addEventListener("click", async ev => {
     case "ed-scope": S.ed.scope = v; render(); break;
     case "ed-save": saveEdit(false); break;
     case "ed-reset": saveEdit(true); break;
-    case "clear-exedits": { const t = todayStr(); updateProfile(p => { (p.adjustLog = p.adjustLog||[]).push({date:t, text:"课表长期调整全部恢复默认"}); p.exEdits = {}; }).catch(()=>{}); break; }
-    case "clear-swaps": updateProfile(p => { p.swaps = {}; }).catch(()=>{}); break;
+    case "del-exedit": await revertSingleExEdit(v); break;
+    case "del-swap": await revertSingleSwap(v); break;
+    case "clear-exedits": { S.undoConflict = null; const t = todayStr(); updateProfile(p => { (p.adjustLog = p.adjustLog||[]).push({date:t, text:"课表长期调整全部恢复默认"}); p.exEdits = {}; }).catch(()=>{}); break; }
+    case "clear-swaps": S.undoConflict = null; updateProfile(p => { p.swaps = {}; }).catch(()=>{}); break;
   }
 });
 function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
