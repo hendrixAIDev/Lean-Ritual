@@ -30,6 +30,7 @@ const CFG = {
   aiGlobalDaily: +(process.env.AI_GLOBAL_DAILY_LIMIT ?? 300),
   aiMaxTokens: +(process.env.AI_MAX_OUTPUT_TOKENS ?? 2000),
   aiDaily: +(process.env.AI_DAILY_LIMIT ?? 60),            // 每人每天 AI 次数上限
+  aiReasoningEffort: process.env.AI_REASONING_EFFORT,
   cookieSecure: process.env.COOKIE_SECURE === "1",         // 走 HTTPS 时设为 1
   trustProxy: process.env.TRUST_PROXY === "1",             // 在 Caddy/Nginx 后面时设为 1，按 X-Forwarded-For 限流
 };

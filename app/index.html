@@ -1343,6 +1343,7 @@ function sampleErr(e){
   if (c === "not_granted" || c === "sampling_disabled") { return "服务器暂时无法使用 AI，可以手动填写。"; }
   if (c === "rate_limited") return "请求太频繁或额度用完，稍后再试。";
   if (c === "image_rejected") return "这张照片无法识别，换一张试试。";
+  if (c === "truncated") return "AI 的回答太长被截断了，请再试一次或缩短反馈。";
   if (c === "invalid_json") return "AI" + " 的回答格式不对，再点一次试试。";
   if (c === "cancelled") return "已停止。";
   if (c === "session_expired") return "登录过期了，请重新登录。";
