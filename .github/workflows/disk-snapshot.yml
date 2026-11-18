@@ -1,0 +1,52 @@
+name: Daily disk snapshot
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lean-ritual-disk-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Aliyun CLI
+        env:
+          ALIYUN_CLI_VERSION: '3.5.3'
+          ALIYUN_CLI_SHA256: 'defcbc01a28c9bbb27706fd53473020175a96886186df176dfa934ab6661fbde'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz"
+          curl --fail --silent --show-error --location --max-time 120 \
+            --retry 3 --retry-delay 2 --retry-all-errors \
+            "https://github.com/aliyun/aliyun-cli/releases/download/v${ALIYUN_CLI_VERSION}/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" \
+            -o "$archive"
+          printf '%s  %s\n' "$ALIYUN_CLI_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" aliyun
+          sudo install -o root -g root -m 0755 "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+          rm -f "$archive" "$RUNNER_TEMP/aliyun"
+          aliyun version
+
+      - name: Create and prune SWAS system disk snapshot
+        env:
+          ALIYUN_SNAPSHOT_AK_ID: ${{ secrets.ALIYUN_SNAPSHOT_AK_ID }}
+          ALIYUN_SNAPSHOT_AK_SECRET: ${{ secrets.ALIYUN_SNAPSHOT_AK_SECRET }}
+          LR_INSTANCE_ID: ${{ vars.LR_INSTANCE_ID }}
+          LR_DISK_ID: ${{ vars.LR_DISK_ID }}
+          LR_REGION: ${{ vars.LR_REGION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ops/disk-snapshot.sh
