@@ -20,3 +20,23 @@ test("mail fails closed and development messages stay in private files", async t
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), message);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
+
+test("nodemailer envelope parsing preserves CFWS domains and UTS-46 IDN mapping", async () => {
+  const nodemailer = require("nodemailer");
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  const cfws = await transport.sendMail({
+    from: "noreply@leanritual.app",
+    to: "user@sub.(comment)example.com",
+    subject: "Verify",
+    text: "body",
+  });
+  assert.deepEqual(cfws.envelope.to, ["user@sub.example.com"]);
+
+  const idn = await transport.sendMail({
+    from: "noreply@leanritual.app",
+    to: "user@fa\u1e9e.de",
+    subject: "Verify",
+    text: "body",
+  });
+  assert.deepEqual(idn.envelope.to, ["user@xn--fa-hia.de"]);
+});
