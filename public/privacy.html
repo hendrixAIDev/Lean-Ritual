@@ -13,17 +13,21 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>隐私说明 · Lean Ritual</title>
 <style>
-:root{--bg:#FAF8F3;--surface:#fffdf8;--ink:#28251f;--muted:#6b655c;--line:#ddd6c8;--accent:#963f2d;--draft-bg:#fff0ce;--draft-bd:#d5b879;color-scheme:light}
-@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201e1b;--ink:#eee9df;--muted:#a39c90;--line:#38342e;--accent:#e07a5f;--draft-bg:#2e2514;--draft-bd:#7a6232;color-scheme:dark}}
+:root{--bg:#FAF8F3;--surface:#fffdf8;--ink:#28251f;--muted:#6b655c;--line:#ddd6c8;--accent:#963f2d;--on-accent:#ffffff;--draft-bg:#fff0ce;--draft-bd:#d5b879;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201e1b;--ink:#eee9df;--muted:#a39c90;--line:#38342e;--accent:#e07a5f;--on-accent:#1f120e;--draft-bg:#2e2514;--draft-bd:#7a6232;color-scheme:dark}}
 [hidden]{display:none!important}
 body{max-width:760px;margin:40px auto;padding:env(safe-area-inset-top,0px) max(20px,env(safe-area-inset-right,0px)) calc(48px + env(safe-area-inset-bottom,0px)) max(20px,env(safe-area-inset-left,0px));font:16px/1.75 "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#back-link{display:inline-flex;align-items:center;min-height:44px;min-width:44px}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
 .lang-sw{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex-shrink:0}
-.lang-sw button{border:none;background:none;color:var(--muted);padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
-.lang-sw button.on{background:var(--accent);color:#fff;font-weight:700}
+.lang-sw button{border:none;background:none;color:var(--muted);min-height:44px;min-width:44px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.lang-sw button:focus-visible{outline-offset:-2px}
+.lang-sw button.on{background:var(--accent);color:var(--on-accent);font-weight:700}
 .draft{padding:16px;background:var(--draft-bg);border:1px solid var(--draft-bd);border-radius:8px}
 h1,h2{line-height:1.3}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
 </head><body><main id="doc-root">
 <div class="top-row">

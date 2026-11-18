@@ -16,30 +16,35 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>登录 · 薄肌日课</title>
 <style>
-:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--bad:#A83A3A;--ok:#2E6B4E;color-scheme:light}
-@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--bad:#E77B7B;--ok:#6EC29B;color-scheme:dark}}
+:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--on-accent:#FFFFFF;--bad:#A83A3A;--ok:#2E6B4E;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--on-accent:#1F120E;--bad:#E77B7B;--ok:#6EC29B;color-scheme:dark}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:15px;line-height:1.55}
 main{max-width:380px;margin:0 auto;padding:calc(56px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(56px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 h1{font-size:24px;margin:0 0 4px}
 p{margin:0 0 20px;color:var(--muted)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .top-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 4px}
 .top-row h1{margin:0}
 .lang-sw{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex-shrink:0}
-.lang-sw button{border:none;background:none;color:var(--muted);padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
-.lang-sw button.on{background:var(--accent);color:#fff;font-weight:700}
+.lang-sw button{border:none;background:none;color:var(--muted);min-height:44px;min-width:44px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.lang-sw button:focus-visible{outline-offset:-2px}
+.lang-sw button.on{background:var(--accent);color:var(--on-accent);font-weight:700}
 .banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--ok);border-radius:8px;background:var(--surface);color:var(--ok);font-size:14px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
 .tabs{display:flex;gap:8px}
-.tabs button{flex:1;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
+.tabs button{flex:1;min-height:44px;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
 .tabs button.on{border-color:var(--accent);font-weight:700}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
-input{font:inherit;font-size:16px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
-button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+input{font:inherit;font-size:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+button{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
+button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;cursor:pointer}
 button.primary:disabled{opacity:.6}
 .err{color:var(--bad);font-size:14px;min-height:1.2em;margin:0}
 .hint{font-size:12px;color:var(--muted);margin:0}
+.hint a{color:var(--accent);display:inline-flex;align-items:center;min-height:44px;min-width:44px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
@@ -56,9 +61,9 @@ button.primary:disabled{opacity:.6}
   <form class="card" id="f">
     <div class="tabs" id="tabs"><button type="button" data-m="login">登录</button><button type="button" data-m="register">凭邀请注册</button></div>
     <label id="nw" hidden><span id="lbl-n">称呼</span><input id="n" maxlength="80" autocomplete="nickname"></label>
-    <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" autocomplete="email" required autocapitalize="off"></label>
+    <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" inputmode="email" autocomplete="email" required autocapitalize="off" spellcheck="false"></label>
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
-    <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off"></label>
+    <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <p class="err" id="err" role="status" aria-live="polite"></p>
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>

@@ -21,9 +21,9 @@
 [hidden]{display:none!important}
 /* 布局：手机优先的单栏训练本，底部五个标签；数字用窄体，像杠铃片上的刻字 */
 :root{
-  --bg:#EEF2F0; --surface:#FFFFFF; --sunk:#E3E9E6; --ink:#15201C; --muted:#5B6964; --line:#D3DBD7;
+  --bg:#EEF2F0; --surface:#FFFFFF; --sunk:#E3E9E6; --ink:#15201C; --muted:#55635E; --line:#D3DBD7;
   --accent:#0C7560; --accent-soft:#D5EBE4; --on-accent:#FFFFFF;
-  --good:#2C7A4B; --warn:#A5610A; --bad:#A83A3A; --warn-soft:#F6E7CF; --bad-soft:#F4DADA;
+  --good:#2C7A4B; --warn:#8C5107; --bad:#A83A3A; --warn-soft:#F6E7CF; --bad-soft:#F4DADA;
   --f-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
   --f-num:"Barlow Condensed","DIN Alternate","Arial Narrow",var(--f-body);
   --r:10px;
@@ -52,35 +52,41 @@ p{margin:0}
 .between{justify-content:space-between}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .eyebrow{font-size:12px;letter-spacing:.08em;color:var(--muted);font-weight:500}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-block:4px 10px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);z-index:5}
 .datebar{display:flex;align-items:center;gap:4px}
 .datebar .d{font-family:var(--f-num);font-size:22px;font-weight:600;min-width:7.5em;text-align:center}
-.iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);width:34px;height:34px;border-radius:8px;font-size:16px;cursor:pointer}
+.iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);width:44px;height:44px;border-radius:8px;font-size:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 button{font:inherit;cursor:pointer}
-.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:8px 14px;border-radius:8px;font-weight:500}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);min-height:44px;min-width:44px;padding:8px 14px;border-radius:8px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-.btn.block{width:100%;padding:12px}
+.btn.block{display:flex;width:100%;padding:12px}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.danger{color:var(--bad)}
-.btn.small{padding:5px 10px;font-size:13px}
+.btn.small{padding:8px 12px;font-size:13px}
 .link{background:none;border:none;color:var(--accent);padding:0;font-weight:500}
+button.link,a.link{min-height:44px;min-width:44px;display:inline-flex;align-items:center}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:var(--sunk);font-size:13px;color:var(--ink);border:1px solid transparent;white-space:nowrap}
 .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--ink);font-weight:700}
 .chip.warn{background:var(--warn-soft);color:var(--warn)}
 .chip.bad{background:var(--bad-soft);color:var(--bad)}
 .chip.muted{color:var(--muted)}
-button.chip{cursor:pointer}
+button.chip,a.chip,label.chip{min-height:44px;min-width:44px;padding:8px 12px;justify-content:center;cursor:pointer;text-decoration:none}
 .tip .chip:not(.on){background:var(--surface);border-color:var(--line)}
-label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px;min-width:0}
-input,select,textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+label,.lbl{font-size:13px;color:var(--muted)}
+label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.checkline{flex-direction:row;align-items:center;gap:10px;min-height:44px;color:var(--ink);cursor:pointer}
+.checkline input{width:24px;height:24px;margin:0;flex:none}
+input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+input:not([type=checkbox]):not([type=radio]):not([type=file]),select{min-height:44px}
 textarea{min-height:64px;resize:vertical}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .checks{display:flex;flex-wrap:wrap;gap:6px}
 .checks input{position:absolute;opacity:0;width:1px;height:1px}
 .checks label{flex-direction:row}
-.checks span{display:inline-block;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
+.checks span{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
 .checks input:checked+span{background:var(--accent-soft);border-color:var(--accent);font-weight:700}
 .checks input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
 .sec-n{font-family:var(--f-num);font-size:26px;color:var(--accent);font-weight:700;line-height:1}
@@ -112,42 +118,46 @@ textarea{min-height:64px;resize:vertical}
 .meal .more figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
 .meal .more img,.meal .more .ph2{width:56px;height:56px;border-radius:6px;object-fit:cover;background:var(--sunk)}
 .previews{display:flex;gap:6px;overflow-x:auto}.previews .preview{width:auto;max-width:48%;flex:1 1 0}
-label.chip input[type=file]{display:none}
+label.chip{position:relative}
+label.chip input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+label.chip:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
 .preview{max-height:180px;border-radius:8px;object-fit:cover;width:100%}
 .ins{display:grid;grid-template-columns:6px 1fr;gap:10px}
 .ins .s{border-radius:3px;background:var(--muted)}
 .ins.good .s{background:var(--good)} .ins.warn .s{background:var(--warn)} .ins.bad .s{background:var(--bad)} .ins.info .s{background:var(--accent)}
-.ins.declined{opacity:.55} .ins.declined .s{background:var(--line)}
+.ins.declined{color:var(--muted)} .ins.declined .s{background:var(--line)}
 .ins .b{display:flex;flex-direction:column;gap:4px;min-width:0}
-.ins .chip{white-space:normal;text-align:left}
+.ins .chip{white-space:normal;text-align:left;justify-content:flex-start}
 .chooser{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;margin-top:4px}
 .chooser .prev{font-size:14px;font-weight:600}
 .tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-inline:env(safe-area-inset-left,0px) env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px);z-index:10}
 .tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:560px}
-.tabs button{background:none;border:none;color:var(--muted);padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
+.tabs button{background:none;border:none;color:var(--muted);min-height:44px;min-width:44px;padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
 .tabs button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
 .tabs button.on{color:var(--accent);font-weight:700}
 .banner{font-size:13px;padding:8px 12px;border-radius:8px;background:var(--warn-soft);color:var(--ink)}
-.day{display:flex;justify-content:space-between;gap:8px;padding-block:10px;border-top:1px solid var(--line);align-items:center}
-.day:first-child{border-top:none}
+.day,.wk-row{display:flex;justify-content:space-between;gap:8px;min-height:44px;padding-block:10px;border:0;border-top:1px solid var(--line);align-items:center;width:100%;background:none;color:inherit;text-align:left}
+.day:first-child,.wk-row:first-child{border-top:none}
 .chart{width:100%;height:auto;display:block}
 .ai-out{white-space:pre-wrap;font-size:14px}
 ul.clean{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
-details.how{background:var(--sunk);border-radius:8px;padding:6px 10px}
-details.how summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:500}
+details>summary{cursor:pointer;min-height:44px;padding-block:11px}
+details.how{background:var(--sunk);border-radius:8px;padding:0 10px}
+details.how summary{font-size:13px;color:var(--accent);font-weight:500;padding-block:12px}
 details.how[open]{padding-bottom:10px}
 details.how[open] > *:not(summary){margin-top:6px}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:99px;font-size:14px;z-index:20;pointer-events:none}
 .hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
 .hero .big{font-size:40px;color:var(--accent)}
 @media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 
-<div id="app"><p class="muted" style="padding-top:40px;text-align:center">正在载入薄肌日课…</p></div>
-<nav class="tabs" id="tabs" hidden></nav>
-<div class="toast" id="toast" hidden></div>
+<body>
+<main id="app"><p class="muted" style="padding-top:40px;text-align:center">正在载入薄肌日课…</p></main>
+<nav class="tabs" id="tabs" aria-label="主导航" hidden></nav>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
 <script>
 /* ============ 纲领数据 ============ */
@@ -475,7 +485,7 @@ const I18N = {
   zh: {
     "app.title":"薄肌日课",
     "app.loading":"正在载入薄肌日课…",
-    "lang.aria":"语言",
+    "lang.aria":"语言", "nav.aria":"主导航",
     "tab.today":"今天", "tab.food":"饮食", "tab.log":"记录", "tab.fb":"反馈", "tab.me":"我的",
     "banner.loadError":"暂时无法读取账号数据。读取成功前不能新建或修改档案。",
     "banner.reload":"重新加载",
@@ -498,11 +508,11 @@ const I18N = {
     "cue.summary":"姿势讲解",
     "cue.lowback":"腰椎有伤：全程收紧核心，腰不塌不弓；出现向腿放射的麻痛立即停止。",
     "cue.myVideo":"我收藏的视频", "cue.bilibili":"B站教学视频", "cue.youtube":"YouTube",
-    "cue.placeholder":"看到好视频？粘贴链接收藏", "cue.save":"收藏",
+    "cue.placeholder":"看到好视频？粘贴链接收藏", "cue.urlAria":"收藏教学视频链接（{ex}）", "cue.save":"收藏",
     "setup.eyebrow":"薄肌日课",
     "setup.editTitle":"修改我的资料", "setup.newTitle":"先花一分钟建档",
     "setup.intro":"填完后，每天按《薄肌训练与饮食纲领》给你排好训练和饮食目标。数字以后随时能改。",
-    "setup.sec1":"身体指标", "setup.male":"男", "setup.female":"女",
+    "setup.sec1":"身体指标", "setup.sex":"性别", "setup.male":"男", "setup.female":"女",
     "setup.age":"年龄", "setup.height":"身高 cm", "setup.weight":"体重 kg",
     "setup.bf":"体脂率 %（不知道可空）", "setup.bfPh":"例如 16",
     "setup.steps":"日均步数",
@@ -528,7 +538,7 @@ const I18N = {
     "today.extraPh":"其他动作名", "today.extraAdd":"加上",
     "today.customTitle":"自选训练：想练什么就加什么",
     "today.customEmpty":"还没有动作。点下面的快速添加，或加一个空白动作自己填名字。",
-    "today.exNamePh":"动作名", "common.delete":"删除",
+    "today.exNamePh":"动作名", "today.customExAria":"动作 {n} 名称", "common.delete":"删除",
     "today.sets":"组数", "today.minReps":"最少次数", "today.maxReps":"最多次数",
     "today.coreQuick":"腰/核心快速添加（腰椎友好）", "today.addBlank":"＋ 添加空白动作",
     "today.next7":"未来 7 天", "today.todayPrefix":"今天 ",
@@ -568,7 +578,7 @@ const I18N = {
     "ex.stall":"连续 3 次没进步。先检查睡眠和热量，再考虑换动作变体。",
     "ex.addedWeight":"负重 kg（自重填 0）", "ex.weight":"重量 kg",
     "ex.secCol":"秒", "ex.repsCol":"次数",
-    "ex.ariaWeight":"第{n}组重量", "ex.ariaSec":"第{n}组秒数", "ex.ariaReps":"第{n}组次数",
+    "ex.ariaWeight":"{ex} 第{n}组 重量", "ex.ariaSec":"{ex} 第{n}组 秒数", "ex.ariaReps":"{ex} 第{n}组 次数",
     "sug.firstTimed":"第一次做：每组撑到动作开始变形前停（目标 {lo}–{hi} 秒），记下秒数，负重填 0。",
     "sug.firstReps":"第一次做：选一个能做 {hi} 次、还留 1–2 次余力的重量，记下来。",
     "sug.timedMax":"上次 {w} 撑了 {r} 秒，已到上限，可以背上负重或换更难的变式（如抬一条腿）。",
@@ -600,7 +610,7 @@ const I18N = {
     "macro.summary":"已记 {n} 餐，其中 {est} 餐有估算。", "macro.empty":"还没记录饮食。",
     "food.targetsTitle":"营养目标{suffix}", "food.previewSuffix":" · 预览", "food.pastSuffix":" · 历史日期",
     "food.targetsHint":"蛋白分 3–4 顿，每顿 30–50 g。含糖饮料不喝。",
-    "food.logTitle":"记一餐",
+    "food.logTitle":"记一餐", "food.mealTypeAria":"餐次",
     "food.photoLabel":"照片（可选，可加多张，比如吃之前和吃完各一张）", "food.maxPhotos":"最多 4 张",
     "food.photoAlt":"第 {n} 张照片", "food.removePhotoAria":"去掉这张",
     "food.whatAte":"吃了什么", "food.whatAtePh":"例如：米饭一碗、鸡胸肉约 150 g、西兰花、一个鸡蛋",
@@ -752,7 +762,7 @@ const I18N = {
     "fb.adoptEditSwap":"采纳：{from} 换成 {to} 改为 {sets}×{lo}–{hi}",
     "fb.adoptEdit":"采纳：{from} 改为 {sets}×{lo}–{hi}",
     "fb.appliedUndo":"已采纳 · 撤销", "fb.applied":"已采纳",
-    "fb.scopeToday":"只改今天", "fb.scopeLong":"长期调整", "fb.confirmAdopt":"采纳",
+    "fb.scopeToday":"只改今天", "fb.scopeLong":"长期调整", "fb.confirmAdopt":"采纳", "fb.chooserAria":"选择采纳范围",
     "fb.decline":"不采纳", "fb.declinedChip":"已不采纳", "fb.rechoose":"重新选择",
     "fb.clearExEdits":"全部恢复默认", "fb.clearSwaps":"恢复原动作",
     "fb.resetKcal":"热量调整归零", "fb.stopDeload":"结束减载", "fb.gotIt":"知道了",
@@ -828,7 +838,7 @@ const I18N = {
   en: {
     "app.title":"Lean Ritual",
     "app.loading":"Loading Lean Ritual…",
-    "lang.aria":"Language",
+    "lang.aria":"Language", "nav.aria":"Main navigation",
     "tab.today":"Today", "tab.food":"Meals", "tab.log":"Log", "tab.fb":"Feedback", "tab.me":"Me",
     "banner.loadError":"Unable to load account data. Profile setup and edits are paused until data loads.",
     "banner.reload":"Reload",
@@ -859,11 +869,11 @@ const I18N = {
     "cue.summary":"Form cues",
     "cue.lowback":"Lower back note: brace your core throughout without sagging or overarching; stop immediately if pain or numbness radiates down the leg.",
     "cue.myVideo":"Saved video", "cue.bilibili":"Bilibili", "cue.youtube":"YouTube",
-    "cue.placeholder":"Paste a helpful video URL to save", "cue.save":"Save",
+    "cue.placeholder":"Paste a helpful video URL to save", "cue.urlAria":"Video URL to save ({ex})", "cue.save":"Save",
     "setup.eyebrow":"Lean Ritual",
     "setup.editTitle":"Edit My Profile", "setup.newTitle":"1-Minute Setup",
     "setup.intro":"Enter your baseline once to generate daily workouts and macro targets. You can adjust anything later.",
-    "setup.sec1":"Body Metrics", "setup.male":"Male", "setup.female":"Female",
+    "setup.sec1":"Body Metrics", "setup.sex":"Sex", "setup.male":"Male", "setup.female":"Female",
     "setup.age":"Age", "setup.height":"Height cm", "setup.weight":"Weight kg",
     "setup.bf":"Body fat % (optional)", "setup.bfPh":"e.g. 16",
     "setup.steps":"Daily steps",
@@ -889,7 +899,7 @@ const I18N = {
     "today.extraPh":"Other exercise name", "today.extraAdd":"Add",
     "today.customTitle":"Custom workout: build your session",
     "today.customEmpty":"No exercises yet. Tap a quick-add chip below or add a blank exercise.",
-    "today.exNamePh":"Exercise name", "common.delete":"Delete",
+    "today.exNamePh":"Exercise name", "today.customExAria":"Exercise {n} name", "common.delete":"Delete",
     "today.sets":"Sets", "today.minReps":"Min reps", "today.maxReps":"Max reps",
     "today.coreQuick":"Quick-add core (spine-friendly)", "today.addBlank":"+ Add blank exercise",
     "today.next7":"Next 7 Days", "today.todayPrefix":"Today · ",
@@ -929,7 +939,7 @@ const I18N = {
     "ex.stall":"No progress in 3 sessions. Check sleep and calories first, then consider a variation.",
     "ex.addedWeight":"Added kg (0 = BW)", "ex.weight":"Weight kg",
     "ex.secCol":"Sec", "ex.repsCol":"Reps",
-    "ex.ariaWeight":"Set {n} weight", "ex.ariaSec":"Set {n} seconds", "ex.ariaReps":"Set {n} reps",
+    "ex.ariaWeight":"{ex} · Set {n} weight", "ex.ariaSec":"{ex} · Set {n} seconds", "ex.ariaReps":"{ex} · Set {n} reps",
     "sug.firstTimed":"First time: hold until just before form breaks (target {lo}–{hi}s), log seconds, enter 0 for weight.",
     "sug.firstReps":"First time: pick a weight you can lift for {hi} reps with 1–2 reps in reserve.",
     "sug.timedMax":"Last: {w} for {r}s (top of range). Add weight or try a harder variation.",
@@ -961,7 +971,7 @@ const I18N = {
     "macro.summary":"{n} meal(s) logged, {est} with macros.", "macro.empty":"No meals logged yet.",
     "food.targetsTitle":"Macro Targets{suffix}", "food.previewSuffix":" · Preview", "food.pastSuffix":" · Past date",
     "food.targetsHint":"Split protein across 3–4 meals (30–50 g each). Skip sugary drinks.",
-    "food.logTitle":"Log a Meal",
+    "food.logTitle":"Log a Meal", "food.mealTypeAria":"Meal type",
     "food.photoLabel":"Photos (optional, up to 4 — e.g. before & leftovers)", "food.maxPhotos":"Max 4 photos",
     "food.photoAlt":"Photo {n}", "food.removePhotoAria":"Remove photo",
     "food.whatAte":"What did you eat?", "food.whatAtePh":"e.g. 1 bowl of rice, ~150 g chicken breast, broccoli, 1 egg",
@@ -1113,7 +1123,7 @@ const I18N = {
     "fb.adoptEditSwap":"Adopt: {from} → {to} ({sets}×{lo}–{hi})",
     "fb.adoptEdit":"Adopt: {from} ({sets}×{lo}–{hi})",
     "fb.appliedUndo":"Applied · Undo", "fb.applied":"Applied",
-    "fb.scopeToday":"Today only", "fb.scopeLong":"Long-term", "fb.confirmAdopt":"Adopt",
+    "fb.scopeToday":"Today only", "fb.scopeLong":"Long-term", "fb.confirmAdopt":"Adopt", "fb.chooserAria":"Choose adoption scope",
     "fb.decline":"Decline", "fb.declinedChip":"Declined", "fb.rechoose":"Change",
     "fb.clearExEdits":"Reset all defaults", "fb.clearSwaps":"Restore original exercises",
     "fb.resetKcal":"Reset calorie adjustment", "fb.stopDeload":"End deload", "fb.gotIt":"Got it",
@@ -1469,7 +1479,7 @@ function howTo(name){
       <a class="chip" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(kw + " 标准动作 教学")}" target="_blank" rel="noopener">${esc(t("cue.bilibili"))}</a>
       <a class="chip" href="https://www.youtube.com/results?search_query=${encodeURIComponent(ytQ)}" target="_blank" rel="noopener">${esc(t("cue.youtube"))}</a>
     </div>
-    <div class="row" style="flex-wrap:nowrap"><input id="lib-${esc(b)}" data-lib="${esc(b)}" type="url" placeholder="${esc(t("cue.placeholder"))}" value="${esc(mine||"")}"><button class="chip" data-act="save-lib" data-v="${esc(b)}">${esc(t("cue.save"))}</button></div>
+    <div class="row" style="flex-wrap:nowrap"><input id="lib-${esc(b)}" data-lib="${esc(b)}" type="url" inputmode="url" autocomplete="url" aria-label="${esc(t("cue.urlAria", {ex:exName(name)}))}" placeholder="${esc(t("cue.placeholder"))}" value="${esc(mine||"")}"><button class="chip" data-act="save-lib" data-v="${esc(b)}">${esc(t("cue.save"))}</button></div>
   </details>`;
 }
 
@@ -1853,16 +1863,16 @@ function dayMacros(date){
 
 /* ============ 渲染 ============ */
 const ICON = {
-  today:'<svg viewBox="0 0 24 24"><path d="M3 10h3v4H3zM18 10h3v4h-3zM6 8h2v8H6zM16 8h2v8h-2zM8 12h8"/></svg>',
-  food:'<svg viewBox="0 0 24 24"><path d="M5 3v8a2 2 0 0 0 2 2v8M9 3v8a2 2 0 0 1-2 2M7 3v6M16 3c-2 1-3 4-3 7h3v11"/></svg>',
-  log:'<svg viewBox="0 0 24 24"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg>',
-  fb:'<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg>',
-  me:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>'
+  today:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 10h3v4H3zM18 10h3v4h-3zM6 8h2v8H6zM16 8h2v8h-2zM8 12h8"/></svg>',
+  food:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 3v8a2 2 0 0 0 2 2v8M9 3v8a2 2 0 0 1-2 2M7 3v6M16 3c-2 1-3 4-3 7h3v11"/></svg>',
+  log:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19h16M6 16l4-5 3 3 5-7"/></svg>',
+  fb:'<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/></svg>',
+  me:'<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>'
 };
 const TABS = ["today","food","log","fb","me"];
 function langSwitch(){
   const cur = getLang();
-  return `<div class="row" style="gap:4px" role="group" aria-label="${esc(t("lang.aria"))}"><button type="button" class="chip ${cur==="zh"?"on":""}" data-act="lang" data-v="zh">中文</button><button type="button" class="chip ${cur==="en"?"on":""}" data-act="lang" data-v="en">English</button></div>`;
+  return `<div class="row" style="gap:4px" role="group" aria-label="${esc(t("lang.aria"))}"><button type="button" class="chip ${cur==="zh"?"on":""}" aria-pressed="${cur==="zh"}" data-act="lang" data-v="zh">中文</button><button type="button" class="chip ${cur==="en"?"on":""}" aria-pressed="${cur==="en"}" data-act="lang" data-v="en">English</button></div>`;
 }
 
 function render(){
@@ -1880,7 +1890,8 @@ function render(){
     end: (() => { try { return ae.selectionEnd; } catch { return null; } })()
   } : null;
   tabs.hidden = false;
-  tabs.innerHTML = `<div class="in">${TABS.map(k => `<button data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k}">${ICON[k]}<span>${esc(t("tab." + k))}</span></button>`).join("")}</div>`;
+  tabs.setAttribute?.("aria-label", t("nav.aria"));
+  tabs.innerHTML = `<div class="in">${TABS.map(k => `<button type="button" data-act="tab" data-v="${k}" class="${S.tab===k?"on":""}" aria-current="${S.tab===k?"page":"false"}">${ICON[k]}<span>${esc(t("tab." + k))}</span></button>`).join("")}</div>`;
   const v = {today:viewToday, food:viewFood, log:viewLog, fb:viewFeedback, me:viewMe}[S.tab] || viewToday;
   app.innerHTML = banner() + v();
   if (keepFocus) {
@@ -1916,41 +1927,41 @@ function viewSetup(){
   <div class="hero"><div class="row between"><span class="eyebrow">${esc(t("setup.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(S.profile ? t("setup.editTitle") : t("setup.newTitle"))}</h1>
   <p class="muted">${esc(t("setup.intro"))}</p></div>
   <section class="card"><div class="row"><span class="sec-n num">1</span><h2>${esc(t("setup.sec1"))}</h2></div>
-    <div class="checks">${rd("sex","m",p.sex,t("setup.male"))}${rd("sex","f",p.sex,t("setup.female"))}</div>
+    <div class="checks" role="radiogroup" aria-label="${esc(t("setup.sex"))}">${rd("sex","m",p.sex,t("setup.male"))}${rd("sex","f",p.sex,t("setup.female"))}</div>
     <div class="grid3">
-      <label>${esc(t("setup.age"))}<input id="f-age" name="age" type="number" inputmode="numeric" value="${esc(p.age??"")}" placeholder="28"></label>
-      <label>${esc(t("setup.height"))}<input id="f-height" name="height" type="number" inputmode="decimal" value="${esc(p.height??"")}" placeholder="175"></label>
-      <label>${esc(t("setup.weight"))}<input id="f-weight" name="weight" type="number" inputmode="decimal" step="0.1" value="${esc(p.weight??"")}" placeholder="70"></label>
+      <label>${esc(t("setup.age"))}<input id="f-age" name="age" type="number" inputmode="numeric" autocomplete="off" value="${esc(p.age??"")}" placeholder="28"></label>
+      <label>${esc(t("setup.height"))}<input id="f-height" name="height" type="number" inputmode="decimal" autocomplete="off" value="${esc(p.height??"")}" placeholder="175"></label>
+      <label>${esc(t("setup.weight"))}<input id="f-weight" name="weight" type="number" inputmode="decimal" autocomplete="off" step="0.1" value="${esc(p.weight??"")}" placeholder="70"></label>
     </div>
     <div class="grid2">
-      <label>${esc(t("setup.bf"))}<input id="f-bf" name="bf" type="number" inputmode="decimal" step="0.1" value="${esc(p.bf??"")}" placeholder="${esc(t("setup.bfPh"))}"></label>
+      <label>${esc(t("setup.bf"))}<input id="f-bf" name="bf" type="number" inputmode="decimal" autocomplete="off" step="0.1" value="${esc(p.bf??"")}" placeholder="${esc(t("setup.bfPh"))}"></label>
       <label>${esc(t("setup.steps"))}<select id="f-steps" name="steps">
         ${[[4000,t("setup.steps4000")],[6500,t("setup.steps6500")],[9500,t("setup.steps9500")],[12000,t("setup.steps12000")]].map(([v,l])=>`<option value="${v}" ${+p.steps===v?"selected":""}>${esc(l)}</option>`).join("")}
       </select></label>
     </div>
   </section>
   <section class="card"><div class="row"><span class="sec-n num">2</span><h2>${esc(t("setup.sec2"))}</h2></div>
-    <label>${esc(t("setup.exp"))}</label>
-    <div class="checks">${rd("exp","new",p.exp,t("setup.expNew"))}${rd("exp","mid",p.exp,t("setup.expMid"))}${rd("exp","adv",p.exp,t("setup.expAdv"))}</div>
-    <label>${esc(t("setup.goal"))}</label>
-    <div class="checks">${rd("stage","auto",p.stage,t("setup.goalAuto"))}${rd("stage","cut",p.stage,stageLabel("cut"))}${rd("stage","maintain",p.stage,stageLabel("maintain"))}${rd("stage","bulk",p.stage,stageLabel("bulk"))}</div>
+    <span class="lbl" id="lbl-exp">${esc(t("setup.exp"))}</span>
+    <div class="checks" role="radiogroup" aria-labelledby="lbl-exp">${rd("exp","new",p.exp,t("setup.expNew"))}${rd("exp","mid",p.exp,t("setup.expMid"))}${rd("exp","adv",p.exp,t("setup.expAdv"))}</div>
+    <span class="lbl" id="lbl-stage">${esc(t("setup.goal"))}</span>
+    <div class="checks" role="radiogroup" aria-labelledby="lbl-stage">${rd("stage","auto",p.stage,t("setup.goalAuto"))}${rd("stage","cut",p.stage,stageLabel("cut"))}${rd("stage","maintain",p.stage,stageLabel("maintain"))}${rd("stage","bulk",p.stage,stageLabel("bulk"))}</div>
     <p class="small muted">${esc(t("setup.goalHint"))}</p>
-    <label>${esc(t("setup.trainDays"))}</label>
-    <div class="checks">${[1,2,3,4,5,6,0].map(d => ck("trainDays", String(d), (p.trainDays||[]).map(String), weekdayChip(d))).join("")}</div>
-    <label>${esc(t("setup.slot"))}</label>
-    <div class="checks">${Object.keys(SLOT).map(k => rd("slot",k,p.slot,slotLabel(k))).join("")}</div>
-    <label>${esc(t("setup.equip"))}</label>
-    <div class="checks">${rd("equipment","gym",p.equipment,t("setup.equipGym"))}${rd("equipment","home",p.equipment,t("setup.equipHome"))}</div>
+    <span class="lbl" id="lbl-tdays">${esc(t("setup.trainDays"))}</span>
+    <div class="checks" role="group" aria-labelledby="lbl-tdays">${[1,2,3,4,5,6,0].map(d => ck("trainDays", String(d), (p.trainDays||[]).map(String), weekdayChip(d))).join("")}</div>
+    <span class="lbl" id="lbl-slot">${esc(t("setup.slot"))}</span>
+    <div class="checks" role="radiogroup" aria-labelledby="lbl-slot">${Object.keys(SLOT).map(k => rd("slot",k,p.slot,slotLabel(k))).join("")}</div>
+    <span class="lbl" id="lbl-equip">${esc(t("setup.equip"))}</span>
+    <div class="checks" role="radiogroup" aria-labelledby="lbl-equip">${rd("equipment","gym",p.equipment,t("setup.equipGym"))}${rd("equipment","home",p.equipment,t("setup.equipHome"))}</div>
   </section>
-  <section class="card"><div class="row"><span class="sec-n num">3</span><h2>${esc(t("setup.sec3"))}</h2></div>
+  <section class="card"><div class="row"><span class="sec-n num">3</span><h2 id="lbl-inj">${esc(t("setup.sec3"))}</h2></div>
     <p class="small muted">${esc(t("setup.injHint"))}</p>
-    <div class="checks">${Object.keys(INJ).map(k => ck("injuries",k,p.injuries||[],injLabel(k))).join("")}</div>
+    <div class="checks" role="group" aria-labelledby="lbl-inj">${Object.keys(INJ).map(k => ck("injuries",k,p.injuries||[],injLabel(k))).join("")}</div>
     <label>${esc(t("setup.injNote"))}<textarea id="f-injnote" name="injNote" placeholder="${esc(t("setup.injPh"))}">${esc(p.injNote||"")}</textarea></label>
   </section>
-  <section class="card"><h2>${esc(t("setup.supps"))}</h2>
-    <div class="checks">${[["protein",t("setup.suppProtein")],["creatine",t("setup.suppCreatine")],["caffeine",t("setup.suppCaffeine")],["vitd",t("setup.suppVitd")],["fishoil",t("setup.suppFishoil")]].map(([k,l]) => ck("supps",k,p.supps||[],l)).join("")}</div>
+  <section class="card"><h2 id="lbl-supps">${esc(t("setup.supps"))}</h2>
+    <div class="checks" role="group" aria-labelledby="lbl-supps">${[["protein",t("setup.suppProtein")],["creatine",t("setup.suppCreatine")],["caffeine",t("setup.suppCaffeine")],["vitd",t("setup.suppVitd")],["fishoil",t("setup.suppFishoil")]].map(([k,l]) => ck("supps",k,p.supps||[],l)).join("")}</div>
   </section>
-  <p id="setup-err" class="small" style="color:var(--bad)" hidden></p>
+  <p id="setup-err" class="small" role="alert" style="color:var(--bad)" hidden></p>
   <button class="btn primary block" type="submit">${esc(S.profile ? t("setup.saveEdit") : t("setup.buildPlan"))}</button>
   ${S.profile ? `<button class="btn block" type="button" data-act="cancel-edit">${esc(t("common.cancel"))}</button>` : ""}
   </form>`;
@@ -2019,9 +2030,9 @@ function getDraft(date, plan){
 function overrideRow(plan, day){
   const cur = plan.key, fut = day.date > todayStr() || (!day.date && S.date > todayStr());
   return `<div class="stack" style="gap:6px"><span class="small muted">${esc(fut ? t("today.overrideFuture") : t("today.overrideToday"))}</span><div class="row">
-    ${ORDER.map(k => `<button class="chip ${cur===k?"on":""}" data-act="override" data-v="${k}">${esc(progTitle(k))}</button>`).join("")}
-    <button class="chip ${cur==="custom"?"on":""}" data-act="override" data-v="custom">${esc(t("prog.custom"))}</button>
-    <button class="chip ${!cur?"on":""}" data-act="override" data-v="rest">${esc(t("prog.rest"))}</button>
+    ${ORDER.map(k => `<button class="chip ${cur===k?"on":""}" aria-pressed="${cur===k}" data-act="override" data-v="${k}">${esc(progTitle(k))}</button>`).join("")}
+    <button class="chip ${cur==="custom"?"on":""}" aria-pressed="${cur==="custom"}" data-act="override" data-v="custom">${esc(t("prog.custom"))}</button>
+    <button class="chip ${!cur?"on":""}" aria-pressed="${!cur}" data-act="override" data-v="rest">${esc(t("prog.rest"))}</button>
     ${day.override ? `<button class="chip" data-act="override" data-v="">${esc(t("today.overrideAuto"))}</button>` : ""}</div></div>`;
 }
 const CORE = [["平板支撑（秒）",3,30,60],["死虫",3,8,12],["鸟狗式",3,8,12],["侧桥（秒）",3,20,40],["反向卷腹",3,10,15],["臀桥",3,10,15]];
@@ -2029,7 +2040,7 @@ function extraEditor(){
   return `<div class="tip stack" style="gap:8px"><b>${esc(t("today.extraTitle"))}</b>
     <p class="small muted">${esc(t("today.extraDesc"))}</p>
     <div class="row">${CORE.map(([n]) => `<button class="chip" data-act="ex-add" data-v="${esc(n)}">${getLang()==="en"?"+":"＋"} ${esc(exName(n))}</button>`).join("")}</div>
-    <div class="row" style="flex-wrap:nowrap"><input id="ex-new" list="ex-all" placeholder="${esc(t("today.extraPh"))}"><button class="chip on" data-act="ex-add" data-v="">${esc(t("today.extraAdd"))}</button></div>
+    <div class="row" style="flex-wrap:nowrap"><input id="ex-new" list="ex-all" autocomplete="off" aria-label="${esc(t("today.extraPh"))}" placeholder="${esc(t("today.extraPh"))}"><button class="chip on" data-act="ex-add" data-v="">${esc(t("today.extraAdd"))}</button></div>
     <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(exName(n))}"></option>`).join("")}</datalist></div>`;
 }
 function customEditor(day){
@@ -2037,19 +2048,19 @@ function customEditor(day){
   return `<div class="tip stack" style="gap:10px"><b>${esc(t("today.customTitle"))}</b>
     ${c.length ? "" : `<p class="small muted">${esc(t("today.customEmpty"))}</p>`}
     ${c.map((e,i) => `<div class="stack" style="gap:6px;border-top:1px solid var(--line,#8884);padding-top:8px">
-      <div class="row" style="flex-wrap:nowrap"><input id="cu-${i}-name" data-cu="${i}.name" list="ex-all" value="${esc(e.name ? exName(e.name) : "")}" placeholder="${esc(t("today.exNamePh"))}"><button class="chip bad" data-act="cu-del" data-v="${i}">${esc(t("common.delete"))}</button></div>
-      <div class="grid3"><label>${esc(t("today.sets"))}<input id="cu-${i}-sets" data-cu="${i}.sets" type="number" inputmode="numeric" min="1" max="10" value="${esc(e.sets)}"></label>
-      <label>${esc(t("today.minReps"))}<input id="cu-${i}-lo" data-cu="${i}.lo" type="number" inputmode="numeric" min="1" value="${esc(e.lo)}"></label>
-      <label>${esc(t("today.maxReps"))}<input id="cu-${i}-hi" data-cu="${i}.hi" type="number" inputmode="numeric" min="1" value="${esc(e.hi)}"></label></div></div>`).join("")}
+      <div class="row" style="flex-wrap:nowrap"><input id="cu-${i}-name" data-cu="${i}.name" list="ex-all" autocomplete="off" aria-label="${esc(t("today.customExAria", {n:i+1}))}" value="${esc(e.name ? exName(e.name) : "")}" placeholder="${esc(t("today.exNamePh"))}"><button class="chip bad" data-act="cu-del" data-v="${i}">${esc(t("common.delete"))}</button></div>
+      <div class="grid3"><label>${esc(t("today.sets"))}<input id="cu-${i}-sets" data-cu="${i}.sets" type="number" inputmode="numeric" autocomplete="off" min="1" max="10" value="${esc(e.sets)}"></label>
+      <label>${esc(t("today.minReps"))}<input id="cu-${i}-lo" data-cu="${i}.lo" type="number" inputmode="numeric" autocomplete="off" min="1" value="${esc(e.lo)}"></label>
+      <label>${esc(t("today.maxReps"))}<input id="cu-${i}-hi" data-cu="${i}.hi" type="number" inputmode="numeric" autocomplete="off" min="1" value="${esc(e.hi)}"></label></div></div>`).join("")}
     <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(exName(n))}"></option>`).join("")}</datalist>
     <div><span class="small muted">${esc(t("today.coreQuick"))}</span><div class="row" style="margin-top:4px">${CORE.map(([n]) => `<button class="chip" data-act="cu-add" data-v="${esc(n)}">${esc(exName(n))}</button>`).join("")}</div></div>
     <div><button class="chip on" data-act="cu-add" data-v="">${esc(t("today.addBlank"))}</button></div></div>`;
 }
 function weekStrip(){
   const td = todayStr();
-  return `<section class="card"><h3>${esc(t("today.next7"))}</h3><div class="stack" style="gap:4px">${Array.from({length:8}, (_,i) => addDays(td, i)).map(d => {
+  return `<section class="card"><h3>${esc(t("today.next7"))}</h3><div>${Array.from({length:8}, (_,i) => addDays(td, i)).map(d => {
     const p = planFor(d), label = p.key ? progTitle(p.key) : t("prog.rest");
-    return `<button class="row between" data-act="goto" data-v="${d}" style="cursor:pointer;padding:6px 0"><span>${d===td?esc(t("today.todayPrefix")):""}${esc(fmtDate(d))}</span><span class="${p.key?"":"muted"}">${esc(label)}${p.saved?" ✓":""}</span></button>`;
+    return `<button type="button" class="wk-row" data-act="goto" data-v="${d}"><span>${d===td?esc(t("today.todayPrefix")):""}${esc(fmtDate(d))}</span><span class="${p.key?"":"muted"}">${esc(label)}${p.saved?" ✓":""}</span></button>`;
   }).join("")}</div><p class="small muted">${esc(t("today.next7Hint"))}</p></section>`;
 }
 /* viewFuture 已合并到 viewToday() 中；保留此函数作备用 */
@@ -2060,7 +2071,7 @@ function viewToday(){
   const p = S.profile, date = S.date, plan = planFor(date), day = S.days[date] || {}, tg = targets(), m = dayMacros(date), dt = dayTargets(date);
   const wk = weekIndex(date) + 1;
   const isFuture = date > todayStr();
-  let html = dateBar();
+  let html = `<h1 class="sr">${esc(t("tab.today"))} · ${esc(fmtDate(date))}</h1>` + dateBar();
   html += `<div class="stack">`;
   // 训练卡
   if (plan.key) {
@@ -2068,7 +2079,7 @@ function viewToday(){
     html += `<section class="card">
       <div class="row between"><div><span class="eyebrow">${esc(t("today.eyebrow", {wk, slot:slotLabel(plan.slot), preview:isFuture?t("today.previewSuffix"):""}))}</span><h2>${esc(progTitle(plan.key))}${plan.deload?esc(t("today.deloadSuffix")):""}</h2></div>
       ${done ? `<span class="chip on">${esc(t("today.done"))}</span>` : ""}</div>
-      <div class="row">${Object.keys(SLOT).map(k => `<button class="chip ${plan.slot===k?"on":""}" data-act="slot" data-v="${k}">${esc(slotLabel(k))}</button>`).join("")}</div>
+      <div class="row">${Object.keys(SLOT).map(k => `<button class="chip ${plan.slot===k?"on":""}" aria-pressed="${plan.slot===k}" data-act="slot" data-v="${k}">${esc(slotLabel(k))}</button>`).join("")}</div>
       <p class="tip">${esc(slotTip(plan.slot))}</p>
       ${plan.deload ? `<p class="tip warn">${esc(t("today.deloadTip", {who:plan.deload==="manual"?t("today.deloadManual"):t("today.deloadScheduled")}))}</p>` : ""}
       ${(p.injuries||[]).length ? `<p class="tip bad">${esc(t("today.injTip", {list:joinList(p.injuries.map(injLabel))}))}</p>` : ""}
@@ -2076,9 +2087,9 @@ function viewToday(){
       ${plan.ex.map((e,i) => exCard(e, i, d, date, plan)).join("")}
       ${plan.custom ? "" : extraEditor()}
       <div class="ex"><b>${esc(t("today.feel"))}</b>
-        <div class="row">${[1,2,3,4,5].map(n => `<button class="chip ${+d.feel===n?"on":""}" data-act="feel" data-v="${n}">${esc(feelLabel(n))}</button>`).join("")}</div>
+        <div class="row">${[1,2,3,4,5].map(n => `<button class="chip ${+d.feel===n?"on":""}" aria-pressed="${+d.feel===n}" data-act="feel" data-v="${n}">${esc(feelLabel(n))}</button>`).join("")}</div>
         <b>${esc(t("today.pain"))}</b>
-        <div class="row">${[["none",t("today.painNone")],["mild",t("today.painMild")],["pain",t("today.painBad")]].map(([k,l]) => `<button class="chip ${d.pain===k?"on":""}" data-act="pain" data-v="${k}">${esc(l)}</button>`).join("")}</div>
+        <div class="row">${[["none",t("today.painNone")],["mild",t("today.painMild")],["pain",t("today.painBad")]].map(([k,l]) => `<button class="chip ${d.pain===k?"on":""}" aria-pressed="${d.pain===k}" data-act="pain" data-v="${k}">${esc(l)}</button>`).join("")}</div>
         ${d.pain !== "none" ? `<label>${esc(t("today.painWhere"))}<input id="w-painarea" data-f="painArea" value="${esc(d.painArea)}" placeholder="${esc(t("today.painWherePh"))}"></label>` : ""}
         <label>${esc(t("today.note"))}<textarea id="w-note" data-f="note" placeholder="${esc(t("today.notePh"))}">${esc(d.note)}</textarea></label>
       </div>
@@ -2101,11 +2112,11 @@ function viewToday(){
   html += `<section class="card"><div class="row between"><h2>${esc(t("today.checkinTitle"))}</h2>${day.checkin?`<span class="chip on">${esc(t("today.checkinLogged"))}</span>`:""}</div>
     <p class="small muted">${esc(t("today.checkinHint"))}</p>
     <div class="grid2">
-      <label>${esc(t("setup.weight"))}<input id="c-weight" type="number" inputmode="decimal" step="0.1" value="${esc(cv("weight"))}" placeholder="${esc(tg.w?.toFixed?.(1) ?? "")}"></label>
-      <label>${esc(t("today.stepsLabel"))}<input id="c-steps" type="number" inputmode="numeric" value="${esc(cv("steps"))}" placeholder="9000"></label>
-      <label>${esc(t("today.sleepLabel"))}<input id="c-sleep" type="number" inputmode="decimal" step="0.5" value="${esc(cv("sleep"))}" placeholder="7.5"></label>
-      <label>${esc(t("today.bfScaleLabel"))}<input id="c-bf" type="number" inputmode="decimal" step="0.1" value="${esc(cv("bf"))}" placeholder="${esc(curBf() ?? t("today.optionalPh"))}"></label>
-      ${c.waist != null || Object.prototype.hasOwnProperty.call(cf, "waist") ? `<label>${esc(t("today.waistLabel"))}<input id="c-waist" type="number" inputmode="decimal" step="0.5" value="${esc(cv("waist"))}"></label>` : ""}
+      <label>${esc(t("setup.weight"))}<input id="c-weight" type="number" inputmode="decimal" autocomplete="off" step="0.1" value="${esc(cv("weight"))}" placeholder="${esc(tg.w?.toFixed?.(1) ?? "")}"></label>
+      <label>${esc(t("today.stepsLabel"))}<input id="c-steps" type="number" inputmode="numeric" autocomplete="off" value="${esc(cv("steps"))}" placeholder="9000"></label>
+      <label>${esc(t("today.sleepLabel"))}<input id="c-sleep" type="number" inputmode="decimal" autocomplete="off" step="0.5" value="${esc(cv("sleep"))}" placeholder="7.5"></label>
+      <label>${esc(t("today.bfScaleLabel"))}<input id="c-bf" type="number" inputmode="decimal" autocomplete="off" step="0.1" value="${esc(cv("bf"))}" placeholder="${esc(curBf() ?? t("today.optionalPh"))}"></label>
+      ${c.waist != null || Object.prototype.hasOwnProperty.call(cf, "waist") ? `<label>${esc(t("today.waistLabel"))}<input id="c-waist" type="number" inputmode="decimal" autocomplete="off" step="0.5" value="${esc(cv("waist"))}"></label>` : ""}
     </div>
     <p class="small muted">${esc(t("today.bfScaleHint"))}</p>
     <button class="btn" data-act="save-checkin">${esc(t("today.saveCheckin"))}</button></section>`;
@@ -2123,10 +2134,10 @@ function viewToday(){
   return html + weekStrip() + `</div>`;
 }
 function exCard(e, i, d, date, plan){
-  const s = suggest(e, date, plan.deload), de = d.exercises[i];
+  const s = suggest(e, date, plan.deload), de = d.exercises[i], exLabel = exName(e.name);
   const warm = i === 0 && s.w ? `<p class="small muted">${esc(t("ex.warmup", {w1:r25(s.w*0.5), w2:r25(s.w*0.7), w3:r25(s.w*0.9)}))}</p>` : "";
-  return `<div class="ex">
-    <div class="ex-h"><b>${esc(exName(e.name))}</b><span class="presc">${esc(e.sets)}${e.lo!==""&&e.lo!=null?` × ${esc(e.lo)}–${esc(e.hi)}${isTimed(e.name)?esc(t("ex.secSuffix")):""}`:esc(t("ex.setsSuffix"))}</span></div>
+  return `<div class="ex" role="group" aria-labelledby="ex-h-${i}">
+    <div class="ex-h"><b id="ex-h-${i}">${esc(exLabel)}</b><span class="presc">${esc(e.sets)}${e.lo!==""&&e.lo!=null?` × ${esc(e.lo)}–${esc(e.hi)}${isTimed(e.name)?esc(t("ex.secSuffix")):""}`:esc(t("ex.setsSuffix"))}</span></div>
     ${e.why ? `<span class="small muted">${e.name !== e.orig ? esc(t("ex.swappedFrom", {orig:exName(e.orig)})) : ""}${esc(fmtWhy(e.why))}</span>` : ""}
     ${e.extra ? `<div><button class="chip ${S.exDel === date + "|" + i ? "bad" : ""}" data-act="ex-del" data-v="${i}">${esc(S.exDel === date + "|" + i ? t("ex.delExtraConfirm") : t("ex.delExtra"))}</button></div>` : !plan.custom ? (S.ed?.date === date && S.ed.i === i ? editor(e) : `<div><button class="chip" data-act="ed-open" data-v="${i}">${esc(plan.saved ? t("ex.editSaved") : t("ex.edit"))}</button></div>`) : ""}
     <p class="small">${esc(s.text)} <span class="muted">${esc(t("ex.restBetween", {rest:fmtRest(e.rest)}))}</span></p>
@@ -2135,8 +2146,8 @@ function exCard(e, i, d, date, plan){
     ${howTo(e.name)}
     <div class="sets"><span class="small muted"></span><span class="small muted">${esc(e.inc===0?t("ex.addedWeight"):t("ex.weight"))}</span><span class="small muted">${esc(isTimed(e.name)?t("ex.secCol"):t("ex.repsCol"))}</span>
     ${de.sets.map((st,j) => `<span class="n">${j+1}</span>
-      <input id="w-${i}-${j}-w" data-set="${i}.${j}.w" type="number" inputmode="decimal" step="0.5" value="${esc(st.w)}" placeholder="${s.w!=null?esc(s.w):""}" aria-label="${esc(t("ex.ariaWeight", {n:j+1}))}">
-      <input id="w-${i}-${j}-r" data-set="${i}.${j}.r" type="number" inputmode="numeric" value="${esc(st.r)}" placeholder="${e.lo!==""&&e.lo!=null?esc(e.lo)+"–"+esc(e.hi):""}" aria-label="${esc(t(isTimed(e.name)?"ex.ariaSec":"ex.ariaReps", {n:j+1}))}">`).join("")}
+      <input id="w-${i}-${j}-w" data-set="${i}.${j}.w" type="number" inputmode="decimal" autocomplete="off" step="0.5" value="${esc(st.w)}" placeholder="${s.w!=null?esc(s.w):""}" aria-label="${esc(t("ex.ariaWeight", {ex:exLabel, n:j+1}))}">
+      <input id="w-${i}-${j}-r" data-set="${i}.${j}.r" type="number" inputmode="numeric" autocomplete="off" value="${esc(st.r)}" placeholder="${e.lo!==""&&e.lo!=null?esc(e.lo)+"–"+esc(e.hi):""}" aria-label="${esc(t(isTimed(e.name)?"ex.ariaSec":"ex.ariaReps", {ex:exLabel, n:j+1}))}">`).join("")}
     </div></div>`;
 }
 /* ---- 动作编辑 ---- */
@@ -2155,25 +2166,25 @@ function allExNames(){
 }
 function editor(e){
   const ed = S.ed, dayKey = planFor(S.date).key;
-  return `<div class="tip stack" style="gap:10px">
+  return `<div class="tip stack" role="group" aria-label="${esc(t("ed.title", {orig:exName(e.orig)}))}" style="gap:10px">
     <div class="row between"><b>${esc(t("ed.title", {orig:exName(e.orig)}))}</b><button class="link" data-act="ed-cancel">${esc(t("common.collapse"))}</button></div>
-    <div><span class="small muted">${esc(t("ed.alts"))}</span><div class="row" style="margin-top:4px">${altsFor(e.orig).map(n => `<button class="chip ${canonExName(ed.name)===n?"on":""}" data-act="ed-pick" data-v="${esc(n)}">${esc(exName(n))}</button>`).join("")}</div></div>
-    <label>${esc(t("ed.newEx"))}<input id="ed-name" data-ed="name" list="ex-all" value="${esc(ed.name)}"></label>
+    <div><span class="small muted">${esc(t("ed.alts"))}</span><div class="row" style="margin-top:4px">${altsFor(e.orig).map(n => `<button class="chip ${canonExName(ed.name)===n?"on":""}" aria-pressed="${canonExName(ed.name)===n}" data-act="ed-pick" data-v="${esc(n)}">${esc(exName(n))}</button>`).join("")}</div></div>
+    <label>${esc(t("ed.newEx"))}<input id="ed-name" data-ed="name" list="ex-all" autocomplete="off" value="${esc(ed.name)}"></label>
     <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(exName(n))}"></option>`).join("")}</datalist>
     <div class="grid3">
-      <label>${esc(t("today.sets"))}<input id="ed-sets" data-ed="sets" type="number" inputmode="numeric" min="1" max="8" value="${esc(ed.sets)}"></label>
-      <label>${esc(t("today.minReps"))}<input id="ed-lo" data-ed="lo" type="number" inputmode="numeric" min="1" value="${esc(ed.lo)}"></label>
-      <label>${esc(t("today.maxReps"))}<input id="ed-hi" data-ed="hi" type="number" inputmode="numeric" min="1" value="${esc(ed.hi)}"></label>
+      <label>${esc(t("today.sets"))}<input id="ed-sets" data-ed="sets" type="number" inputmode="numeric" autocomplete="off" min="1" max="8" value="${esc(ed.sets)}"></label>
+      <label>${esc(t("today.minReps"))}<input id="ed-lo" data-ed="lo" type="number" inputmode="numeric" autocomplete="off" min="1" value="${esc(ed.lo)}"></label>
+      <label>${esc(t("today.maxReps"))}<input id="ed-hi" data-ed="hi" type="number" inputmode="numeric" autocomplete="off" min="1" value="${esc(ed.hi)}"></label>
     </div>
     ${S.sample ? `<div class="stack" style="gap:6px">
       <label>${esc(t("ed.whyLabel"))}<input id="ed-why" data-ed="why" value="${esc(ed.why)}" placeholder="${esc(t("ed.whyPh"))}"></label>
       <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${esc(ed.aiBusy ? t("ed.aiBusy") : t("ed.aiAsk"))}</button></div>
       ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${canonExName(ed.name)===canonExName(a.name)?"border-color:var(--accent)":""}"><b class="small">${esc(exName(a.name))} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
-      ${ed.aiErr ? `<p class="small" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
+      ${ed.aiErr ? `<p class="small" role="alert" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
     </div>` : ""}
     <div><span class="small muted">${esc(t("ed.scopeLabel"))}</span><div class="row" style="margin-top:4px">
-      <button class="chip ${ed.scope==="once"?"on":""}" data-act="ed-scope" data-v="once">${esc(ed.rec ? t("ed.scopeRecOnce") : t("ed.scopeToday"))}</button>
-      <button class="chip ${ed.scope==="always"?"on":""}" data-act="ed-scope" data-v="always">${esc(t("ed.scopeAlways", {day:PROGRAM[dayKey]?progLabel(dayKey):""}))}</button></div></div>
+      <button class="chip ${ed.scope==="once"?"on":""}" aria-pressed="${ed.scope==="once"}" data-act="ed-scope" data-v="once">${esc(ed.rec ? t("ed.scopeRecOnce") : t("ed.scopeToday"))}</button>
+      <button class="chip ${ed.scope==="always"?"on":""}" aria-pressed="${ed.scope==="always"}" data-act="ed-scope" data-v="always">${esc(t("ed.scopeAlways", {day:PROGRAM[dayKey]?progLabel(dayKey):""}))}</button></div></div>
     <div class="grid2"><button class="btn primary" data-act="ed-save">${esc(t("common.save"))}</button>${ed.rec ? "" : `<button class="btn" data-act="ed-reset">${esc(t("ed.reset"))}</button>`}</div>
     <p class="small muted">${esc(ed.rec ? t("ed.recHint") : t("ed.planHint"))}</p>
   </div>`;
@@ -2281,19 +2292,19 @@ function viewFood(){
   const defType = hour < 10 ? "早餐" : hour < 14 ? "午餐" : hour < 17 ? "加餐" : "晚餐";
   const isFuture = date > todayStr();
   const suffix = isFuture ? t("food.previewSuffix") : date < todayStr() ? t("food.pastSuffix") : "";
-  return dateBar() + `<div class="stack">
+  return `<h1 class="sr">${esc(t("tab.food"))} · ${esc(fmtDate(date))}</h1>` + dateBar() + `<div class="stack">
   <section class="card"><div class="row between"><h2>${esc(t("food.targetsTitle", {suffix}))}</h2><span class="small muted">${esc(stageLabel(tg.st))}</span></div>${macroBars(tg, m)}
     <p class="small muted">${esc(t("food.targetsHint"))}</p></section>
   <section class="card"><h2>${esc(t("food.logTitle"))}</h2>
-    <div class="row">${MEAL_TYPES.map(x => `<label class="checks" style="display:inline-flex"><input type="radio" name="mtype" value="${x}" ${x===(S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defType)?"checked":""}><span>${esc(mealTypeLabel(x))}</span></label>`).join("")}</div>
+    <div class="row" role="radiogroup" aria-label="${esc(t("food.mealTypeAria"))}">${MEAL_TYPES.map(x => `<label class="checks" style="display:inline-flex"><input type="radio" name="mtype" value="${x}" ${x===(S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defType)?"checked":""}><span>${esc(mealTypeLabel(x))}</span></label>`).join("")}</div>
     <label>${esc(t("food.photoLabel"))}${(S.pendingPhotos || []).length < 4 ? `<input id="m-photo" type="file" accept="image/*" multiple>` : `<span class="small muted">${esc(t("food.maxPhotos"))}</span>`}</label>
-    ${(S.pendingPhotos || []).length ? `<div class="previews">${S.pendingPhotos.map((f, i) => `<figure style="margin:0;position:relative;flex:1 1 0;max-width:48%"><img class="preview" src="${f.url}" alt="${esc(t("food.photoAlt", {n:i+1}))}" style="max-width:100%"><button class="chip" data-act="unpick" data-v="${i}" style="position:absolute;top:4px;right:4px;padding:0 8px" aria-label="${esc(t("food.removePhotoAria"))}">×</button></figure>`).join("")}</div>` : ""}
+    ${(S.pendingPhotos || []).length ? `<div class="previews">${S.pendingPhotos.map((f, i) => `<figure style="margin:0;position:relative;flex:1 1 0;max-width:48%"><img class="preview" src="${f.url}" alt="${esc(t("food.photoAlt", {n:i+1}))}" style="max-width:100%"><button class="chip" data-act="unpick" data-v="${i}" style="position:absolute;top:4px;right:4px;padding:0" aria-label="${esc(t("food.removePhotoAria"))}">×</button></figure>`).join("")}</div>` : ""}
     <label>${esc(t("food.whatAte"))}<textarea id="m-text" placeholder="${esc(t("food.whatAtePh"))}">${esc(lsGet("bj-mtext",""))}</textarea></label>
     <div class="row"><span class="small muted">${esc(t("food.macrosMode"))}</span>
-      <button class="chip ${mode==="ai"?"on":""}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>${esc(t("food.aiEst"))}</button>
-      <button class="chip ${mode==="manual"?"on":""}" data-act="mmode" data-v="manual">${esc(t("food.manual"))}</button></div>
+      <button class="chip ${mode==="ai"?"on":""}" aria-pressed="${mode==="ai"}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>${esc(t("food.aiEst"))}</button>
+      <button class="chip ${mode==="manual"?"on":""}" aria-pressed="${mode==="manual"}" data-act="mmode" data-v="manual">${esc(t("food.manual"))}</button></div>
     ${mode === "manual" ? `<div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      ${MF.map(([k,lk]) => `<label>${esc(t(lk))}<input id="mf-${k}" data-mf="${k}" type="number" inputmode="decimal" value="${esc(S.mfill?.[k] ?? "")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}</div>` : ""}
+      ${MF.map(([k,lk]) => `<label>${esc(t(lk))}<input id="mf-${k}" data-mf="${k}" type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" autocomplete="off" value="${esc(S.mfill?.[k] ?? "")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}</div>` : ""}
     <button class="btn primary block" data-act="add-meal" data-v="${mode}" ${S.busy.addMeal?"disabled":""}>${esc(S.busy.addMeal ? t("food.saving") : mode === "ai" ? t("food.saveAndAi") : t("common.save"))}</button>
     <p class="small muted">${esc(mode === "ai" ? t("food.aiModeHint") : t("food.manualModeHint"))}</p>
     ${S.assets ? "" : `<p class="small muted">${esc(t("food.localPhotoHint"))}</p>`}
@@ -2308,7 +2319,7 @@ function mealCard(m){
   const img = safeBlobId(m.photo) ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(safeImage(m.thumb))}" alt="${esc(t("food.mealPhotoAlt", {type:mealTypeLabel(m.type)}))}" data-photo-fallback="primary">` : (safeImage(S.files[m.id]?.url) ? `<img class="ph" src="${esc(safeImage(S.files[m.id].url))}" alt="">` : safeImage(m.thumb) ? `<img class="ph" src="${esc(safeImage(m.thumb))}" alt="">` : `<div class="ph">${esc(t("food.noPhoto"))}</div>`);
   const confirm = S.confirmDel === m.id;
   const visionText = photoCount(m) > 1 ? t("food.visionMulti", {n:photoCount(m)}) : m.photo ? t("food.visionPhoto") : t("food.visionText");
-  return `<div class="meal">${img}<div class="body">
+  return `<div class="meal" role="group" aria-label="${esc(mealTypeLabel(m.type) + (m.time ? " " + m.time : ""))}">${img}<div class="body">
     <div class="row between"><select data-mtype-of="${esc(m.id)}" aria-label="${esc(t("food.changeMealType"))}" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(mealTypeLabel(x))}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
     ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}
     ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">${esc(t("food.beforeLeft"))}</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${safeBlobId(p.id) ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(safeImage(p.thumb))}" alt="${esc(moreTagLabel(p.tag) || t("food.photoWord"))}" data-photo-fallback="extra">` : safeImage(p.thumb) ? `<img src="${esc(safeImage(p.thumb))}" alt="">` : ``}${moreTagLabel(p.tag) ? `<span>${esc(moreTagLabel(p.tag))}</span>` : ""}<button class="link small" data-act="del-more" data-v="${esc(m.id)}|${i}">${esc(S.confirmDel === m.id + "|" + i ? t("food.delMoreConfirm") : t("food.delMore"))}</button></figure>` : "").join("")}</div>` : ""}
@@ -2316,7 +2327,7 @@ function mealCard(m){
     ${moreOf(m).length && e.kcal != null && (e.photos || 1) < photoCount(m) ? `<p class="tip small">${esc(t("food.reestMoreTip"))}</p>` : ""}
     ${e.items?.length ? `<p class="small muted">${joinList(e.items.map(x => esc(x.name + (x.amount?" "+x.amount:""))))}</p>` : ""}
     <div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      ${[["kcal","macro.kcal"],["protein","macro.protein"],["carbs","macro.carbs"],["fat","macro.fat"]].map(([k,lk]) => `<label>${esc(t(lk))}<input id="me-${esc(m.id)}-${k}" data-meal="${esc(m.id)}" data-k="${k}" type="number" inputmode="decimal" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
+      ${[["kcal","macro.kcal"],["protein","macro.protein"],["carbs","macro.carbs"],["fat","macro.fat"]].map(([k,lk]) => `<label>${esc(t(lk))}<input id="me-${esc(m.id)}-${k}" data-meal="${esc(m.id)}" data-k="${k}" type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" autocomplete="off" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
     </div>
     ${e.calc ? `<p class="small muted">${esc(e.by==="label"?t("food.calcByLabel"):t("food.calcBasis"))}${getLang()==="en"?": ":"："}${esc(fmtLabelCalc(e.calc, e.by))}</p>` : ""}
     ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${esc(e.label ? t("food.ocrLabel") : t("food.ocrNoLabel"))}</p>` : ""}
@@ -2658,18 +2669,18 @@ function guessAmount(text){ const mm = String(text||"").match(/(\d+(?:\.\d+)?)\s
 function labelForm(m){
   const L = S.label;
   const res = labelCalc(L);
-  return `<div class="tip stack" style="gap:8px">
+  return `<div class="tip stack" role="group" aria-label="${esc(t("label.title"))}" style="gap:8px">
     <div class="row between"><b class="small">${esc(t("label.title"))}</b><button class="link" data-act="label-close">${esc(t("common.collapse"))}</button></div>
     <div class="row"><span class="small muted">${esc(t("label.base"))}</span>
-      <button class="chip ${L.base==="100"?"on":""}" data-act="label-base" data-v="100">${esc(t("label.per100"))}</button>
-      <button class="chip ${L.base==="serv"?"on":""}" data-act="label-base" data-v="serv">${esc(t("label.perServ"))}</button></div>
+      <button class="chip ${L.base==="100"?"on":""}" aria-pressed="${L.base==="100"}" data-act="label-base" data-v="100">${esc(t("label.per100"))}</button>
+      <button class="chip ${L.base==="serv"?"on":""}" aria-pressed="${L.base==="serv"}" data-act="label-base" data-v="serv">${esc(t("label.perServ"))}</button></div>
     <div class="grid2">
-      <label>${esc(t("label.energy"))}<input id="lb-e" data-lb="e" type="number" inputmode="decimal" value="${esc(L.e)}" placeholder="370"></label>
+      <label>${esc(t("label.energy"))}<input id="lb-e" data-lb="e" type="number" inputmode="decimal" autocomplete="off" value="${esc(L.e)}" placeholder="370"></label>
       <label>${esc(t("label.unit"))}<select id="lb-u" data-lb="u"><option value="kJ" ${L.u==="kJ"?"selected":""}>${esc(t("label.kj"))}</option><option value="kcal" ${L.u==="kcal"?"selected":""}>${esc(t("label.kcal"))}</option></select></label>
-      <label>${esc(t("label.protein"))}<input id="lb-p" data-lb="p" type="number" inputmode="decimal" value="${esc(L.p)}" placeholder="2.8"></label>
-      <label>${esc(t("label.fat"))}<input id="lb-f" data-lb="f" type="number" inputmode="decimal" value="${esc(L.f)}" placeholder="3.1"></label>
-      <label>${esc(t("label.carbs"))}<input id="lb-c" data-lb="c" type="number" inputmode="decimal" value="${esc(L.c)}" placeholder="12.2"></label>
-      <label>${esc(L.base==="100"?t("label.amt100"):t("label.amtServ"))}<input id="lb-amt" data-lb="amt" type="number" inputmode="decimal" value="${esc(L.amt)}" placeholder="${L.base==="100"?"220":"1"}"></label>
+      <label>${esc(t("label.protein"))}<input id="lb-p" data-lb="p" type="number" inputmode="decimal" autocomplete="off" value="${esc(L.p)}" placeholder="2.8"></label>
+      <label>${esc(t("label.fat"))}<input id="lb-f" data-lb="f" type="number" inputmode="decimal" autocomplete="off" value="${esc(L.f)}" placeholder="3.1"></label>
+      <label>${esc(t("label.carbs"))}<input id="lb-c" data-lb="c" type="number" inputmode="decimal" autocomplete="off" value="${esc(L.c)}" placeholder="12.2"></label>
+      <label>${esc(L.base==="100"?t("label.amt100"):t("label.amtServ"))}<input id="lb-amt" data-lb="amt" type="number" inputmode="decimal" autocomplete="off" value="${esc(L.amt)}" placeholder="${L.base==="100"?"220":"1"}"></label>
     </div>
     <p class="small" id="lb-res">${esc(res ? t("label.res", res) : t("label.resEmpty"))}</p>
     <button class="btn primary" data-act="label-save" data-v="${esc(m.id)}">${esc(t("label.apply"))}</button>
@@ -2967,12 +2978,12 @@ function actionBtn(rawA, src, fid, idx){
   if (S.adopt === key) {
     const {preview, hint} = adoptPreview(a);
     const isEx = a.kind === "swap" || a.kind === "edit";
-    return `<div class="chooser"><div class="prev">${esc(preview)}</div>${hint ? `<p class="small muted">${esc(hint)}</p>` : ""}<div class="row">${isEx
+    return `<div class="chooser" role="group" aria-label="${esc(_tr("fb.chooserAria"))}"><div class="prev">${esc(preview)}</div>${hint ? `<p class="small muted">${esc(hint)}</p>` : ""}<div class="row">${isEx
       ? `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"today"}))}'>${esc(_tr("fb.scopeToday"))}</button><button class="btn small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.scopeLong"))}</button>`
       : `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.confirmAdopt"))}</button>`}<button class="btn small" data-act="adopt-decline" data-v='${pv}'>${esc(_tr("fb.decline"))}</button><button class="link small" data-act="adopt-cancel">${esc(_tr("common.cancel"))}</button></div></div>`;
   }
-  if (declined) return `<div><span class="chip muted">${esc(_tr("fb.declinedChip"))}</span> <button class="link small" data-act="adopt-open" data-v='${pv}'>${esc(_tr("fb.rechoose"))}</button></div>`;
-  return `<div><button class="chip on" data-act="adopt-open" data-v='${pv}'>${esc(label)}</button></div>`;
+  if (declined) return `<div><span class="chip muted">${esc(_tr("fb.declinedChip"))}</span> <button class="link small" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(_tr("fb.rechoose"))}</button></div>`;
+  return `<div><button class="chip on" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(label)}</button></div>`;
 }
 function normAction(raw){
   if (!raw || typeof raw !== "object") return null;
@@ -3508,14 +3519,14 @@ function viewHostedAccount(){
       <label>${esc(t("account.oldPw"))}<input id="pw-old" type="password" autocomplete="current-password"></label>
       <label>${esc(t("account.newPw"))}<input id="pw-new" type="password" autocomplete="new-password"></label>
       <label>${esc(t("account.newPw2"))}<input id="pw-new2" type="password" autocomplete="new-password"></label>
-      ${pw.msg ? `<p class="small" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
+      ${pw.msg ? `<p class="small" role="alert" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${esc(pw.busy ? t("food.saving") : t("common.save"))}</button><button class="btn" data-act="pw-cancel">${esc(t("common.cancel"))}</button></div></div>`
     : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span><span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
     <p class="small muted">${esc(t("account.privateHint"))}</p>
     <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><a class="btn" href="/privacy.html">${esc(t("account.privacy"))}</a></div>
     <details><summary>${esc(t("account.deleteSummary"))}</summary><p class="tip warn">${esc(t("account.deleteWarn"))}</p>
     <label>${esc(t("account.deletePw"))}<input id="delete-password" type="password" autocomplete="current-password"></label>
-    <label><input id="delete-confirm" type="checkbox">${esc(t("account.deleteConfirm"))}</label>
+    <label class="checkline"><input id="delete-confirm" type="checkbox"><span>${esc(t("account.deleteConfirm"))}</span></label>
     <button class="btn" data-act="delete-account">${esc(t("account.deleteBtn"))}</button></details></section>`;
 }
 function viewAccount(){ return viewHostedAccount(); }
@@ -3562,6 +3573,18 @@ document.addEventListener("error", ev => {
   if (img.dataset.fb) img.src = img.dataset.fb;
   else if (kind === "primary") img.replaceWith(Object.assign(document.createElement("div"), {className:"ph", textContent:t("food.photoUnavailable")}));
 }, true);
+function focusEl(el){ if (!el?.focus) return; try { el.focus({preventScroll:true}); } catch { try { el.focus(); } catch {} } }
+function focusAdoptTrigger(k){
+  const list = typeof document !== "undefined" && typeof document.querySelectorAll === "function" ? document.querySelectorAll('[data-act="adopt-open"]') : [];
+  for (const el of list) if (el.dataset?.key === k) { focusEl(el); return; }
+}
+document.addEventListener("keydown", ev => {
+  if (ev.key !== "Escape") return;
+  if (S.adopt) { const k = S.adopt; S.adopt = null; render(); focusAdoptTrigger(k); ev.preventDefault(); }
+  else if (S.ed) { const i = S.ed.i; S.ed = null; render(); focusEl($(`[data-act="ed-open"][data-v="${i}"]`)); ev.preventDefault(); }
+  else if (S.label) { S.label = null; render(); ev.preventDefault(); }
+  else if (S.pwEdit && !S.pwEdit.busy) { S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); ev.preventDefault(); }
+});
 document.addEventListener("click", async ev => {
   const b = ev.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act, v = b.dataset.v;
@@ -3573,12 +3596,12 @@ document.addEventListener("click", async ev => {
     case "tab": S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
     case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
     case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
-    case "edit": S.editing = true; render(); window.scrollTo(0,0); break;
-    case "cancel-edit": S.editing = false; render(); break;
+    case "edit": S.editing = true; render(); window.scrollTo(0,0); focusEl($("#f-age")); break;
+    case "cancel-edit": S.editing = false; render(); focusEl($('[data-act="edit"]')); break;
     case "slot": updateDay(S.date, d => { d.slot = v; }).catch(()=>{}); break;
     case "cu-add": { const c = CORE.find(x => x[0] === v); updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = [...(d.custom.ex || []), c ? {name:c[0], sets:c[1], lo:c[2], hi:c[3]} : {name:"", sets:3, lo:10, hi:15}]; if (!d.override) d.override = "custom"; }).catch(()=>{}); break; }
-    case "pw-edit": S.pwEdit = {}; render(); break;
-    case "pw-cancel": S.pwEdit = null; render(); break;
+    case "pw-edit": S.pwEdit = {}; render(); focusEl($("#pw-old")); break;
+    case "pw-cancel": S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); break;
     case "pw-save": {
       const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
       if (!o) { S.pwEdit = {msg:t("account.errOldPw")}; render(); break; }
@@ -3703,8 +3726,8 @@ document.addEventListener("click", async ev => {
     }
     case "ai-run": runAI(); break;
     case "ai-stop": S.ai?.ctl?.abort(); break;
-    case "adopt-open": { const p = JSON.parse(v); S.adopt = p.key; S.undoConflict = null; render(); break; }
-    case "adopt-cancel": S.adopt = null; render(); break;
+    case "adopt-open": { const p = JSON.parse(v); S.adopt = p.key; S.undoConflict = null; render(); focusEl($(".chooser button")); break; }
+    case "adopt-cancel": { const k = S.adopt; S.adopt = null; render(); focusAdoptTrigger(k); break; }
     case "adopt-confirm": await applyAction(JSON.parse(v)); break;
     case "adopt-decline": await declineAction(JSON.parse(v)); break;
     case "undo-adjust": await undoAdjust(v); break;
@@ -3722,7 +3745,7 @@ document.addEventListener("click", async ev => {
       try { S.library = await mutate("app/library", cur => { const l = cur || {links:{}}; l.links = {...(l.links||{})}; if (url) l.links[v] = url; else delete l.links[v]; return l; }); render(); toast(url ? t("toast.favSaved") : t("toast.favRemoved")); } catch (e) { saveErr(e); }
       break;
     }
-    case "label-open": { const m = (S.days[S.date]?.meals||[]).find(x => x.id === v); S.label = {id:v, base:"100", u:"kJ", e:"", p:"", f:"", c:"", amt:guessAmount(m?.text)}; render(); break; }
+    case "label-open": { const m = (S.days[S.date]?.meals||[]).find(x => x.id === v); S.label = {id:v, base:"100", u:"kJ", e:"", p:"", f:"", c:"", amt:guessAmount(m?.text)}; render(); focusEl($("#lb-e")); break; }
     case "label-close": S.label = null; render(); break;
     case "label-base": S.label.base = v; render(); break;
     case "label-save": {
@@ -3734,8 +3757,8 @@ document.addEventListener("click", async ev => {
       try { await updateDay(S.date, d => { const m = d.meals.find(x => x.id === v); if (m) { m.est = {...(m.est||{}), ...patch}; delete m.est.photoUsed; } }); toast(t("toast.labelUpdated")); } catch {}
       break;
     }
-    case "ed-open": openEditor(+v); render(); break;
-    case "ed-cancel": S.ed = null; render(); break;
+    case "ed-open": openEditor(+v); render(); focusEl($("#ed-name")); break;
+    case "ed-cancel": { const i = S.ed?.i; S.ed = null; render(); if (i != null) focusEl($(`[data-act="ed-open"][data-v="${i}"]`)); break; }
     case "ed-pick": { const m = exMeta(v); Object.assign(S.ed, {name:exName(v)}, m ? {lo:m.lo, hi:m.hi} : {}); render(); break; }
     case "ed-ai": aiSuggest(); break;
     case "ed-ai-pick": { const a = S.ed.ai[+v]; Object.assign(S.ed, {name:exName(a.name), sets:a.sets, lo:a.lo, hi:a.hi}); render(); break; }
@@ -3995,3 +4018,5 @@ function rescueDrafts(){
   if (found.length) toast(t("toast.rescueDrafts", {dates: joinList([...new Set(found)].map(fmtShortDate))}), 8000);
 }
 </script>
+</body>
+</html>
