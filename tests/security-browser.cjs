@@ -15,7 +15,7 @@ const http=require('node:http');
   server=spawn(process.execPath,['server.js'],{env,stdio:['ignore','pipe','pipe']});let errors='';server.stderr.on('data',d=>errors+=d);
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('startup timeout '+errors)),8000);server.stdout.once('data',()=>{clearTimeout(timer);resolve();});server.once('error',reject);server.once('exit',()=>{clearTimeout(timer);reject(new Error(errors));});});
   browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch({executablePath:process.env.BROWSER==='webkit'?undefined:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
-  const page=await browser.newPage({viewport:{width:390,height:844}}),failures=[],external=[];
+  const page=await browser.newPage({viewport:{width:390,height:844},locale:'zh-CN'}),failures=[],external=[];
   const violations=[];
   await page.exposeFunction('recordCSP', value=>violations.push(value));
   await page.addInitScript(()=>document.addEventListener('securitypolicyviolation', e=>window.recordCSP(e.violatedDirective+': '+e.blockedURI)));

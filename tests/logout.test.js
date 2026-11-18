@@ -113,13 +113,13 @@ test('syncDraft and rescueDrafts remain byte-identical to origin/main', () => {
     '  if (!S.profile) return;',
     '  const found = [];',
     '  for (const [k, d] of Object.entries(S.drafts || {})) {',
-    '    if (!d?.exercises?.some(e => e.sets?.some(t => t.r !== "" || t.w !== ""))) continue;',
+    '    if (!d?.exercises?.some(e => e.sets?.some(s => s.r !== "" || s.w !== ""))) continue;',
     '    const date = k.split("|")[0];',
     '    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || S.days[date]?.workout?.done) continue;',
     '    found.push(date);',
     '    updateDay(date, x => { if (!x.workout?.done && !x.workoutDraft) x.workoutDraft = {...clone(d), key:d.key, updatedAt:new Date().toISOString()}; }, {quiet:true, silent:true}).catch(() => {});',
     '  }',
-    '  if (found.length) toast(`找到 ${[...new Set(found)].map(d => fmtDate(d).split(" ")[0]).join("、")} 填了但没保存的训练，打开那天点“完成训练，保存”即可`, 8000);',
+    '  if (found.length) toast(t("toast.rescueDrafts", {dates: joinList([...new Set(found)].map(fmtShortDate))}), 8000);',
     '}'
   ].join('\n');
   assert.equal(extractFunction(fullScript, 'function syncDraft('), expectedSyncDraft);

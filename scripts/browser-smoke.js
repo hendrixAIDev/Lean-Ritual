@@ -97,7 +97,8 @@ async function attachGuards(page, base, label) {
       state.cspViolations.push(`[${label}] ${text}`);
       return;
     }
-    if (state.allowConsoleNetErr && (/Failed to load resource/.test(text) || /连不上服务器/.test(text))) return;
+    if (m.location()?.url?.endsWith('/favicon.ico') && /status of 404/.test(text)) return;
+    if (state.allowConsoleNetErr && (/Failed to load resource/.test(text) || /连不上服务器|Cannot reach server/.test(text))) return;
     if (state.allowOcrWasmStderr && (/^Warning: Parameter not found:|^Estimating resolution as /.test(text))) return;
     state.consoleErrors.push(`[${label}] ${text}`);
   });
@@ -117,7 +118,7 @@ async function screenshotOnFailure(page, name) {
 
 async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
   const srv = await startLocalServer({ OPENROUTER_API_KEY: '' });
-  const context = await browser.newContext({ viewport, acceptDownloads: true });
+  const context = await browser.newContext({ viewport, locale: 'zh-CN', acceptDownloads: true });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const guards = await attachGuards(page, srv.base, label);
@@ -259,7 +260,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.getByText('已完成', { exact: true }).waitFor();
 
     // 7. Password change; password reset via emailed link; old sessions invalidated
-    const ctx2 = await browser.newContext({ viewport });
+    const ctx2 = await browser.newContext({ viewport, locale: 'zh-CN' });
     const page2 = await ctx2.newPage();
     await page2.goto(srv.base + '/login.html');
     await page2.locator('#e').fill(email);
@@ -516,7 +517,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     OPENROUTER_API_KEY: 'local-test-provider-key',
     OPENROUTER_BASE: `http://127.0.0.1:${providerPort}/v1`
   });
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const guards = await attachGuards(page, srv.base, 'ai-ocr-smoke');
@@ -629,6 +630,171 @@ async function runReadGuardOcrAndAiSmoke(browser) {
   }
 }
 
+async function assertZeroChineseVisible(page, where) {
+  const leaks = await page.evaluate(() => {
+    const cjk = /[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/;
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll('[data-lang="zh"], [data-act="lang"][data-v="zh"], script, style, datalist').forEach(n => n.remove());
+    const out = [];
+    const txt = (clone.innerText || clone.textContent || '').trim();
+    for (const token of txt.split(/\s+/)) {
+      if (cjk.test(token)) out.push('text:' + token);
+    }
+    return out;
+  });
+  assert.deepEqual(leaks, [], `Unexpected Chinese UI text on ${where}: ${leaks.join(', ')}`);
+}
+
+async function runEnglishJourney(browser, jpegFixture) {
+  const srv = await startLocalServer({ OPENROUTER_API_KEY: '' });
+  const viewport = { width: 390, height: 844 };
+  const context = await browser.newContext({ viewport, locale: 'en-US', acceptDownloads: true });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  const guards = await attachGuards(page, srv.base, 'mobile-en');
+
+  try {
+    const email = 'journey-en@example.com';
+    const pw = 'english-strong-pass-1234';
+
+    // 1. Default en-US locale opens login.html in English; manual switch & ?lang= override work
+    await page.goto(srv.base + '/login.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.equal(await page.locator('#go').textContent(), 'Sign in');
+    await assertZeroChineseVisible(page, 'login.html (default en-US)');
+
+    await page.locator('#lang-switch [data-lang="zh"]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-CN');
+    assert.equal(await page.locator('#go').textContent(), '登录');
+
+    await page.goto(srv.base + '/login.html?lang=en');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.equal(await page.evaluate(() => localStorage.getItem('bj-lang')), 'en');
+
+    // 2. Invite -> register -> verify -> wrong password error -> sign in (all in English)
+    const inv = srv.invite(email);
+    await page.goto(inv.url);
+    await page.locator('#n').fill('Alex Mercer');
+    await page.locator('#p').fill(pw);
+    await page.locator('#go').click();
+    await page.getByText('Check your email and verify your address before signing in.', { exact: true }).waitFor();
+
+    const verifyMail = readMails(srv.dir).find(m => m.kind === 'verify' && m.to === email);
+    assert.ok(verifyMail);
+    await page.goto(verifyMail.url);
+    await page.getByText('Email verified. Please sign in.', { exact: true }).waitFor();
+
+    guards.allowConsoleNetErr = true;
+    await page.locator('#e').fill(email);
+    await page.locator('#p').fill('wrong-password-999');
+    await page.locator('#go').click();
+    await page.getByText('Incorrect email or password.', { exact: true }).waitFor();
+    guards.allowConsoleNetErr = false;
+
+    await page.locator('#p').fill(pw);
+    await page.locator('#go').click();
+    await page.locator('#setup').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    await assertZeroChineseVisible(page, 'setup (en)');
+
+    // 3. Complete onboarding -> profile.lang persisted as 'en'
+    await page.locator('#f-age').fill('29');
+    await page.locator('#f-height').fill('178');
+    await page.locator('#f-weight').fill('73.0');
+    const dow = new Date().getDay();
+    const cb = page.locator(`#setup input[name="trainDays"][value="${dow}"]`);
+    if (!(await cb.isChecked())) await cb.locator('..').click();
+
+    const profileSaved = page.waitForResponse(r => committedDoc(r, p => p.endsWith('/app/profile')));
+    await page.getByRole('button', { name: 'Build my plan', exact: true }).click();
+    await profileSaved;
+    await page.locator('nav#tabs').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => S.profile?.lang), 'en');
+
+    // 4. Today tab: English date format, check-in, workout logging with canonical stored keys
+    const dateText = await page.locator('.datebar .d').textContent();
+    assert.match(dateText, /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d+$/);
+    await assertZeroChineseVisible(page, 'Today tab');
+
+    await page.locator('#c-weight').fill('72.8');
+    await page.locator('#c-sleep').fill('7.8');
+    const checkinSaved = page.waitForResponse(r => committedDoc(r, p => p.includes('/days/')));
+    await page.locator('[data-act="save-checkin"]').click();
+    await checkinSaved;
+    await page.getByText('Logged', { exact: true }).waitFor();
+
+    await page.locator('#w-0-0-w').fill('60');
+    await page.locator('#w-0-0-r').fill('6');
+    const workoutSaved = page.waitForResponse(r => committedDoc(r, p => p.includes('/days/')));
+    await page.locator('[data-act="save-workout"]').click();
+    await workoutSaved;
+    await page.getByText('Completed', { exact: true }).waitFor();
+
+    const storedExName = await page.evaluate(() => S.days[S.date]?.workout?.exercises?.[0]?.name);
+    assert.equal(storedExName, '上斜杠铃卧推');
+
+    // 5. Meals, Log, Feedback, and Me tabs render cleanly in English with zero Chinese UI strings
+    await page.locator('#tabs [data-act="tab"][data-v="food"]').click();
+    await page.locator('#m-photo').setInputFiles({ name: 'en-meal.jpg', mimeType: 'image/jpeg', buffer: jpegFixture });
+    await page.locator('.previews img.preview').waitFor({ state: 'visible' });
+    await page.locator('#m-text').fill('Grilled salmon & rice');
+    await page.locator('#mf-kcal').fill('620');
+    await page.locator('#mf-protein').fill('46');
+    await page.locator('[data-act="add-meal"]').click();
+    await page.getByText('Grilled salmon & rice', { exact: true }).waitFor();
+    await assertZeroChineseVisible(page, 'Meals tab');
+
+    for (const tab of ['log', 'fb', 'me']) {
+      await page.locator(`#tabs [data-act="tab"][data-v="${tab}"]`).click();
+      await assertZeroChineseVisible(page, `${tab} tab`);
+    }
+
+    // 6. Cross-device profile.lang override: login from a zh-CN browser overrides localStorage to profile.lang ('en')
+    const ctxZh = await browser.newContext({ viewport, locale: 'zh-CN' });
+    const pageZh = await ctxZh.newPage();
+    const guardsZh = await attachGuards(pageZh, srv.base, 'cross-device-lang');
+    try {
+      await pageZh.goto(srv.base + '/login.html');
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'zh-CN');
+      await pageZh.evaluate(() => localStorage.setItem('bj-lang', 'zh'));
+      await pageZh.locator('#e').fill(email);
+      await pageZh.locator('#p').fill(pw);
+      await pageZh.locator('#go').click();
+      await pageZh.locator('nav#tabs').waitFor({ state: 'visible' });
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'en');
+      assert.equal(await pageZh.evaluate(() => localStorage.getItem('bj-lang')), 'en');
+      await assertZeroChineseVisible(pageZh, 'cross-device Me/Today after login');
+
+      // Switch to 中文 in Me -> updates profile.lang to 'zh'
+      await pageZh.locator('#tabs [data-act="tab"][data-v="me"]').click();
+      const langSaved = pageZh.waitForResponse(r => committedDoc(r, p => p.endsWith('/app/profile')));
+      await pageZh.locator('[data-act="lang"][data-v="zh"]').click();
+      await langSaved;
+      assert.equal(await pageZh.evaluate(() => document.documentElement.lang), 'zh-CN');
+      assert.equal(await pageZh.evaluate(() => S.profile?.lang), 'zh');
+
+      assert.deepEqual(guardsZh.cspViolations, []);
+      assert.deepEqual(guardsZh.pageErrors, []);
+      assert.deepEqual(guardsZh.consoleErrors, []);
+      assert.deepEqual(guardsZh.external, []);
+    } finally {
+      await ctxZh.close();
+    }
+
+    assert.deepEqual(guards.cspViolations, []);
+    assert.deepEqual(guards.pageErrors, []);
+    assert.deepEqual(guards.consoleErrors, []);
+    assert.deepEqual(guards.external, []);
+    console.log('PASS [mobile-en]: English locale detection, manual switch, ?lang= override, full onboarding/workout/meal journey, zero zh UI leaks, and cross-device profile.lang sync');
+  } catch (err) {
+    await screenshotOnFailure(page, 'journey-mobile-en');
+    throw err;
+  } finally {
+    await context.close();
+    await srv.stop();
+  }
+}
+
 (async () => {
   const executablePath = process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
   const browser = await chromium.launch({
@@ -643,6 +809,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await runFullStandaloneJourney(browser, 'mobile', { width: 390, height: 844 }, jpegFixture);
     await runFullStandaloneJourney(browser, 'desktop', { width: 1280, height: 800 }, jpegFixture);
     await runReadGuardOcrAndAiSmoke(browser);
+    await runEnglishJourney(browser, jpegFixture);
   } finally {
     await browser.close();
   }
