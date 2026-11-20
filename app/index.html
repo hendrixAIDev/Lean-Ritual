@@ -1567,11 +1567,20 @@ function formatSaveErr(e){
   const msg = e?.message || (code && hasOwn(API_ERR_ZH, code) ? API_ERR_ZH[code] : "");
   return msg ? "保存失败：" + msg : "保存失败（" + (code || "网络问题") + "），请稍后再试";
 }
+const EXPECTED_FLOW_ERRS = new Set(["cancelled", "session_expired", "network", "sampling_disabled", "not_granted", "rate_limited", "doc_quota", "doc_rate_limited"]);
+function reportFlowErr(name, e){
+  try {
+    const code = typeof e?.code === "string" ? e.code.trim() : "";
+    if (code && EXPECTED_FLOW_ERRS.has(code)) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (typeof window !== "undefined") window.ritualErrorReporter?.report({ name, message: code || e?.name || "flow_failed", source: "index.html" });
+  } catch {}
+}
 const queues = {};
 function write(path, data){
   const p = (queues[path] || Promise.resolve()).catch(()=>{}).then(() => S.store.set(path, data));
   queues[path] = p;
-  return p.catch(e => { toast(formatSaveErr(e)); throw e; });
+  return p.catch(e => { reportFlowErr("SaveError", e); toast(formatSaveErr(e)); throw e; });
 }
 /* 数据规则：只加字段不删字段；读到旧数据先补默认值；写入时保留所有未知字段 */
 const SCHEMA_VERSION = 2;
@@ -1623,7 +1632,7 @@ function mutate(path, fn){
     return next;
   });
 }
-const saveErr = e => toast(formatSaveErr(e));
+const saveErr = e => { reportFlowErr("SaveError", e); toast(formatSaveErr(e)); };
 const daySeq = {};
 async function updateDay(date, fn, opt = {}){
   const seq = (daySeq[date] = (daySeq[date] || 0) + 1);
@@ -2661,7 +2670,7 @@ async function estimateMeal(date, id, manual, prov){
     else if (imgs.length && !photoUsed && ocrRan) toast(t("toast.ocrNone"), 7000);
     else if (imgs.length && !photoUsed && prov) toast(t("toast.provText"), 6000);
     else if (imgs.length && !photoUsed) toast(t("toast.photoSendFail", {reason: (imgErr ? fmtImgErr(imgErr) : "") || (S.imgOK === false ? t("toast.photoFailOnce") : t("common.unknown"))}), 7000);
-  } catch (e) { console.warn("estimate failed", e); toast(sampleErr(e)); }
+  } catch (e) { console.warn("estimate failed", e); reportFlowErr("AIError", e); toast(sampleErr(e)); }
   finally { delete S.busy["meal-"+id]; render(); }
 }
 /* 按营养成分表手动换算：不依赖 AI */
@@ -3974,6 +3983,12 @@ document.addEventListener("toggle", ev => {
   el.open ? S.openCues.add(el.dataset.cue) : S.openCues.delete(el.dataset.cue);
 }, true);
 document.addEventListener("submit", ev => { if (ev.target.id === "setup") { ev.preventDefault(); submitSetup(ev.target); } });
+if (typeof window !== "undefined" && window.ritualErrorReporter) {
+  window.ritualErrorReporter.configure({
+    getPage: () => (!S.ready ? "boot" : !S.profile ? "setup" : (S.tab || "today")),
+    getLang: () => getLang()
+  });
+}
 
 /* ============ 启动 ============ */
 (async function boot(){

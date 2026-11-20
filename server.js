@@ -104,6 +104,10 @@ function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] o
 
 /* ---------- AI 代理 ---------- */
 const aiProxy = require("./lib/ai").createAIProxy(db, CFG);
+const clientErrors = require("./lib/client-errors").createClientErrors({
+  expectedOrigin: new URL(CFG.authBaseURL).origin,
+  releaseRevision
+});
 
 /* ---------- 静态文件 ---------- */
 // A missing/unreadable file must never crash the process: an unhandled stream
@@ -180,6 +184,11 @@ async function handle(req, res){
     return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
   }
   if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: !!CFG.orKey });
+  if (p === "/api/client-error") {
+    if (m !== "POST") throw httpErr(405, "method");
+    if (user) accountData.ensureActive(user.id);
+    return clientErrors.handle(req, res, { user, ip: clientIP(req), readBody });
+  }
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
     throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");

@@ -26,8 +26,9 @@ const must = (re, rep, label) => { if (!re.test(out)) throw new Error("build: æ‰
 must(/<link rel="preconnect" href="https:\/\/fonts\.googleapis\.com">\s*/, "", "fonts preconnect");
 must(/<link rel="stylesheet" href="https:\/\/fonts\.googleapis\.com[^>]*>\s*/, "", "fonts css");
 must(/https:\/\/cdn\.jsdelivr\.net\/npm\/heic2any@0\.0\.4\/dist\/heic2any\.min\.js/, "/vendor/heic2any.min.js", "heic2any");
+const errVersion = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname, "public/client-errors.js"))).digest("hex").slice(0, 16);
 const shimVersion = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(__dirname, "public/shim.js"))).digest("hex").slice(0, 16);
-must(/<script>/, `<script src="/shim.js?v=${shimVersion}"></script>\n<script>`, "script");
+must(/<script>/, `<script src="/client-errors.js?v=${errVersion}"></script>\n<script src="/shim.js?v=${shimVersion}"></script>\n<script>`, "script");
 if (!/^<!doctype html>/i.test(out.trimStart())) out = '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>\n' + out + "\n</body></html>\n";
 // A successful build must not ship missing runtime libraries.
 for (const asset of ["vendor/heic2any-worker.js", "vendor/heic2any.min.js", "ocr/tesseract.min.js", "ocr/worker.min.js",
