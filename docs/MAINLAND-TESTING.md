@@ -2,7 +2,28 @@
 
 Run after staging deployment with disposable accounts and non-sensitive photos. Jay coordinates testers; Codex diagnoses failures. No VPN, proxy acceleration or corporate tunnel during a mainland test. Also collect one overseas control result.
 
-## Coverage and result format
+**Forwardable tester kit (send as-is to invited testers):**
+- 中文版（主推）：[TESTER-GUIDE.zh-CN.md](TESTER-GUIDE.zh-CN.md)
+- English version: [TESTER-GUIDE.en.md](TESTER-GUIDE.en.md)
+
+## Results summary matrix (Carrier × City × Device × Result)
+
+Fill one row per tester run to track `LEA-16` coverage across carriers, peak/off-peak windows, physical iPhone HEIC, Android, desktop, QQ/163 email delivery, and overseas control.
+
+| Carrier / Network (VPN off) | Window (peak / off-peak) | City | Device / OS / Browser | Email (QQ / 163 / other · inbox or spam · delay) | Overall result (Pass / Partial / Fail) | Failed step(s) / latency / notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| China Mobile (cellular) | Evening peak | | | | | |
+| China Mobile (cellular / Wi-Fi) | Off-peak | | | | | |
+| China Unicom (cellular) | Evening peak | | | | | |
+| China Unicom (cellular / Wi-Fi) | Off-peak | | | | | |
+| China Telecom (cellular) | Evening peak | | | | | |
+| China Telecom (cellular / Wi-Fi) | Off-peak | | | | | |
+| Physical iPhone (Safari + HEIC) | | | | | | |
+| Android (Chrome / system) | | | | | | |
+| Desktop browser | | | | | | |
+| Overseas control | | | | | | |
+
+## Coverage and step-level log format
 
 Cover China Mobile, China Unicom and China Telecom where available, once in local evening peak and once off-peak. Include an actual iPhone with a HEIC photo, Android, and desktop browser. Record missing coverage explicitly.
 
