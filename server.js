@@ -137,7 +137,7 @@ function serveStatic(req, res, user){
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
     streamFile(f, res, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
-      "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=86400" });
+      "Cache-Control": (ext === ".html" || p === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
   });
 }
 
@@ -174,6 +174,9 @@ async function handle(req, res){
   securityHeaders(req, res);
   const url = new URL(req.url, "http://x"), p = url.pathname, m = req.method;
   if (p.startsWith("/api/auth/")) return authentication.handle(req, res);
+  if (p === "/api/client-error") {
+    return clientErrors.handle(req, res, { getUser: () => authentication.telemetryUser(req), ip: clientIP(req), readBody });
+  }
   const user = await authentication.sessionUser(req);
   // 改数据的请求必须带自定义头，挡掉跨站表单提交（CSRF）
   if (m !== "GET" && m !== "HEAD" && req.headers["x-bojin"] !== "1") throw httpErr(403, "csrf", "请求来源不对");
@@ -184,11 +187,6 @@ async function handle(req, res){
     return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
   }
   if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: !!CFG.orKey });
-  if (p === "/api/client-error") {
-    if (m !== "POST") throw httpErr(405, "method");
-    if (user) accountData.ensureActive(user.id);
-    return clientErrors.handle(req, res, { user, ip: clientIP(req), readBody });
-  }
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
     throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");

@@ -6,66 +6,47 @@
   "use strict";
 
   const ENDPOINT = "/api/client-error";
-  const MAX_MESSAGE_LEN = 300;
   const MAX_PER_SESSION = 10;
   const SESSION_KEY = "bj-err-count";
-  const CONTROL_RE = /[\x00-\x1f\x7f\u2028\u2029]+/g;
   const ALLOWED_PAGES = new Set([
     "today", "food", "log", "fb", "me", "setup", "boot",
     "login", "app", "privacy", "guide", "unknown"
   ]);
 
-  function isTokenLike(word) {
-    if (word.length < 16) return false;
-    if (/^[0-9a-fA-F]{16,}$/.test(word)) return true;
-    if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(word)) return true;
-    if (/^(?:sk|pk|rk|re|ghp|gho|ghu|ghs|ghr|xox[baprs]|AKIA|AIza)[-_]?[A-Za-z0-9_-]{8,}$/.test(word)) return true;
-    if (/^[A-Za-z0-9+/_-]{16,}={1,2}$/.test(word)) return true;
-    if (/[+/]/.test(word)) return true;
-    let digits = 0, lo = 0, up = 0;
-    for (let i = 0; i < word.length; i++) {
-      const c = word.charCodeAt(i);
-      if (c >= 48 && c <= 57) digits++;
-      else if (c >= 97 && c <= 122) lo++;
-      else if (c >= 65 && c <= 90) up++;
+  const ERROR_NAMES = new Set([
+    "Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError",
+    "EvalError", "URIError", "AggregateError", "DOMException",
+    "UnhandledRejection", "SaveError", "AIError"
+  ]);
+  const SOURCE_RE = /^(?:(?:index|login)\.html|(?:client-errors|shim|heic2any-worker|heic2any\.min|tesseract\.min|worker\.min)\.js)(?::\d{1,7}(?::\d{1,7})?)?(?![\s\S])/;
+  const UA_RE = /^(?:Other|WeChat|Edge|Firefox|Chrome|Safari|WebKit)\/(?:Other|Linux|(?:iOS|HarmonyOS|Android|macOS|Win)\d{1,3})(?![\s\S])/;
+  const MESSAGES = [
+    [/^Cannot read properties of (?:null|undefined)/, "Cannot read properties of null or undefined"],
+    [/^Cannot set properties of (?:null|undefined)/, "Cannot set properties of null or undefined"],
+    [/ is not (?:a function|a constructor)$/, "Value is not callable or constructible"],
+    [/ is not defined$/, "Reference is not defined"],
+    [/^Unexpected token/, "Unexpected token"],
+    [/^Maximum call stack size exceeded$/, "Maximum call stack size exceeded"],
+    [/^(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.?)$/, "Network request failed"],
+    [/^ERR_HTTP2_PROTOCOL_ERROR$/, "ERR_HTTP2_PROTOCOL_ERROR"]
+  ];
+
+  // Match common failure patterns without copying any text from the exception.
+  function scrubMessage(raw) {
+    if (typeof raw !== "string") return "Error details withheld";
+    const text = raw.slice(0, 300);
+    for (const [pattern, message] of MESSAGES) {
+      if (text === message || pattern.test(text)) return message;
     }
-    if (digits >= 2 && (lo + up) >= 2) return true;
-    if (digits >= 1 && lo >= 1 && up >= 1) return true;
-    if (word.length >= 32 && (digits >= 1 || /[_-]/.test(word) || (lo >= 4 && up >= 4))) return true;
-    return false;
+    return "Error details withheld";
   }
 
-  function scrubMessage(raw) {
-    let s = typeof raw === "string" ? raw : String(raw ?? "");
-    if (s.length > 4096) s = s.slice(0, 4096);
-    s = s.replace(CONTROL_RE, " ");
-    // Strip userinfo, query strings, and fragments from full URLs.
-    s = s.replace(/\b(https?|wss?):\/\/([^\s"'<>)\]]+)/gi, (_, scheme, rest) => {
-      const cut = rest.replace(/[?#][\s\S]*$/, "");
-      const slash = cut.indexOf("/");
-      const authority = slash < 0 ? cut : cut.slice(0, slash);
-      const tail = slash < 0 ? "" : cut.slice(slash);
-      const at = authority.lastIndexOf("@");
-      const host = at < 0 ? authority : authority.slice(at + 1);
-      return scheme.toLowerCase() + "://" + host + tail;
-    });
-    // Strip query strings from relative URLs.
-    s = s.replace(/(^|[\s"'(\[])(\/[A-Za-z0-9_./-]*)\?[^\s"'<>)\]]+/g, "$1$2");
-    // Scrub emails.
-    s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]");
-    // Scrub Authorization values and key=value secret assignments.
-    s = s.replace(/\b(?:Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{6,}/gi, "[token]");
-    s = s.replace(/\b(?:(?:access|refresh|session|csrf|auth|invite|reset|verify)[_.-]?)?(?:token|secret|password|passwd|pwd|api[_-]?key|authorization|cookie|invitation|jwt)\s*[:=]\s*["']?[^\s"',;)}]{3,}["']?/gi, "[token]");
-    // Scrub JWTs.
-    s = s.replace(/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/g, "[token]");
-    // Scrub opaque tokens, hex hashes, UUIDs, API keys, base64 blobs.
-    s = s.replace(/[A-Za-z0-9_+/=-]{16,}/g, word => (isTokenLike(word) ? "[token]" : word));
-    // Scrub phone-like numbers and long digit sequences.
-    s = s.replace(/(?:\+\d{1,3}[\s-]?)?(?:\d[\s-]?){9,}\d/g, "[num]");
-    s = s.replace(/\d{6,}/g, "[num]");
-    s = s.replace(/\s+/g, " ").trim();
-    if (s.length > MAX_MESSAGE_LEN) s = s.slice(0, MAX_MESSAGE_LEN).trim();
-    return s;
+  function normalizeSource(raw) {
+    return typeof raw === "string" && SOURCE_RE.test(raw) ? raw : "unknown";
+  }
+
+  function normalizeUA(raw) {
+    return typeof raw === "string" && UA_RE.test(raw) ? raw : "Other/Other";
   }
 
   function extractBasename(rawPath) {
@@ -100,8 +81,7 @@
       }
     }
     if (!base) return "unknown";
-    if (line > 0) return base + ":" + line + ":" + col;
-    return base;
+    return normalizeSource(line > 0 ? base + ":" + line + ":" + col : base);
   }
 
   function parseUA(uaString) {
@@ -123,7 +103,7 @@
     else if ((m = ua.match(/Windows NT (\d+)/))) os = "Win" + m[1];
     else if (/\bLinux\b/.test(ua)) os = "Linux";
 
-    return family + "/" + os;
+    return normalizeUA(family + "/" + os);
   }
 
   function normalizePage(raw, pathname) {
@@ -151,15 +131,15 @@
   }
 
   function normalizeName(raw) {
-    const s = typeof raw === "string" ? raw.replace(CONTROL_RE, " ").trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) : "";
-    return s || "Error";
+    return ERROR_NAMES.has(raw) ? raw : "Error";
   }
 
   function createReporter(env = {}) {
     const fetchFn = env.fetch || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
-    const storage = env.sessionStorage !== undefined
-      ? env.sessionStorage
-      : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
+    let storage = env.sessionStorage;
+    if (storage === undefined) {
+      try { storage = globalThis.sessionStorage; } catch {}
+    }
     const nav = env.navigator !== undefined
       ? env.navigator
       : (typeof navigator !== "undefined" ? navigator : null);
@@ -211,10 +191,10 @@
       try {
         if (!fetchFn) return false;
         const name = normalizeName(input && input.name);
-        const message = scrubMessage(input && input.message) || name;
+        const message = scrubMessage(input && input.message);
         const rawSource = input && typeof input.source === "string" ? input.source.trim() : "";
         const source = rawSource
-          ? (/^[A-Za-z0-9._-]{1,64}(?::\d{1,7}(?::\d{1,7})?)?$/.test(rawSource) ? rawSource : formatSource(rawSource, 0, 0, ""))
+          ? normalizeSource(rawSource)
           : formatSource(input && input.filename, input && input.lineno, input && input.colno, input && input.stack);
         const key = name + "|" + source + "|" + message;
         if (seen.has(key)) return false;
@@ -246,6 +226,7 @@
           method: "POST",
           keepalive: true,
           credentials: "same-origin",
+          referrerPolicy: "no-referrer",
           headers: { "Content-Type": "application/json", "X-Bojin": "1" },
           body
         })).catch(() => {});
@@ -297,7 +278,7 @@
       if (!fetchFn) return;
       try {
         if (loc && loc.protocol && !/^https?:$/.test(loc.protocol)) return;
-        Promise.resolve(fetchFn("/api/health", { credentials: "same-origin" }))
+        Promise.resolve(fetchFn("/api/health", { credentials: "omit", referrerPolicy: "no-referrer" }))
           .then(r => (r && r.ok ? r.json() : null))
           .then(j => {
             if (j && typeof j.revision === "string" && /^[0-9a-f]{7,40}$/i.test(j.revision)) {
@@ -318,8 +299,11 @@
     };
   }
 
-  const defaultReporter = createReporter();
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { scrubMessage, normalizeName, normalizeSource, normalizeUA };
+  }
   if (typeof window !== "undefined") {
+    const defaultReporter = createReporter();
     if (typeof window.addEventListener === "function") {
       window.addEventListener("error", defaultReporter.handleWindowError);
       window.addEventListener("unhandledrejection", defaultReporter.handleRejection);

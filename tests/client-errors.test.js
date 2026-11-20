@@ -91,61 +91,18 @@ function loadPlaywright() {
   return null;
 }
 
-test("client scrubMessage removes emails, URL queries, tokens, and long digit sequences, and truncates to 300 chars", () => {
+test("client and server use fixed diagnostic messages without copying exception text", () => {
   const { api } = loadClientModule();
-  const { scrubMessage } = api;
-
-  // Emails
-  const emailOut = scrubMessage("Auth failed for alice.tester+1@example.com and bob@sub.leanritual.app");
-  assert.doesNotMatch(emailOut, /alice|bob|example\.com|@/);
-  assert.match(emailOut, /\[email\]/);
-
-  // URLs with query strings, fragments, and userinfo
-  const urlOut = scrubMessage("Load https://user:pw@leanritual.app/login.html?invite=SECRET123456&email=a@b.com#tok failed; also /api/doc?path=data/users/u1/app/days/2026-11-19&x=1");
-  assert.doesNotMatch(urlOut, /user:pw|invite=|SECRET123456|email=|#tok|path=data|u1/);
-  assert.match(urlOut, /https:\/\/leanritual\.app\/login\.html/);
-  assert.match(urlOut, /\/api\/doc/);
-
-  // Tokens: JWT, Bearer, key=value, API key prefix, UUID, 32-hex blob, base64
-  const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-  const tokenOut = scrubMessage([
-    "Bearer " + jwt,
-    "token=superSecretValue99",
-    "password: mySecretPassword1",
-    "sk-or-v1-1234567890abcdef1234567890abcdef",
-    "550e8400-e29b-41d4-a716-446655440000",
-    "0123456789abcdef0123456789abcdef",
-    "dGhpcyBpcyBhIHNlY3JldA=="
-  ].join(" | "));
-  for (const leak of ["eyJ", "dozjgNry", "superSecret", "mySecretPassword", "sk-or-v1", "550e8400", "0123456789abcdef", "dGhpcyBpcyBhIHNlY3JldA"]) {
-    assert.ok(!tokenOut.includes(leak), `token leaked: ${leak} in ${tokenOut}`);
+  for (const scrub of [api.scrubMessage, serverErrors.scrubMessage]) {
+    for (const input of [
+      "alice@example.com Bearer secret12345678 13812345678 /login.html?invite=demo",
+      "record: weight 71.5, chicken breast, user alice, password: red blue",
+      "at field (https://example.com/sensitive.js:1:2)\n" + "long ".repeat(500)
+    ]) assert.equal(scrub(input), "Error details withheld");
+    assert.equal(scrub("Cannot read properties of undefined (reading 'private-form-value')"),
+      "Cannot read properties of null or undefined");
+    assert.equal(scrub("ERR_HTTP2_PROTOCOL_ERROR"), "ERR_HTTP2_PROTOCOL_ERROR");
   }
-
-  // Long digit sequences & phone numbers
-  const digitOut = scrubMessage("Phone 13812345678 or +86 138-1234-5678 or otp 654321 ts 1731987654321 HTTP 500 line 42");
-  for (const leak of ["13812345678", "138-1234-5678", "654321", "1731987654321"]) {
-    assert.ok(!digitOut.includes(leak), `digits leaked: ${leak} in ${digitOut}`);
-  }
-  assert.match(digitOut, /HTTP 500/);
-  assert.match(digitOut, /line 42/);
-
-  // Control chars / newlines stripped
-  const ctrlOut = scrubMessage("Error\r\ninjected\t\x00line\u2028break");
-  assert.doesNotMatch(ctrlOut, /[\x00-\x1f\x7f\u2028\u2029]/);
-  assert.equal(ctrlOut, "Error injected line break");
-
-  // Useful normal JS errors stay readable
-  assert.equal(
-    scrubMessage("Cannot read properties of undefined (reading 'kcal')"),
-    "Cannot read properties of undefined (reading 'kcal')"
-  );
-  assert.equal(scrubMessage("ERR_HTTP2_PROTOCOL_ERROR"), "ERR_HTTP2_PROTOCOL_ERROR");
-
-  // Truncation to 300 chars
-  const longMsg = "TypeError: " + "word ".repeat(120);
-  const trunc = scrubMessage(longMsg);
-  assert.ok(trunc.length <= 300, `expected <= 300, got ${trunc.length}`);
-  assert.ok(trunc.length >= 290);
 });
 
 test("client formatSource and parseUA keep only basename+line:col and browser family+OS major", () => {
@@ -210,6 +167,7 @@ test("client reporter captures errors, dedupes per page-load, caps at 10 per ses
   assert.equal(req.opts.method, "POST");
   assert.equal(req.opts.keepalive, true);
   assert.equal(req.opts.credentials, "same-origin");
+  assert.equal(req.opts.referrerPolicy, "no-referrer");
   assert.equal(req.opts.headers["X-Bojin"], "1");
   assert.equal(req.opts.headers["Content-Type"], "application/json");
   assert.deepEqual(Object.keys(req.body).sort(), ["lang", "message", "name", "page", "revision", "source", "ts", "ua"]);
@@ -259,7 +217,7 @@ test("client reporter captures errors, dedupes per page-load, caps at 10 per ses
     document: { documentElement: { lang: "en" } }
   });
   for (let i = 0; i < 12; i++) {
-    priv.report({ name: "Error", message: `private err ${i}`, source: "login.html:1:1" });
+    priv.report({ name: "Error", message: `private err ${i}`, source: `login.html:${i + 1}:1` });
   }
   assert.equal(throwingSent.length, 10);
 });
@@ -273,6 +231,7 @@ test("server lib/client-errors unit: ignores unknown fields, sanitizes control c
     userLimit: 2,
     ipLimit: 3,
     anonIpLimit: 1,
+    globalLimit: 4,
     windowMs: 60_000,
     log: line => logs.push(line),
     now: () => fakeNow
@@ -296,7 +255,7 @@ test("server lib/client-errors unit: ignores unknown fields, sanitizes control c
       }
     };
     await handler.handle(req, res, {
-      user,
+      getUser: async () => user,
       ip,
       readBody: async (_r, max) => {
         if (raw.length > max) throw Object.assign(new Error("too large"), { status: 413, code: "too_large" });
@@ -342,7 +301,10 @@ test("server lib/client-errors unit: ignores unknown fields, sanitizes control c
   ]) {
     assert.ok(!line.includes(forbidden), `log line leaked forbidden marker ${forbidden}: ${line}`);
   }
-  assert.match(line, /auth=user page=today lang=zh rev=abcdef123456 ua=Other\/Other source=index\.html:10:2 name=TypeError_INJECTED_LINE/);
+  assert.equal(serverErrors.validateReport({
+    page: "login", name: "PrivateValue", message: "PrivateValue", source: "index.html\n", ua: "Safari/iOS18\n"
+  }, { isAuthenticated: false }).source, "unknown");
+  assert.match(line, /auth=user page=today lang=zh rev=abcdef123456 ua=Other\/Other source=index\.html:10:2 name=Error/);
 
   // Per-user limit (2) -> 2nd accepted, 3rd silently dropped with 204
   assert.equal((await invoke({ user: { id: "u_secret_user_id_999" }, body: { name: "Error", message: "second", page: "today" } })).status, 204);
@@ -362,6 +324,11 @@ test("server lib/client-errors unit: ignores unknown fields, sanitizes control c
   assert.match(logs[3], /^client-error auth=anon page=login /);
   assert.equal((await invoke({ ip: "203.0.113.55", body: { name: "Error", message: "login boom 2", page: "login" } })).status, 204);
   assert.equal(logs.length, 4);
+
+  for (const ip of ["203.0.113.56", "203.0.113.57"]) {
+    assert.equal((await invoke({ ip, body: { name: "Error", message: "fresh IP", page: "login" } })).status, 204);
+  }
+  assert.equal(logs.length, 4, "new IPs share the process-wide log limit");
 
   // After window expires, limit resets cleanly
   fakeNow += 61_000;
@@ -469,6 +436,11 @@ test("HTTP integration: /api/client-error auth, CSRF, size cap, rate limits, san
   assert.equal(login.status, 200);
   const cookie = login.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
 
+  const authDb = new DatabaseSync(path.join(dir, "auth.sqlite"));
+  t.after(() => authDb.close());
+  const agedUpdate = Date.now() - 2 * 86400_000;
+  authDb.prepare('UPDATE session SET updatedAt = ?, expiresAt = ?').run(agedUpdate, Date.now() + 5 * 86400_000);
+
   // Authenticated report with planted secrets in body extras + newlines
   const authRes = await postErr({
     name: "ReferenceError",
@@ -504,6 +476,13 @@ test("HTTP integration: /api/client-error auth, CSRF, size cap, rate limits, san
   assert.match(firstUserLine, /page=today lang=zh rev=a1b2c3d4e5f6 ua=WeChat\/iOS18 source=index\.html:1900:5 name=ReferenceError/);
   assert.doesNotMatch(firstUserLine, /DO_NOT_LOG_THIS_SECRET_42|PRIVATE_NOTE_TEXT|tester@example\.com|sk-or-v1|[\x00-\x1f\x7f]/);
 
+  assert.equal(authDb.prepare('SELECT updatedAt FROM session').get().updatedAt, agedUpdate,
+    "telemetry must not refresh an aging authenticated session");
+  authDb.prepare('UPDATE session SET expiresAt = ?').run(Date.now() - 1000);
+  assert.equal((await postErr({ name: "Error", message: "expired", page: "today" }, { cookie })).status, 401);
+  assert.equal(authDb.prepare('SELECT COUNT(*) n FROM session').get().n, 1,
+    "telemetry must not delete an expired session");
+
   // Confirm no error reports are stored in bojin.db
   const inspect = new DatabaseSync(path.join(dir, "bojin.db"));
   const tables = inspect.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
@@ -534,10 +513,10 @@ test("privacy.html and docs/OPERATIONS.md document client error reporting accura
   assert.match(en, /journald/i);
 
   const ops = fs.readFileSync(path.join(ROOT, "docs/OPERATIONS.md"), "utf8");
-  assert.ok(ops.includes("journalctl -u bojin.service --since -24h | grep client-error"));
+  assert.ok(ops.includes("journalctl -u bojin.service --since -24h -o cat | grep '^client-error '"));
 });
 
-test("headless Chromium: client error reporting on login and app pages with zero CSP violations (including sendBeacon)", { timeout: 60000 }, async t => {
+test("headless Chromium: client error reporting on login and app pages with zero CSP violations", { timeout: 60000 }, async t => {
   const pw = loadPlaywright();
   if (!pw) {
     t.skip("Playwright/Chromium not installed locally");
@@ -599,15 +578,12 @@ test("headless Chromium: client error reporting on login and app pages with zero
   await page.exposeFunction("recordCspViolation", v => cspViolations.push(v));
   await page.addInitScript(() => document.addEventListener("securitypolicyviolation", e => window.recordCspViolation(e.violatedDirective + ": " + e.blockedURI)));
 
-  // 1. Login page: trigger a runtime error and check sendBeacon CSP compatibility
+  // 1. Login page: trigger a runtime error and check the request referrer
   await page.goto(`${base}/login.html?invite=SECRET_URL_INVITE`);
   await page.waitForFunction(() => !!window.ritualErrorReporter);
-  const beaconOk = await page.evaluate(() => navigator.sendBeacon("/api/client-error", new Blob([JSON.stringify({ name: "Test", message: "beacon", page: "login" })], { type: "application/json" })));
-  assert.equal(beaconOk, true);
-
   const loginPostP = page.waitForResponse(r => new URL(r.url()).pathname === "/api/client-error" && r.status() === 204);
   await page.evaluate(() => { setTimeout(() => { throw new TypeError("Login boom for leak@example.com token=secret12345678"); }, 0); });
-  await loginPostP;
+  assert.equal((await (await loginPostP).request().allHeaders()).referer, undefined);
 
   // 2. Sign in and trigger a runtime error on the authenticated app
   await page.locator('#tabs button[data-m="login"]').click();
