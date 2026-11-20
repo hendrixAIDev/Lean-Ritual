@@ -54,7 +54,7 @@ function makeDbFixture(t, opts = {}) {
   `);
   const accountData = createAccountData(db, dataDir);
   const uploads = createUploads(db, dataDir, opts.uploads || {});
-  const feedback = createFeedback(db, dataDir, {
+  const feedback = createFeedback(opts.db || db, dataDir, {
     uploads,
     accountData,
     releaseRevision: "0123456789abcdef0123456789abcdef01234567",
@@ -67,7 +67,7 @@ function makeDbFixture(t, opts = {}) {
   return { root, dataDir, db, accountData, uploads, feedback };
 }
 
-test("feedback validation, strict device info allowlist, and opt-out", async t => {
+test("feedback validation, strict device info type-checking/normalization, and opt-out", async t => {
   const { db, feedback } = makeDbFixture(t);
   const user = { id: "u_tester1" };
 
@@ -78,15 +78,37 @@ test("feedback validation, strict device info allowlist, and opt-out", async t =
     e => e.status === 400 && e.code === "message_too_long"
   );
 
+  // Wrong deviceInfo types are rejected with 400
+  await assert.rejects(
+    () => feedback.submit(user, { type: "bug", message: "bad dev", includeDeviceInfo: true, deviceInfo: "not-an-obj" }),
+    e => e.status === 400
+  );
+  await assert.rejects(
+    () => feedback.submit(user, { type: "bug", message: "bad online", includeDeviceInfo: true, deviceInfo: { online: "yes" } }),
+    e => e.status === 400
+  );
+  await assert.rejects(
+    () => feedback.submit(user, { type: "bug", message: "bad ua", includeDeviceInfo: true, deviceInfo: { userAgent: 123 } }),
+    e => e.status === 400
+  );
+  await assert.rejects(
+    () => feedback.submit(user, { type: "bug", message: "bad screen", includeDeviceInfo: true, deviceInfo: { screen: { width: -5, height: 100 } } }),
+    e => e.status === 400
+  );
+  await assert.rejects(
+    () => feedback.submit(user, { type: "bug", message: "huge screen", includeDeviceInfo: true, deviceInfo: { screen: { width: 99999, height: 100 } } }),
+    e => e.status === 400
+  );
+
   const resOn = await feedback.submit(user, {
     type: "bug",
-    message: "Button stuck on Meals tab\r\nsecond line",
+    message: "Button stuck\u202e\u009b31m on Meals tab\r\nsecond line",
     includeDeviceInfo: true,
     deviceInfo: {
       revision: "deadbeef12345678",
       page: "me",
-      userAgent: "Mozilla/5.0 (iPhone)\nInjected",
-      screen: "390x844 (390x700, dpr 3.00)",
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 Version/18.2 Mobile/15E148 Safari/604.1",
+      screen: { width: 390, height: 844, viewportWidth: 390, viewportHeight: 700, dpr: 3 },
       lang: "en",
       online: true,
       clientTime: "2026-11-20T12:00:00.000Z",
@@ -102,17 +124,32 @@ test("feedback validation, strict device info allowlist, and opt-out", async t =
   const rowOn = db.prepare("SELECT * FROM feedback WHERE id = ?").get(resOn.id);
   assert.equal(rowOn.uid, "u_tester1");
   assert.equal(rowOn.type, "bug");
-  assert.equal(rowOn.message, "Button stuck on Meals tab\nsecond line");
+  assert.equal(rowOn.message, "Button stuck31m on Meals tab\nsecond line");
   const info = JSON.parse(rowOn.device_info);
   assert.deepEqual(Object.keys(info).sort(), ["clientTime", "lang", "online", "page", "revision", "screen", "userAgent"]);
   assert.equal(info.revision, "deadbeef1234");
   assert.equal(info.page, "me");
   assert.equal(info.lang, "en");
   assert.equal(info.online, true);
-  assert.equal(info.userAgent.includes("\n"), false);
+  assert.equal(info.userAgent, "Safari/iOS18");
+  assert.equal(info.screen, "390x844 (390x700, dpr 3.00)");
   assert.equal(info.weight, undefined);
   assert.equal(info.meals, undefined);
   assert.equal(info.profile, undefined);
+
+  // Arbitrary free-text smuggling in userAgent or screen is normalized away
+  const resSmuggle = await feedback.submit(user, {
+    type: "other",
+    message: "smuggle attempt",
+    includeDeviceInfo: true,
+    deviceInfo: {
+      userAgent: "arbitrary secret text with email@example.com",
+      screen: "smuggled arbitrary payload"
+    }
+  });
+  const smuggleInfo = JSON.parse(db.prepare("SELECT device_info FROM feedback WHERE id = ?").get(resSmuggle.id).device_info);
+  assert.equal(smuggleInfo.userAgent, "Other/Other");
+  assert.equal(smuggleInfo.screen, "unknown");
 
   // Opt-out: deviceInfo must be stored as NULL even if client sent fields.
   const resOff = await feedback.submit(user, {
@@ -125,10 +162,10 @@ test("feedback validation, strict device info allowlist, and opt-out", async t =
   assert.equal(rowOff.device_info, null);
 });
 
-test("feedback screenshot reuses upload validation, quotas, and leaves zero orphan blobs on failure", async t => {
+test("feedback screenshot reuses upload validation, quotas, and cleans up on DB transaction failure", async t => {
   const pngB64 = await tinyPngBase64("green");
   const { dataDir, db, feedback } = makeDbFixture(t, {
-    uploads: { daily: 2, userBytes: 1024 * 1024, totalBytes: 2 * 1024 * 1024 },
+    uploads: { daily: 5, userBytes: 1024 * 1024, totalBytes: 2 * 1024 * 1024 },
     feedback: { daily: 10, globalDaily: 10 }
   });
   const user = { id: "u_img" };
@@ -165,27 +202,90 @@ test("feedback screenshot reuses upload validation, quotas, and leaves zero orph
   assert.equal(blob.uid, "u_img");
   assert.equal(blob.type, "image/webp");
   assert.ok(fs.existsSync(path.join(dataDir, "blobs", row.screenshot_blob_id)));
+
+  // If BEGIN IMMEDIATE fails (e.g. SQLite lock timeout) AFTER uploads.save commits,
+  // the newly uploaded screenshot blob and disk file MUST be cleaned up (zero orphans).
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-fb-txfail-"));
+  const dataDir2 = path.join(root2, "data");
+  fs.mkdirSync(path.join(dataDir2, "blobs"), { recursive: true });
+  const realDb = new DatabaseSync(path.join(dataDir2, "bojin.db"));
+  realDb.exec(`
+    CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
+  `);
+  t.after(() => {
+    try { realDb.close(); } catch {}
+    fs.rmSync(root2, { recursive: true, force: true });
+  });
+  const uploads2 = createUploads(realDb, dataDir2);
+  let failNextBegin = false;
+  const wrappedDb = {
+    exec(sql) {
+      if (failNextBegin && sql === "BEGIN IMMEDIATE") {
+        failNextBegin = false;
+        throw Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+      }
+      return realDb.exec(sql);
+    },
+    prepare(sql) {
+      return realDb.prepare(sql);
+    }
+  };
+  const fbTxFail = createFeedback(wrappedDb, dataDir2, { uploads: uploads2 });
+  // Trigger failure on the feedback transaction's BEGIN IMMEDIATE (after uploads.begin & uploads.save succeed)
+  const origSave = uploads2.save.bind(uploads2);
+  uploads2.save = (...args) => {
+    const saved = origSave(...args);
+    failNextBegin = true;
+    return saved;
+  };
+  await assert.rejects(
+    () => fbTxFail.submit({ id: "u_lock" }, {
+      type: "bug",
+      message: "lock failure cleanup test",
+      screenshot: { contentType: "image/png", dataBase64: pngB64 }
+    }),
+    /database is locked/
+  );
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs").get().n, 0, "orphan blob row must be removed");
+  assert.equal(fs.readdirSync(path.join(dataDir2, "blobs")).length, 0, "orphan blob file must be removed");
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM feedback").get().n, 0, "no feedback row created");
 });
 
-test("feedback per-user and global daily rate limits enforce 429 and reset on next UTC day", async t => {
+test("feedback concurrency bound, pre-body daily quota check, and UTC day reset", async t => {
   let clock = Date.parse("2026-11-20T10:00:00Z");
   const { feedback } = makeDbFixture(t, {
-    feedback: { daily: 2, globalDaily: 3, now: () => clock }
+    feedback: { daily: 2, globalDaily: 3, maxConcurrent: 2, now: () => clock }
   });
 
+  // Per-user concurrency bound (1 per user) and global bound (2 total)
+  const relA = feedback.begin("u_a");
+  assert.throws(() => feedback.begin("u_a"), e => e.status === 429 && e.code === "feedback_busy");
+  const relB = feedback.begin("u_b");
+  assert.throws(() => feedback.begin("u_c"), e => e.status === 429 && e.code === "feedback_busy");
+  relA();
+  relB();
+
+  // After releasing, slots are reusable
   await feedback.submit({ id: "u_a" }, { type: "bug", message: "a1" });
   await feedback.submit({ id: "u_a" }, { type: "bug", message: "a2" });
+
+  // Pre-body quota check rejects immediately in begin() before any body is read
+  assert.throws(() => feedback.begin("u_a"), e => e.status === 429 && e.code === "feedback_rate_limited");
+  // Even with a malformed screenshot, daily quota rejects BEFORE decodeScreenshot
   await assert.rejects(
-    () => feedback.submit({ id: "u_a" }, { type: "bug", message: "a3" }),
+    () => feedback.submit({ id: "u_a" }, {
+      type: "bug",
+      message: "a3",
+      screenshot: { contentType: "image/svg+xml", dataBase64: "!!!" }
+    }),
     e => e.status === 429 && e.code === "feedback_rate_limited"
   );
 
-  // User B can submit 1 (reaches globalDaily = 3), then blocked globally
+  // User B submits 1 (reaches globalDaily = 3), then blocked globally in begin()
   await feedback.submit({ id: "u_b" }, { type: "idea", message: "b1" });
-  await assert.rejects(
-    () => feedback.submit({ id: "u_b" }, { type: "idea", message: "b2" }),
-    e => e.status === 429 && e.code === "feedback_rate_limited"
-  );
+  assert.throws(() => feedback.begin("u_b"), e => e.status === 429 && e.code === "feedback_rate_limited");
+  assert.throws(() => feedback.begin("u_c"), e => e.status === 429 && e.code === "feedback_rate_limited");
 
   // Next UTC day resets limits
   clock = Date.parse("2026-11-21T00:01:00Z");
@@ -193,7 +293,7 @@ test("feedback per-user and global daily rate limits enforce 429 and reset on ne
   assert.equal(nextDay.ok, true);
 });
 
-test("feedback alerts: silent skip when unset, HTTPS-only, minimal privacy-safe payload, never fails submission", async t => {
+test("feedback alerts: metadata-only (no free text or user ID), HTTPS-only, rejects redirects, never fails submission", async t => {
   assert.equal(parseAlertUrl(""), null);
   assert.deepEqual(parseAlertUrl("http://ntfy.sh/secret"), { invalid: true });
   assert.deepEqual(parseAlertUrl("https://ntfy.sh/with space"), { invalid: true });
@@ -202,26 +302,36 @@ test("feedback alerts: silent skip when unset, HTTPS-only, minimal privacy-safe 
   let calls = 0;
   const skipped = await sendFeedbackAlert({
     alertUrl: "",
-    record: { id: "fb_111111111111", uid: "u_1", type: "bug", message: "hello" },
+    record: { id: "fb_111111111111", uid: "u_1", type: "bug", message: "hello", created: "2026-11-20T12:00:00.000Z" },
     fetcher: async () => { calls++; return { status: 200 }; }
   });
   assert.equal(skipped.skipped, true);
   assert.equal(calls, 0);
 
-  // Long message truncated to ~100 chars, single-line, contains type + id + uid only
-  const longMsg = "第一行\n" + "测试反馈内容".repeat(30);
-  const body = formatAlertBody({
+  // Alert body contains ONLY type, id, created time, and screenshot flag — NEVER message text or user ID
+  const bodyWithShot = formatAlertBody({
     id: "fb_abcdef012345",
-    uid: "u_privacy",
+    uid: "u_secret_uid",
     type: "bug",
-    message: longMsg,
-    screenshotBlobId: "a".repeat(32)
+    message: "Contact me at leak@example.com, my weight is 71kg and token is sk-secret",
+    screenshotBlobId: "a".repeat(32),
+    created: "2026-11-20T12:34:56.000Z"
   });
-  assert.ok(!body.includes("\n"));
-  assert.ok(body.startsWith("[bug] #fb_abcdef012345 (u_privacy) [+img]: "));
-  assert.ok(body.endsWith("…"));
-  const excerpt = body.split(": ").slice(1).join(": ");
-  assert.equal(Array.from(excerpt).length, 101); // 100 chars + ellipsis
+  assert.equal(bodyWithShot, "[bug] #fb_abcdef012345 at 2026-11-20T12:34:56.000Z screenshot=yes");
+  assert.ok(!bodyWithShot.includes("leak@example.com"));
+  assert.ok(!bodyWithShot.includes("u_secret_uid"));
+  assert.ok(!bodyWithShot.includes("sk-secret"));
+
+  const bodyNoShot = formatAlertBody({
+    id: "fb_000000000001",
+    uid: "u_secret_uid",
+    type: "idea",
+    message: "Private idea text",
+    screenshotBlobId: null,
+    created: "2026-11-20T12:34:56.000Z"
+  });
+  assert.equal(bodyNoShot, "[idea] #fb_000000000001 at 2026-11-20T12:34:56.000Z screenshot=no");
+  assert.ok(!bodyNoShot.includes("Private idea text"));
 
   // Successful HTTPS POST through createFeedback
   const sent = [];
@@ -236,20 +346,46 @@ test("feedback alerts: silent skip when unset, HTTPS-only, minimal privacy-safe 
   });
   const res = await feedback.submit(
     { id: "u_alert_user", email: "private@example.com", username: "RealName" },
-    { type: "idea", message: "Add timer sound", includeDeviceInfo: true, deviceInfo: { userAgent: "SecretUA/1.0" } }
+    {
+      type: "idea",
+      message: "My personal note with alice@example.com",
+      includeDeviceInfo: true,
+      deviceInfo: { userAgent: "Safari/iOS18" }
+    }
   );
   assert.equal(res.ok, true);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].url, "https://alerts.example.test/super-secret-topic");
   assert.equal(sent[0].init.method, "POST");
+  assert.equal(sent[0].init.redirect, "manual");
   assert.equal(sent[0].init.headers.Tags, "bulb");
-  assert.ok(sent[0].init.body.includes(res.id));
-  assert.ok(sent[0].init.body.includes("u_alert_user"));
-  assert.ok(sent[0].init.body.includes("[idea]"));
-  assert.ok(sent[0].init.body.includes("Add timer sound"));
+  assert.equal(sent[0].init.body, `[idea] #${res.id} at ${res.created} screenshot=no`);
+  assert.ok(!sent[0].init.body.includes("alice@example.com"));
+  assert.ok(!sent[0].init.body.includes("My personal note"));
+  assert.ok(!sent[0].init.body.includes("u_alert_user"));
   assert.ok(!sent[0].init.body.includes("private@example.com"));
   assert.ok(!sent[0].init.body.includes("RealName"));
-  assert.ok(!sent[0].init.body.includes("SecretUA"));
+  assert.ok(!sent[0].init.body.includes("Safari"));
+
+  // Any 3xx redirect (cross-origin OR same-origin) must be rejected without issuing a second POST
+  for (const location of ["https://second-origin.invalid/steal", "https://alerts.example.test/other", "http://evil.invalid/steal"]) {
+    let fetchCalls = 0;
+    const redirLogs = [];
+    const redirRes = await sendFeedbackAlert({
+      alertUrl: "https://alerts.example.test/topic",
+      record: { id: "fb_222222222222", uid: "u_2", type: "bug", message: "hi", created: "2026-11-20T12:00:00.000Z" },
+      fetcher: async () => {
+        fetchCalls++;
+        return { status: 302, headers: new Headers({ location }) };
+      },
+      log: msg => redirLogs.push(String(msg))
+    });
+    assert.equal(fetchCalls, 1, `redirect to ${location} must not trigger a second fetch`);
+    assert.equal(redirRes.sent, false);
+    assert.equal(redirRes.reason, "redirect_rejected");
+    assert.ok(!redirLogs[0].includes("alerts.example.test"));
+    assert.ok(!redirLogs[0].includes(location));
+  }
 
   // Alert network failure must NOT fail submission and must NOT log the secret URL
   const logs = [];
@@ -265,17 +401,52 @@ test("feedback alerts: silent skip when unset, HTTPS-only, minimal privacy-safe 
   assert.equal(logs.length, 1);
   assert.ok(!logs[0].includes("very-secret-token-xyz"));
   assert.ok(!logs[0].includes("Still saved"));
+});
 
-  // Non-HTTPS redirect must be refused
-  const redirLogs = [];
-  const redirRes = await sendFeedbackAlert({
-    alertUrl: "https://alerts.example.test/topic",
-    record: { id: "fb_222222222222", uid: "u_2", type: "bug", message: "hi" },
-    fetcher: async () => ({ status: 302, headers: new Headers({ location: "http://evil.invalid/steal" }) }),
-    log: msg => redirLogs.push(String(msg))
+test("scripts/feedback-admin.js escapes terminal C0, C1, and Unicode bidi control characters", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-fb-cli-esc-"));
+  const dir = path.join(root, "data");
+  fs.mkdirSync(dir, { recursive: true });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const db = new DatabaseSync(path.join(dir, "bojin.db"));
+  db.exec(`
+    CREATE TABLE feedback (
+      id TEXT PRIMARY KEY,
+      uid TEXT NOT NULL,
+      type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      screenshot_blob_id TEXT,
+      device_info TEXT,
+      created TEXT NOT NULL
+    );
+  `);
+  const hostileMsg = "safe\x1b[31mRED\x1b[0m \u009b2J \u202ereversed\u202c\nline2\x07";
+  const hostileDev = JSON.stringify({ revision: "abc", page: "me", lang: "zh", screen: "390x844\x1b[32m\u202e" });
+  db.prepare("INSERT INTO feedback VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    "fb_deadbeef0001", "u_cli", "bug", hostileMsg, null, hostileDev, "2026-11-20T12:00:00.000Z"
+  );
+  db.close();
+
+  const env = { ...process.env, DATA_DIR: dir };
+  const rawControlRe = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/;
+
+  const listOut = spawnSync(process.execPath, ["scripts/feedback-admin.js", "list"], {
+    cwd: ROOT, env, encoding: "utf8", timeout: 5000
   });
-  assert.equal(redirRes.sent, false);
-  assert.equal(redirRes.reason, "non_https_redirect");
+  assert.equal(listOut.status, 0, listOut.stderr);
+  assert.equal(rawControlRe.test(listOut.stdout), false, "list stdout must contain zero raw terminal/bidi control chars");
+  assert.ok(listOut.stdout.includes("\\x1b[31m"));
+  assert.ok(listOut.stdout.includes("\\x9b2J"));
+  assert.ok(listOut.stdout.includes("\\u202e"));
+
+  const showOut = spawnSync(process.execPath, ["scripts/feedback-admin.js", "show", "fb_deadbeef0001"], {
+    cwd: ROOT, env, encoding: "utf8", timeout: 5000
+  });
+  assert.equal(showOut.status, 0, showOut.stderr);
+  assert.equal(rawControlRe.test(showOut.stdout), false, "show stdout must contain zero raw terminal/bidi control chars");
+  assert.ok(showOut.stdout.includes("\\u001b[32m"));
+  assert.ok(showOut.stdout.includes("\\u202e"));
 });
 
 test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and backup ledger replay", { timeout: 30000 }, async t => {
@@ -391,8 +562,8 @@ test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and ba
     includeDeviceInfo: true,
     deviceInfo: {
       page: "me",
-      userAgent: "Safari/iOS",
-      screen: "375x667 (375x550, dpr 2.00)",
+      userAgent: "Safari/iOS18",
+      screen: { width: 375, height: 667, viewportWidth: 375, viewportHeight: 550, dpr: 2 },
       lang: "zh",
       online: true,
       clientTime: "2026-11-20T12:34:56.000Z"
@@ -403,8 +574,12 @@ test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and ba
   const fb2 = await fb2Res.json();
   assert.equal(fb2.hasScreenshot, true);
 
-  // Per-user limit (FEEDBACK_DAILY_LIMIT=2) triggers 429 on 3rd submission
-  const fb3Res = await req("/api/feedback", { type: "other", message: "third" }, cookieA);
+  // Per-user limit (FEEDBACK_DAILY_LIMIT=2) triggers 429 on 3rd submission (even with bad JSON, proving pre-body check)
+  const fb3Res = await fetch(base + "/api/feedback", {
+    method: "POST",
+    headers: { origin: base, "Content-Type": "application/json", "X-Bojin": "1", cookie: cookieA },
+    body: "{not-json"
+  });
   assert.equal(fb3Res.status, 429);
 
   // User B submits one
@@ -424,6 +599,8 @@ test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and ba
   const withShot = expFbA.find(x => x.id === fb2.id);
   assert.ok(withShot.screenshotBlobId);
   assert.equal(withShot.deviceInfo.page, "me");
+  assert.equal(withShot.deviceInfo.userAgent, "Safari/iOS18");
+  assert.equal(withShot.deviceInfo.screen, "375x667 (375x550, dpr 2.00)");
   assert.ok(expA.some(x => x.kind === "photo" && x.id === withShot.screenshotBlobId));
 
   const expB = (await (await req("/api/account/export", null, cookieB)).text()).trim().split("\n").map(JSON.parse);
@@ -512,7 +689,7 @@ test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and ba
   assert.equal(fs.existsSync(path.join(restored, "blobs", withShot.screenshotBlobId)), false);
 });
 
-test("UI: Me tab feedback form (zh/en), offline guard, privacy isolation, login mailto, privacy page, and tester docs", async () => {
+test("UI: Me tab 意见反馈/Send feedback form, offline guard, privacy isolation, login mailto, privacy page, and tester docs", async () => {
   const appHtml = fs.readFileSync(path.join(ROOT, "app/index.html"), "utf8");
   const script = appHtml.match(/<script>([\s\S]*?)<\/script>/)[1].split("/* ============ 启动 ============ */")[0];
 
@@ -541,14 +718,14 @@ test("UI: Me tab feedback form (zh/en), offline guard, privacy isolation, login 
       },
       querySelectorAll: () => []
     };
-    const nav = { userAgent: "TestAgent/1.0", onLine: online, languages: [lang === "en" ? "en-US" : "zh-CN"] };
+    const nav = { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) Safari/604.1", onLine: online, languages: [lang === "en" ? "en-US" : "zh-CN"] };
     const window = {
       innerWidth: 390,
       innerHeight: 844,
       devicePixelRatio: 3,
       screen: { width: 390, height: 844 },
       scrollTo() {},
-      ritualErrorReporter: { configure() {}, getRevision: () => "abcdef123456" },
+      ritualErrorReporter: { configure() {}, getRevision: () => "abcdef123456", parseUA: () => "Safari/iOS18" },
       ritual: {
         hosted: true,
         async sendFeedback(payload) {
@@ -582,13 +759,14 @@ test("UI: Me tab feedback form (zh/en), offline guard, privacy isolation, login 
     return { ctx, appEl, msgEl, openBtn, sent, toasts, listeners, nav };
   }
 
-  // Chinese flow: open, offline error keeps message, then go online and submit
+  // Chinese flow: uses 意见反馈 (unambiguous with 反馈 AI tab), offline error keeps message, then online submits
   const zh = createUiEnv("zh", false);
   assert.match(zh.appEl.innerHTML, /data-act="ufb-open"/);
-  assert.match(zh.appEl.innerHTML, /发反馈/);
+  assert.match(zh.appEl.innerHTML, /意见反馈/);
   await zh.listeners.click[0]({ target: { closest: () => ({ dataset: { act: "ufb-open" } }) } });
   assert.match(zh.appEl.innerHTML, /id="ufb-msg"/);
   assert.match(zh.appEl.innerHTML, /id="ufb-device"[^>]*checked/);
+  assert.match(zh.appEl.innerHTML, /提交意见反馈/);
 
   zh.msgEl.value = "离线时写的反馈";
   await zh.listeners.click[0]({ target: { closest: () => ({ dataset: { act: "ufb-submit" } }) } });
@@ -607,17 +785,19 @@ test("UI: Me tab feedback form (zh/en), offline guard, privacy isolation, login 
   assert.equal(zh.sent[0].deviceInfo.page, "me");
   assert.equal(zh.sent[0].deviceInfo.lang, "zh");
   assert.equal(zh.sent[0].deviceInfo.online, true);
-  assert.match(zh.sent[0].deviceInfo.screen, /^390x844/);
+  assert.equal(zh.sent[0].deviceInfo.userAgent, "Safari/iOS18");
+  assert.deepEqual(JSON.parse(JSON.stringify(zh.sent[0].deviceInfo.screen)), { width: 390, height: 844, viewportWidth: 390, viewportHeight: 844, dpr: 3 });
   const serialized = JSON.stringify(zh.sent[0]);
   assert.ok(!serialized.includes("PRIVATE_INJURY"));
   assert.ok(!serialized.includes("PRIVATE_MEAL"));
   assert.ok(!serialized.includes("71.5"));
-  assert.ok(zh.toasts.some(x => x.includes("已收到你的反馈")));
+  assert.ok(zh.toasts.some(x => x.includes("已收到你的意见反馈")));
   assert.equal(zh.openBtn.focused, true);
 
-  // English flow with device info unchecked + Escape dismiss
+  // English flow with device info unchecked + Escape dismiss + zero Chinese leak on feedback_busy
   const en = createUiEnv("en", true);
   assert.match(en.appEl.innerHTML, /Send feedback/);
+  assert.doesNotMatch(vm.runInContext('apiErrMsg({code:"feedback_busy",message:"意见反馈提交处理中"}, "fallback")', en.ctx), /[\u3400-\u9fff]/);
   await en.listeners.click[0]({ target: { closest: () => ({ dataset: { act: "ufb-open" } }) } });
   assert.match(en.appEl.innerHTML, /Include device info/);
   en.listeners.keydown[0]({ key: "Escape", preventDefault() {} });
@@ -640,18 +820,18 @@ test("UI: Me tab feedback form (zh/en), offline guard, privacy isolation, login 
   assert.match(loginHtml, /id="help-link"[^>]*href="mailto:hendrix\.ai\.dev@gmail\.com/);
   assert.match(loginHtml, /Can't sign in\? Email feedback/);
 
-  // Privacy page mentions feedback storage, alert summary, export, deletion, retention in zh & en
+  // Privacy page mentions metadata-only alerts (no message text or account ID), storage, export, deletion, retention in zh & en
   const privacyHtml = fs.readFileSync(path.join(ROOT, "public/privacy.html"), "utf8");
-  assert.match(privacyHtml, /应用内反馈/);
-  assert.match(privacyHtml, /附带设备信息/);
-  assert.match(privacyHtml, /in-app feedback/i);
-  assert.match(privacyHtml, /Include device info/);
+  assert.match(privacyHtml, /意见反馈/);
+  assert.match(privacyHtml, /不含反馈正文、账号标识/);
+  assert.match(privacyHtml, /metadata-only alert/i);
+  assert.match(privacyHtml, /never your message text, account ID/i);
 
-  // Tester docs point testers to the in-app feedback entry
+  // Tester docs point testers to 意见反馈 (zh) and Send feedback (en)
   for (const [file, pattern] of [
-    ["docs/TESTER-GUIDE.zh-CN.md", /「我的」→「反馈」/],
+    ["docs/TESTER-GUIDE.zh-CN.md", /「我的」→「意见反馈」/],
     ["docs/TESTER-GUIDE.en.md", /Me → Send feedback/],
-    ["docs/TESTER-QUICKSTART.zh-CN.md", /「我的」→「反馈」/],
+    ["docs/TESTER-QUICKSTART.zh-CN.md", /「我的」→「意见反馈」/],
     ["docs/TESTER-QUICKSTART.en.md", /Me → Send feedback/]
   ]) {
     const content = fs.readFileSync(path.join(ROOT, file), "utf8");

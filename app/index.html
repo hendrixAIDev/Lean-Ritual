@@ -837,32 +837,32 @@ const I18N = {
     "toast.mealTypeChanged":"已改成{type}", "toast.max4Photos":"一餐最多 4 张照片",
     "toast.restoredWorkouts":"已从备份恢复 {n} 天的训练记录",
     "toast.rescueDrafts":"找到 {dates} 填了但没保存的训练，打开那天点“完成训练，保存”即可",
-    "ufb.title":"反馈",
+    "ufb.title":"意见反馈",
     "ufb.subtitle":"遇到问题或有建议？30 秒内直接发给我们，不用截屏切软件。",
-    "ufb.openBtn":"发反馈",
+    "ufb.openBtn":"意见反馈",
     "ufb.typeLabel":"类型",
     "ufb.type.bug":"问题",
     "ufb.type.idea":"建议",
     "ufb.type.other":"其他",
     "ufb.msgLabel":"内容（必填）",
     "ufb.msgPlaceholder":"说说你遇到了什么问题，或者希望怎么改进（最多 2000 字）",
-    "ufb.msgHint":"请勿在反馈里填写密码或敏感证件信息",
+    "ufb.msgHint":"请勿在意见反馈里填写密码或敏感证件信息",
     "ufb.shotAdd":"+ 附一张截图（可选）",
     "ufb.shotReplace":"换一张截图",
     "ufb.shotRemove":"移除截图",
     "ufb.shotHint":"最多 1 张，与餐食照片相同限制",
     "ufb.shotAlt":"已选截图预览",
     "ufb.deviceLabel":"附带设备信息",
-    "ufb.deviceHint":"会附带应用版本、当前页面、浏览器、屏幕尺寸、语言、在线状态与时间；不会自动附带健康记录、餐食照片或个人资料。",
-    "ufb.submitBtn":"提交反馈",
+    "ufb.deviceHint":"会附带应用版本、当前页面、浏览器与系统、屏幕尺寸、语言、在线状态与时间；不会自动附带健康记录、餐食照片或个人资料。",
+    "ufb.submitBtn":"提交意见反馈",
     "ufb.sending":"提交中…",
-    "ufb.toastSent":"已收到你的反馈，感谢帮忙内测！",
-    "ufb.errEmpty":"请先填写反馈内容",
-    "ufb.errTooLong":"反馈内容最多 2000 字",
+    "ufb.toastSent":"已收到你的意见反馈，感谢帮忙内测！",
+    "ufb.errEmpty":"请先填写意见反馈内容",
+    "ufb.errTooLong":"意见反馈内容最多 2000 字",
     "ufb.errOffline":"当前处于离线状态，恢复联网后再试。",
     "ufb.errBadType":"截图格式不支持，请换 JPG、PNG 或 WebP 图片",
     "ufb.errTooLarge":"截图不能超过 15 MB",
-    "ufb.errRateLimited":"今天提交的反馈已达上限，请明天再试",
+    "ufb.errRateLimited":"今天提交的意见反馈已达上限，请明天再试",
     "ufb.errFail":"提交失败，请稍后再试"
   },
   en: {
@@ -1274,6 +1274,7 @@ const API_ERR_EN = {
   bad_type:"Unsupported image format. Use JPG, PNG, or WebP.",
   bad_idempotency_key:"Invalid upload key.",
   rate_limited:"Too many requests. Please try again later.",
+  feedback_busy:"Another feedback submission is in progress. Please try again in a moment.",
   feedback_rate_limited:"Daily feedback limit reached. Please try again tomorrow.",
   message_too_long:"Feedback can be at most 2,000 characters.",
   storage_quota:"Photo storage limit reached. Delete unused photos or contact admin.",
@@ -1332,8 +1333,9 @@ const API_ERR_ZH = {
   bad_type:"照片格式无效，请使用 JPG、PNG 或 WebP",
   bad_idempotency_key:"请求标识无效",
   rate_limited:"请求太频繁或已达今日上限，请稍后再试",
-  feedback_rate_limited:"今天提交的反馈已达上限，请明天再试",
-  message_too_long:"反馈内容最多 2000 字",
+  feedback_busy:"意见反馈提交处理中，请稍后重试",
+  feedback_rate_limited:"今天提交的意见反馈已达上限，请明天再试",
+  message_too_long:"意见反馈内容最多 2000 字",
   storage_quota:"照片存储空间已达上限，请删除不需要的照片或联系管理员",
   account_deleting:"账号删除处理中，不能再写入或读取记录",
   sampling_disabled:"服务器没有配置 AI",
@@ -3605,16 +3607,21 @@ function collectFeedbackDeviceInfo(){
   const nav = typeof navigator !== "undefined" ? navigator : null;
   const win = typeof window !== "undefined" ? window : null;
   const scr = win?.screen || (typeof screen !== "undefined" ? screen : null);
-  const w = Number(scr?.width) || 0, h = Number(scr?.height) || 0;
-  const vw = Number(win?.innerWidth) || 0, vh = Number(win?.innerHeight) || 0;
-  const dpr = Number.isFinite(Number(win?.devicePixelRatio)) ? Number(win.devicePixelRatio).toFixed(2) : "1.00";
+  const w = Math.max(0, Math.min(20000, Math.round(Number(scr?.width) || 0)));
+  const h = Math.max(0, Math.min(20000, Math.round(Number(scr?.height) || 0)));
+  const vw = Math.max(0, Math.min(20000, Math.round(Number(win?.innerWidth) || 0)));
+  const vh = Math.max(0, Math.min(20000, Math.round(Number(win?.innerHeight) || 0)));
+  const rawDpr = Number(win?.devicePixelRatio);
+  const dpr = Number.isFinite(rawDpr) && rawDpr >= 0.25 && rawDpr <= 10 ? Math.round(rawDpr * 100) / 100 : 1;
   const rev = win?.ritualErrorReporter?.getRevision?.() || "unknown";
   const page = !S.ready ? "boot" : !S.profile ? "setup" : (S.tab || "me");
+  const rawUa = String(nav?.userAgent || "").slice(0, 300);
+  const userAgent = win?.ritualErrorReporter?.parseUA ? win.ritualErrorReporter.parseUA(rawUa) : rawUa;
   return {
     revision: rev,
     page,
-    userAgent: String(nav?.userAgent || "").slice(0, 300),
-    screen: `${w}x${h} (${vw}x${vh}, dpr ${dpr})`,
+    userAgent,
+    screen: {width: w, height: h, viewportWidth: vw, viewportHeight: vh, dpr},
     lang: getLang(),
     online: nav && "onLine" in nav ? !!nav.onLine : true,
     clientTime: new Date().toISOString()

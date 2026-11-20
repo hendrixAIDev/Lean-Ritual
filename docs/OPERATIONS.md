@@ -309,9 +309,9 @@ journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error
 
 ### Tester feedback & reading submissions
 
-Authenticated testers can submit bugs, ideas, or general notes from **Me → Send feedback** (`POST /api/feedback`, rate-limited to `FEEDBACK_DAILY_LIMIT=10` per user and `FEEDBACK_GLOBAL_DAILY_LIMIT=100` globally per UTC day). Submissions are stored in `bojin.db` (`feedback` table), optional screenshots reuse `lib/uploads.js` limits and `blobs/`, and both are included in user exports and purged on account deletion (and deletion-ledger replay).
+Authenticated testers can submit bugs, ideas, or general notes from **Me → Send feedback** (`我的 → 意见反馈`, `POST /api/feedback`). Intake is concurrency-bounded (max 2 in-flight globally, 1 per user) and daily rate-limited (`FEEDBACK_DAILY_LIMIT=10` per user and `FEEDBACK_GLOBAL_DAILY_LIMIT=100` globally per UTC day), checked before buffering request bodies as well as transactionally on write. Submissions are stored in `bojin.db` (`feedback` table), optional screenshots reuse `lib/uploads.js` limits and `blobs/`, and both are included in user exports and purged on account deletion (and deletion-ledger replay).
 
-- **Owner notifications:** If `ALERT_URL` (an HTTPS ntfy topic URL, same format as `/etc/bojin-alert.env`) is set in `/etc/bojin/environment`, `server.js` posts a short plain-text notification containing only the feedback type, feedback ID, user ID, and first ~100 characters (no email, display name, screenshot, or device info). If `ALERT_URL` is empty or unreachable, notifications silently skip/log without failing the submission.
+- **Owner notifications:** If `ALERT_URL` (an HTTPS ntfy topic URL, same format as `/etc/bojin-alert.env`) is set in `/etc/bojin/environment`, `server.js` sends a metadata-only plain-text HTTPS POST (redirects rejected) containing only the feedback type, feedback ID, submission timestamp, and whether a screenshot is attached — no message text, user ID, email, display name, screenshot, or device info. If `ALERT_URL` is empty or unreachable, notifications silently skip/log without failing the submission.
 - **Reading feedback on the host** (read-only, respects the data-access lease):
 
 ```sh

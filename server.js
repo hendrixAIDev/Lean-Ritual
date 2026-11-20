@@ -277,7 +277,14 @@ async function handle(req, res){
       return send(res, 200, { ok: true });
     }
     if (p === "/api/ai" && m === "POST") { const b = await readJSON(req, 20e6); accountData.ensureActive(user.id); return send(res, 200, await aiProxy(user, b)); }
-    if (p === "/api/feedback" && m === "POST") { const b = await readJSON(req, FEEDBACK_MAX_BODY); accountData.ensureActive(user.id); return send(res, 201, await feedback.submit(user, b)); }
+    if (p === "/api/feedback" && m === "POST") {
+      const release = feedback.begin(user.id);
+      try {
+        const b = await readJSON(req, FEEDBACK_MAX_BODY);
+        accountData.ensureActive(user.id);
+        return send(res, 201, await feedback.submit(user, b, { prechecked: true }));
+      } finally { release(); }
+    }
     throw httpErr(404, "not_found");
   }
 

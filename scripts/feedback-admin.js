@@ -66,30 +66,51 @@ function hydrateRow(row, dataDir) {
   };
 }
 
+const TERMINAL_UNSAFE_INLINE_RE = /[\x00-\x1f\x7f-\x9f\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/g;
+const TERMINAL_UNSAFE_MULTILINE_RE = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/g;
+
+function escapeTerminalChar(ch) {
+  const code = ch.charCodeAt(0);
+  return code < 0x100
+    ? `\\x${code.toString(16).padStart(2, "0")}`
+    : `\\u${code.toString(16).padStart(4, "0")}`;
+}
+
+function escapeTerminalText(value, { allowNewlines = false } = {}) {
+  const str = String(value ?? "").replace(/\r\n?/g, "\n");
+  const re = allowNewlines ? TERMINAL_UNSAFE_MULTILINE_RE : TERMINAL_UNSAFE_INLINE_RE;
+  return str.replace(re, escapeTerminalChar);
+}
+
 function formatListText(items) {
   if (!items.length) return "No feedback entries found.";
   return items.map(item => {
-    const meta = [item.created, item.id, `[${item.type}]`, `uid=${item.uid}`];
-    if (item.screenshotBlobId) meta.push(`img=${item.screenshotBlobId}`);
+    const meta = [
+      escapeTerminalText(item.created),
+      escapeTerminalText(item.id),
+      `[${escapeTerminalText(item.type)}]`,
+      `uid=${escapeTerminalText(item.uid)}`
+    ];
+    if (item.screenshotBlobId) meta.push(`img=${escapeTerminalText(item.screenshotBlobId)}`);
     if (item.deviceInfo) {
       const d = item.deviceInfo;
-      meta.push(`env=${d.revision || "?"}/${d.page || "?"}/${d.lang || "?"}/${d.screen || "?"}`);
+      meta.push(`env=${escapeTerminalText(d.revision || "?")}/${escapeTerminalText(d.page || "?")}/${escapeTerminalText(d.lang || "?")}/${escapeTerminalText(d.screen || "?")}`);
     }
-    const msg = String(item.message || "").replace(/\r?\n/g, "\n  ");
+    const msg = escapeTerminalText(item.message || "", { allowNewlines: true }).replace(/\n/g, "\n  ");
     return `${meta.join("  ")}\n  ${msg}`;
   }).join("\n\n");
 }
 
 function formatShowText(item) {
   const lines = [
-    `ID:         ${item.id}`,
-    `Created:    ${item.created}`,
-    `Type:       ${item.type}`,
-    `User ID:    ${item.uid}`,
-    `Screenshot: ${item.screenshotPath || "(none)"}`,
-    `Device:     ${item.deviceInfo ? JSON.stringify(item.deviceInfo) : "(not included)"}`,
+    `ID:         ${escapeTerminalText(item.id)}`,
+    `Created:    ${escapeTerminalText(item.created)}`,
+    `Type:       ${escapeTerminalText(item.type)}`,
+    `User ID:    ${escapeTerminalText(item.uid)}`,
+    `Screenshot: ${item.screenshotPath ? escapeTerminalText(item.screenshotPath) : "(none)"}`,
+    `Device:     ${item.deviceInfo ? escapeTerminalText(JSON.stringify(item.deviceInfo)) : "(not included)"}`,
     "",
-    item.message
+    escapeTerminalText(item.message || "", { allowNewlines: true })
   ];
   return lines.join("\n");
 }
