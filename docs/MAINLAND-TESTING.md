@@ -3,8 +3,8 @@
 Run after staging deployment with disposable accounts and non-sensitive photos. Jay coordinates testers; Codex diagnoses failures. No VPN, proxy acceleration or corporate tunnel during a mainland test. Also collect one overseas control result.
 
 **Forwardable tester kit (send as-is to invited testers):**
-- 中文版（主推）：[TESTER-GUIDE.zh-CN.md](TESTER-GUIDE.zh-CN.md)
-- English version: [TESTER-GUIDE.en.md](TESTER-GUIDE.en.md)
+- 2 分钟快读版（微信/邮件直接转发）：[TESTER-QUICKSTART.zh-CN.md](TESTER-QUICKSTART.zh-CN.md) / [TESTER-QUICKSTART.en.md](TESTER-QUICKSTART.en.md)
+- 15 分钟完整版（中文主推）：[TESTER-GUIDE.zh-CN.md](TESTER-GUIDE.zh-CN.md) / [TESTER-GUIDE.en.md](TESTER-GUIDE.en.md)
 
 ## Results summary matrix (Carrier × City × Device × Result)
 
