@@ -286,6 +286,15 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 - Issue/revoke invitations using scripts/auth-admin.js. Preserve legacy IDs with --legacy-user; verify the mapping with the owner first. After migrating, repeat the import only if needed; it fills missing records rather than overwriting.
 - Account deletion queues cleanup durably before deleting credentials. Files/records are removed after auth deletion, and interrupted cleanup retries at startup/every minute. If auth deletion itself failed, access stays blocked; the user can retry the authenticated /api/auth/delete-user endpoint with their password. Investigate repeated cleanup errors before launch.
 
+### External uptime monitoring
+
+`.github/workflows/uptime.yml` watches `https://leanritual.app` from outside the Aliyun host so whole-host or network outages still alert:
+
+- **What is checked:** `GET https://leanritual.app/api/health` (HTTP 200 with JSON `"ok":true`), `GET https://leanritual.app/login.html` (HTTP 200 with a `Content-Security-Policy` header), and TLS certificate validity (`> 14` days remaining via `openssl s_client` + `x509 -enddate`), with 15 s timeouts and 2 retries per probe.
+- **Cadence:** Scheduled every 10 minutes (`*/10 * * * *`), plus manual `workflow_dispatch` (accepts an optional `target` HTTPS base URL, defaulting to `https://leanritual.app`, for safe failure/recovery testing).
+- **Where alerts go:** On failure, sends one HTTPS POST to the repository secret `ALERT_URL` (the owner's ntfy topic, synced from `/etc/bojin-alert.env` without ever printing the URL) and opens a GitHub issue labelled `uptime`. While an `uptime` issue remains open, follow-up comments and ntfy alerts are rate-limited to at most once per hour. When checks pass again, the workflow comments `recovered`, closes the issue, and sends one ntfy recovery notification.
+- **How to disable:** `gh workflow disable uptime.yml` (re-enable with `gh workflow enable uptime.yml`).
+
 ## Local evidence
 
 Tests cover writer exclusion, checksums, refusing overwrites, snapshots with both databases/photos, pre-auth migration and rollback, and replaying a newer deletion ledger onto an older snapshot. These tests do not replace a restore drill and offsite access verification on the purchased host.

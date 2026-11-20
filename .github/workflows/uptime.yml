@@ -1,0 +1,391 @@
+name: External uptime monitor
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Base HTTPS origin to probe (override for safe failure-path testing)'
+        required: false
+        default: 'https://leanritual.app'
+        type: string
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: lean-ritual-uptime
+  cancel-in-progress: false
+
+jobs:
+  uptime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Run external uptime checks
+        id: check
+        shell: bash
+        env:
+          INPUT_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          target="${INPUT_TARGET:-https://leanritual.app}"
+          target="${target#"${target%%[![:space:]]*}"}"
+          target="${target%"${target##*[![:space:]]}"}"
+          target="${target%/}"
+
+          if [[ ! "$target" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$ ]]; then
+            echo "Invalid target URL (must be https://...): $target" >&2
+            exit 1
+          fi
+
+          hostport="${target#https://}"
+          hostport="${hostport%%/*}"
+          if [[ "$hostport" == *:* ]]; then
+            tls_host="${hostport%:*}"
+            tls_port="${hostport##*:}"
+          else
+            tls_host="$hostport"
+            tls_port="443"
+          fi
+
+          work_dir=$(mktemp -d)
+          trap 'rm -rf "$work_dir"' EXIT
+
+          failures=()
+          report_lines=()
+
+          # 1. GET /api/health -> HTTP 200 with JSON "ok":true
+          health_body="$work_dir/health.json"
+          health_rc=0
+          health_code=$(curl --silent --show-error --proto '=https' --proto-redir '=https' \
+            --max-time 15 --retry 2 --retry-delay 2 --retry-connrefused \
+            -o "$health_body" -w '%{http_code}' -- "${target}/api/health") || health_rc=$?
+          if (( health_rc != 0 )); then
+            failures+=("api/health (curl exit ${health_rc})")
+            report_lines+=("- **FAIL** \`GET ${target}/api/health\`: curl exit ${health_rc} (HTTP ${health_code:-000})")
+          elif [[ "$health_code" != "200" ]]; then
+            failures+=("api/health (HTTP ${health_code})")
+            report_lines+=("- **FAIL** \`GET ${target}/api/health\`: HTTP ${health_code} (expected 200)")
+          elif ! python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if isinstance(d, dict) and d.get("ok") is True else 1)' "$health_body" 2>/dev/null; then
+            failures+=("api/health (missing ok:true)")
+            report_lines+=("- **FAIL** \`GET ${target}/api/health\`: HTTP 200 but body did not contain JSON \`\"ok\":true\`")
+          else
+            report_lines+=("- **PASS** \`GET ${target}/api/health\`: HTTP 200, \`\"ok\":true\`")
+          fi
+
+          # 2. GET /login.html -> HTTP 200 with Content-Security-Policy header
+          login_headers="$work_dir/login.headers"
+          login_rc=0
+          login_code=$(curl --silent --show-error --proto '=https' --proto-redir '=https' \
+            --max-time 15 --retry 2 --retry-delay 2 --retry-connrefused \
+            -D "$login_headers" -o /dev/null -w '%{http_code}' -- "${target}/login.html") || login_rc=$?
+          if (( login_rc != 0 )); then
+            failures+=("login.html (curl exit ${login_rc})")
+            report_lines+=("- **FAIL** \`GET ${target}/login.html\`: curl exit ${login_rc} (HTTP ${login_code:-000})")
+          elif [[ "$login_code" != "200" ]]; then
+            failures+=("login.html (HTTP ${login_code})")
+            report_lines+=("- **FAIL** \`GET ${target}/login.html\`: HTTP ${login_code} (expected 200)")
+          elif ! tr -d '\r' < "$login_headers" | grep -Eiq '^content-security-policy:[[:space:]]*[^[:space:]]'; then
+            failures+=("login.html (missing CSP header)")
+            report_lines+=("- **FAIL** \`GET ${target}/login.html\`: HTTP 200 but missing \`Content-Security-Policy\` header")
+          else
+            report_lines+=("- **PASS** \`GET ${target}/login.html\`: HTTP 200 with \`Content-Security-Policy\` header")
+          fi
+
+          # 3. TLS certificate must have > 14 days remaining
+          enddate_line=""
+          for attempt in 1 2 3; do
+            enddate_line=$(timeout 15 openssl s_client -servername "$tls_host" -connect "${tls_host}:${tls_port}" </dev/null 2>/dev/null \
+              | openssl x509 -noout -enddate 2>/dev/null || true)
+            if [[ "$enddate_line" == notAfter=* ]]; then
+              break
+            fi
+            if (( attempt < 3 )); then
+              sleep 2
+            fi
+          done
+
+          if [[ "$enddate_line" != notAfter=* ]]; then
+            failures+=("TLS (${tls_host}:${tls_port} unreachable)")
+            report_lines+=("- **FAIL** TLS \`${tls_host}:${tls_port}\`: could not read certificate \`enddate\`")
+          else
+            tls_info=$(python3 - "$enddate_line" <<'PY'
+          import datetime, sys
+          line = sys.argv[1].strip()
+          raw = line.removeprefix("notAfter=").strip()
+          if raw.endswith(" GMT") or raw.endswith(" UTC"):
+              raw_no_tz = raw[:-4].strip()
+          else:
+              sys.exit("unsupported-tz")
+          dt = datetime.datetime.strptime(raw_no_tz, "%b %d %H:%M:%S %Y").replace(tzinfo=datetime.timezone.utc)
+          now = datetime.datetime.now(datetime.timezone.utc)
+          sec = int((dt - now).total_seconds())
+          days = sec // 86400
+          print(f"{sec}\t{days}\t{raw}")
+          PY
+            ) || tls_info=""
+            if [[ -z "$tls_info" ]]; then
+              failures+=("TLS (unparseable enddate)")
+              report_lines+=("- **FAIL** TLS \`${tls_host}:${tls_port}\`: could not parse \`${enddate_line}\`")
+            else
+              IFS=$'\t' read -r seconds_left days_left not_after <<< "$tls_info"
+              if (( seconds_left <= 14 * 86400 )); then
+                failures+=("TLS (${days_left}d left <= 14d)")
+                report_lines+=("- **FAIL** TLS \`${tls_host}:${tls_port}\`: expires in ${days_left}d (<= 14d; \`${not_after}\`)")
+              else
+                report_lines+=("- **PASS** TLS \`${tls_host}:${tls_port}\`: ${days_left}d remaining (\`${not_after}\`)")
+              fi
+            fi
+          fi
+
+          report=$(printf '%s\n' "${report_lines[@]}")
+          printf '%s\n' "$report"
+
+          if (( ${#failures[@]} == 0 )); then
+            passed="true"
+            failure_summary=""
+          else
+            passed="false"
+            failure_summary="${failures[0]}"
+            for item in "${failures[@]:1}"; do
+              failure_summary="${failure_summary}; ${item}"
+            done
+            failure_summary=$(printf '%s' "$failure_summary" | tr '\r\n' '  ')
+          fi
+
+          {
+            echo "passed=${passed}"
+            echo "target=${target}"
+            echo "failure_summary=${failure_summary}"
+            eof="UPTIME_REPORT_EOF_${RANDOM}_$$"
+            echo "report<<${eof}"
+            printf '%s\n' "$report"
+            echo "${eof}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Notify and update uptime issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ALERT_URL: ${{ secrets.ALERT_URL }}
+          CHECK_PASSED: ${{ steps.check.outputs.passed }}
+          CHECK_TARGET: ${{ steps.check.outputs.target }}
+          FAILURE_SUMMARY: ${{ steps.check.outputs.failure_summary }}
+          CHECK_REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          set -euo pipefail
+
+          checked_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          send_ntfy() {
+            local title=$1
+            local tags=$2
+            local priority=$3
+            local body=$4
+
+            local url=${ALERT_URL:-}
+            url=${url#"${url%%[![:space:]]*}"}
+            url=${url%"${url##*[![:space:]]}"}
+
+            if [[ -z "$url" ]]; then
+              echo "ALERT_URL secret is not configured; skipping ntfy notification." >&2
+              return 0
+            fi
+            if [[ ! "$url" =~ ^https://[^[:space:]/]+ || "$url" =~ [[:space:]] ]]; then
+              echo "Refusing invalid or non-HTTPS ALERT_URL." >&2
+              return 1
+            fi
+
+            local curl_rc=0
+            local http_code=""
+            http_code=$(curl --proto '=https' --proto-redir '=https' \
+              --location --max-redirs 5 --post301 --post302 --post303 \
+              --silent --connect-timeout 5 --max-time 15 \
+              --retry 2 --retry-delay 2 --retry-connrefused \
+              -H "Title: $title" \
+              -H "Tags: $tags" \
+              -H "Priority: $priority" \
+              --data-binary "$body" \
+              -o /dev/null -w '%{http_code}' -- "$url" 2>/dev/null) || curl_rc=$?
+
+            if (( curl_rc != 0 )) || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+              echo "Failed to deliver ntfy alert (curl=${curl_rc} http=${http_code:-000})." >&2
+              return 1
+            fi
+            echo "Delivered ntfy notification (http=${http_code})."
+            return 0
+          }
+
+          open_issues_json=$(gh api --paginate "repos/${REPOSITORY}/issues?state=open&labels=uptime&sort=created&direction=asc&per_page=100" \
+            | python3 -c '
+          import json, sys
+          raw = sys.stdin.read().strip()
+          items = []
+          dec = json.JSONDecoder()
+          idx = 0
+          while idx < len(raw):
+              while idx < len(raw) and raw[idx].isspace():
+                  idx += 1
+              if idx >= len(raw):
+                  break
+              chunk, idx = dec.raw_decode(raw, idx)
+              if isinstance(chunk, list):
+                  items.extend(chunk)
+          issues = [
+              {"number": i["number"], "created_at": i["created_at"]}
+              for i in items
+              if "pull_request" not in i
+          ]
+          print(json.dumps(issues))
+          ')
+
+          open_count=$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "$open_issues_json")
+
+          if [[ "$CHECK_PASSED" != "true" ]]; then
+            if (( open_count == 0 )); then
+              issue_num=""
+              if gh label create uptime \
+                --repo "$REPOSITORY" \
+                --color d93f0b \
+                --description "External uptime monitoring alerts" \
+                --force >/dev/null 2>&1; then
+                :
+              else
+                echo "Warning: could not create/update uptime label; proceeding with issue creation." >&2
+              fi
+
+              issue_title="Uptime alert: ${CHECK_TARGET} (${FAILURE_SUMMARY})"
+              if (( ${#issue_title} > 200 )); then
+                issue_title="${issue_title:0:197}..."
+              fi
+
+              issue_body=$(cat <<EOF
+          External uptime check **failed** at \`${checked_at}\`.
+
+          - **Target:** \`${CHECK_TARGET}\`
+          - **Failed checks:** ${FAILURE_SUMMARY}
+          - **Workflow run:** ${RUN_URL}
+
+          ### Check details
+          ${CHECK_REPORT}
+          EOF
+              )
+
+              if issue_url=$(gh issue create \
+                --repo "$REPOSITORY" \
+                --title "$issue_title" \
+                --label uptime \
+                --body "$issue_body"); then
+                issue_num="${issue_url##*/}"
+                echo "Opened uptime issue #${issue_num}."
+              else
+                echo "Failed to open uptime issue." >&2
+              fi
+
+              issue_ref="${issue_num:+#${issue_num}}"
+              issue_ref="${issue_ref:-untracked}"
+              ntfy_body=$(printf 'Lean Ritual 外部监控告警 / External uptime alert\n目标 / Target: %s\n失败项 / Failed: %s\nIssue: %s\nRun: %s' \
+                "$CHECK_TARGET" "$FAILURE_SUMMARY" "$issue_ref" "$RUN_URL")
+              send_ntfy "Lean Ritual Uptime Alert" "rotating_light" "high" "$ntfy_body" || true
+            else
+              IFS=$'\t' read -r issue_num issue_created_at < <(
+                python3 -c 'import json, sys; i = json.loads(sys.argv[1])[0]; print(i["number"], i["created_at"], sep="\t")' "$open_issues_json"
+              )
+
+              last_comment_at=$(gh api --paginate "repos/${REPOSITORY}/issues/${issue_num}/comments?per_page=100" \
+                | python3 -c '
+          import json, sys
+          raw = sys.stdin.read().strip()
+          items = []
+          dec = json.JSONDecoder()
+          idx = 0
+          while idx < len(raw):
+              while idx < len(raw) and raw[idx].isspace():
+                  idx += 1
+              if idx >= len(raw):
+                  break
+              chunk, idx = dec.raw_decode(raw, idx)
+              if isinstance(chunk, list):
+                  items.extend(chunk)
+          print(items[-1]["created_at"] if items else "")
+          ')
+
+              last_ts="${last_comment_at:-$issue_created_at}"
+              elapsed_sec=$(python3 - "$last_ts" <<'PY'
+          import datetime, sys
+          ts = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+          now = datetime.datetime.now(datetime.timezone.utc)
+          print(int((now - ts).total_seconds()))
+          PY
+              )
+
+              if (( elapsed_sec >= 3600 )); then
+                elapsed_min=$((elapsed_sec / 60))
+                comment_body=$(cat <<EOF
+          Still failing at \`${checked_at}\` (last update ${elapsed_min}m ago).
+
+          - **Target:** \`${CHECK_TARGET}\`
+          - **Failed checks:** ${FAILURE_SUMMARY}
+          - **Workflow run:** ${RUN_URL}
+
+          ### Check details
+          ${CHECK_REPORT}
+          EOF
+                )
+                if gh issue comment "$issue_num" --repo "$REPOSITORY" --body "$comment_body" >/dev/null; then
+                  echo "Commented on open uptime issue #${issue_num}."
+                else
+                  echo "Failed to comment on uptime issue #${issue_num}." >&2
+                fi
+
+                ntfy_body=$(printf 'Lean Ritual 外部监控仍异常 / Still down\n目标 / Target: %s\n失败项 / Failed: %s\nIssue: #%s\nRun: %s' \
+                  "$CHECK_TARGET" "$FAILURE_SUMMARY" "$issue_num" "$RUN_URL")
+                send_ntfy "Lean Ritual Uptime Alert" "rotating_light" "high" "$ntfy_body" || true
+              else
+                echo "Open uptime issue #${issue_num} was updated ${elapsed_sec}s ago (< 3600s); skipping comment and ntfy to avoid spam."
+              fi
+            fi
+
+            echo "Uptime check failed: ${FAILURE_SUMMARY}" >&2
+            exit 1
+          fi
+
+          # Checks passed: if any open uptime issues exist, comment "recovered", close them, and send one ntfy recovery message.
+          if (( open_count > 0 )); then
+            closed_summary=""
+            while IFS= read -r issue_num; do
+              [[ -n "$issue_num" ]] || continue
+              recovery_comment=$(cat <<EOF
+          recovered — all external uptime checks passed at \`${checked_at}\`.
+
+          - **Target:** \`${CHECK_TARGET}\`
+          - **Workflow run:** ${RUN_URL}
+
+          ### Check details
+          ${CHECK_REPORT}
+          EOF
+              )
+              gh issue comment "$issue_num" --repo "$REPOSITORY" --body "$recovery_comment" >/dev/null
+              gh issue close "$issue_num" --repo "$REPOSITORY" --reason completed >/dev/null
+              if [[ -n "$closed_summary" ]]; then
+                closed_summary="${closed_summary}, #${issue_num}"
+              else
+                closed_summary="#${issue_num}"
+              fi
+              echo "Closed recovered uptime issue #${issue_num}."
+            done < <(
+              python3 -c 'import json, sys; print("\n".join(str(i["number"]) for i in json.loads(sys.argv[1])))' "$open_issues_json"
+            )
+
+            ntfy_body=$(printf 'Lean Ritual 外部监控已恢复 / External uptime recovered\n目标 / Target: %s\n所有检查已通过 / All checks passed (%s)\nRun: %s' \
+              "$CHECK_TARGET" "$closed_summary" "$RUN_URL")
+            send_ntfy "Lean Ritual Uptime Recovered" "white_check_mark" "default" "$ntfy_body"
+          else
+            echo "All uptime checks passed; no open uptime issues."
+          fi
