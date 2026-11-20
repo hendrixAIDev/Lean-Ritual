@@ -10,7 +10,7 @@ const { STORYBOARDS, formatScriptMarkdown } = require('./storyboard');
 const { generateSharedAssets, generateLangAssets, renderPoster } = require('./assets');
 const { seedDemoAccount } = require('./seed');
 const { recordAllScenes } = require('./record');
-const { composeLanguageVideo } = require('./compose');
+const { composeLanguageVideo, probeMedia } = require('./compose');
 
 const ROOT = path.resolve(__dirname, '../..');
 
@@ -19,7 +19,8 @@ function parseArgs(argv) {
     langs: ['zh', 'en'],
     outDir: path.join(os.tmpdir(), 'lean-ritual-demo-video'),
     keepWork: false,
-    skipBuild: false
+    skipBuild: false,
+    dryRun: false
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -32,8 +33,10 @@ function parseArgs(argv) {
       opts.keepWork = true;
     } else if (a === '--skip-build') {
       opts.skipBuild = true;
+    } else if (a === '--dry-run') {
+      opts.dryRun = true;
     } else if (a === '-h' || a === '--help') {
-      console.log(`Usage: node scripts/demo-video/run.js [--lang zh|en|all] [--out <dir>] [--skip-build] [--keep-work]`);
+      console.log(`Usage: node tools/demo-video/run.js [--lang zh|en|all] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`);
       process.exit(0);
     }
   }
@@ -84,6 +87,29 @@ async function main() {
       const seeded = await seedDemoAccount(assetBrowser, sb, shared.breakfastPhoto);
 
       try {
+        if (opts.dryRun) {
+          console.log(`=== [${lang}] Dry run: recording hook scene only ===`);
+          const recorded = await recordAllScenes({
+            browser: recordBrowser,
+            srv: seeded.srv,
+            storageState: seeded.storageState,
+            uid: seeded.uid,
+            sb,
+            workDir,
+            lunchPhotoPath: shared.lunchPhoto,
+            onlyScenes: ['hook']
+          });
+          const hookInfo = probeMedia(recorded[0].videoPath);
+          summary.push({
+            file: `[dry-run] ${lang}/hook.webm`,
+            duration: `${hookInfo.duration.toFixed(1)}s`,
+            resolution: `${hookInfo.video.width}x${hookInfo.video.height}`,
+            codecs: hookInfo.video.codec,
+            sizeMB: `${(hookInfo.sizeBytes / 1048576).toFixed(2)} MB`
+          });
+          continue;
+        }
+
         console.log(`=== [${lang}] Recording 6 live walkthrough scenes ===`);
         const recorded = await recordAllScenes({
           browser: recordBrowser,

@@ -291,16 +291,17 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
   }
 }
 
-async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, lunchPhotoPath }) {
+async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, lunchPhotoPath, onlyScenes = null }) {
   const rawDir = path.join(workDir, `raw-${sb.lang}`);
   fs.mkdirSync(rawDir, { recursive: true });
   const isZh = sb.lang === 'zh';
+  const want = id => !onlyScenes || onlyScenes.includes(id);
 
   const scenes = [];
   const baseOpts = { browser, srv, storageState, uid, sb, rawDir };
 
   // Scene 0: Hook — App Home (Today)
-  scenes.push(
+  if (want('hook')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'hook',
@@ -319,7 +320,7 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   );
 
   // Scene 1: Today — Daily Check-in
-  scenes.push(
+  if (want('checkin')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'checkin',
@@ -343,7 +344,7 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   );
 
   // Scene 2: Log Workout + Switch to Log Tab (Weight, Calorie Balance, Strength Progress)
-  scenes.push(
+  if (want('workout_log')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'workout_log',
@@ -394,7 +395,7 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   );
 
   // Scene 3: Meals — Snap Photo -> AI Estimate -> Updated Macro Bars
-  scenes.push(
+  if (want('meals')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'meals',
@@ -446,7 +447,7 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   );
 
   // Scene 4: Feedback — AI Coach Review -> Adopt Chooser -> One-Tap Undo
-  scenes.push(
+  if (want('coach')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'coach',
@@ -495,7 +496,7 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   );
 
   // Scene 5: Me — Home Screen Hint, Language Switch, Export Data
-  scenes.push(
+  if (want('me')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'me',

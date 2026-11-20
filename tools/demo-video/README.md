@@ -21,13 +21,14 @@ Reproducible generator for the ~2-minute vertical (1080×1920, 30fps, H.264 + AA
 ## One-Command Regenerate
 
 ```sh
-npm ci && node scripts/demo-video/run.js --out /tmp/lean-ritual-video
+npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 ```
 
 ### Options
 
 - `--lang zh|en|all` — choose language(s) to generate (default: `all`)
 - `--out <dir>` — output directory outside the repo (default: `/tmp/lean-ritual-demo-video`)
+- `--dry-run` — seed and record only the `hook` scene to sanity-check the pipeline without composing MP4s
 - `--skip-build` — skip running `node build.js` first
 - `--keep-work` — keep temporary intermediate recordings/clips for inspection
 
