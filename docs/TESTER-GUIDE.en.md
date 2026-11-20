@@ -1,5 +1,7 @@
 # Lean Ritual Beta Tester Guide
 
+> **Short on time? Read the 2-minute version:** [TESTER-QUICKSTART.en.md](TESTER-QUICKSTART.en.md)
+
 Thanks for helping test **Lean Ritual** (`薄肌日课`)! It is a lightweight web app for tracking daily workouts, meals, and body weight across five bottom tabs: **Today / Meals / Log / Feedback / Me**. It runs directly in your browser (and installs to your home screen)—no Claude account, subscription, or personal API key is needed. If AI is temporarily disabled on the server, every logging feature still works manually.
 
 > **Mainland China testers:** Please **turn OFF any VPN, proxy, or accelerator** and test directly over mobile cellular data (China Mobile / Unicom / Telecom) or regular home Wi-Fi at `https://leanritual.app`. The full walkthrough takes about **15 minutes**.
