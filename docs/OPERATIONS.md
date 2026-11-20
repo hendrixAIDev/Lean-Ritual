@@ -307,6 +307,21 @@ journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error
 - **Where alerts go:** On failure, sends one HTTPS POST to the repository secret `ALERT_URL` (the owner's ntfy topic, synced from `/etc/bojin-alert.env` without ever printing the URL) and opens a GitHub issue labelled `uptime`. While an `uptime` issue remains open, follow-up comments and ntfy alerts are rate-limited to at most once per hour. When checks pass again, the workflow comments `recovered`, closes the issue, and sends one ntfy recovery notification.
 - **How to disable:** `gh workflow disable uptime.yml` (re-enable with `gh workflow enable uptime.yml`).
 
+### Tester feedback & reading submissions
+
+Authenticated testers can submit bugs, ideas, or general notes from **Me → Send feedback** (`我的 → 意见反馈`, `POST /api/feedback`). Intake is concurrency-bounded (max 2 in-flight globally, 1 per user) and daily rate-limited (`FEEDBACK_DAILY_LIMIT=10` per user and `FEEDBACK_GLOBAL_DAILY_LIMIT=100` globally per UTC day), checked before buffering request bodies as well as transactionally on write. Submissions are stored in `bojin.db` (`feedback` table), optional screenshots reuse `lib/uploads.js` limits and `blobs/`, and both are included in user exports and purged on account deletion (and deletion-ledger replay).
+
+- **Owner notifications:** If `ALERT_URL` (an HTTPS ntfy topic URL, same format as `/etc/bojin-alert.env`) is set in `/etc/bojin/environment`, `server.js` sends a metadata-only plain-text HTTPS POST (redirects rejected) containing only the feedback type, feedback ID, submission timestamp, and whether a screenshot is attached — no message text, user ID, email, display name, screenshot, or device info. If `ALERT_URL` is empty or unreachable, notifications silently skip/log without failing the submission.
+- **Reading feedback on the host** (read-only, respects the data-access lease):
+
+```sh
+# List the 20 most recent submissions (optional: --limit N, --type bug|idea|other, --json)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js list --limit 20
+
+# Inspect one submission in full (including device info and screenshot blob path)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js show <feedback-id>
+```
+
 ## Local evidence
 
 Tests cover writer exclusion, checksums, refusing overwrites, snapshots with both databases/photos, pre-auth migration and rollback, and replaying a newer deletion ledger onto an older snapshot. These tests do not replace a restore drill and offsite access verification on the purchased host.

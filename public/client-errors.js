@@ -300,7 +300,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { scrubMessage, normalizeName, normalizeSource, normalizeUA };
+    module.exports = { scrubMessage, normalizeName, normalizeSource, normalizeUA, parseUA };
   }
   if (typeof window !== "undefined") {
     const defaultReporter = createReporter();
