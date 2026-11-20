@@ -19,6 +19,4 @@
 
 ## Report a problem
 
-If anything breaks or feels slow, send me a **screenshot** (hide URL tokens, never send passwords), **phone model**, **network (carrier/city)**, and **time**.
-
-`Time | City/carrier (cellular/Wi-Fi) | Phone & browser | Step or error (attach screenshot)`
+Found a bug or idea? Tap **Me → Send feedback** right inside the app (under 30 seconds, optional 1 screenshot, automatically attaches version & device info without health data). If you can't sign in, tap **Can't sign in? Email feedback** at the bottom of the login page (never send passwords or URL tokens).

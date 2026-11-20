@@ -89,6 +89,9 @@ textarea{min-height:64px;resize:vertical}
 .checks span{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
 .checks input:checked+span{background:var(--accent-soft);border-color:var(--accent);font-weight:700}
 .checks input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+fieldset.ufb-group{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+fieldset.ufb-group legend{font-size:13px;color:var(--muted);padding:0}
+.ufb-shot{display:flex;flex-direction:column;gap:8px}
 .sec-n{font-family:var(--f-num);font-size:26px;color:var(--accent);font-weight:700;line-height:1}
 .ex{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
 .ex:first-of-type{border-top:none;padding-top:0}
@@ -833,7 +836,34 @@ const I18N = {
     "toast.favSaved":"已收藏", "toast.favRemoved":"已取消收藏",
     "toast.mealTypeChanged":"已改成{type}", "toast.max4Photos":"一餐最多 4 张照片",
     "toast.restoredWorkouts":"已从备份恢复 {n} 天的训练记录",
-    "toast.rescueDrafts":"找到 {dates} 填了但没保存的训练，打开那天点“完成训练，保存”即可"
+    "toast.rescueDrafts":"找到 {dates} 填了但没保存的训练，打开那天点“完成训练，保存”即可",
+    "ufb.title":"反馈",
+    "ufb.subtitle":"遇到问题或有建议？30 秒内直接发给我们，不用截屏切软件。",
+    "ufb.openBtn":"发反馈",
+    "ufb.typeLabel":"类型",
+    "ufb.type.bug":"问题",
+    "ufb.type.idea":"建议",
+    "ufb.type.other":"其他",
+    "ufb.msgLabel":"内容（必填）",
+    "ufb.msgPlaceholder":"说说你遇到了什么问题，或者希望怎么改进（最多 2000 字）",
+    "ufb.msgHint":"请勿在反馈里填写密码或敏感证件信息",
+    "ufb.shotAdd":"+ 附一张截图（可选）",
+    "ufb.shotReplace":"换一张截图",
+    "ufb.shotRemove":"移除截图",
+    "ufb.shotHint":"最多 1 张，与餐食照片相同限制",
+    "ufb.shotAlt":"已选截图预览",
+    "ufb.deviceLabel":"附带设备信息",
+    "ufb.deviceHint":"会附带应用版本、当前页面、浏览器、屏幕尺寸、语言、在线状态与时间；不会自动附带健康记录、餐食照片或个人资料。",
+    "ufb.submitBtn":"提交反馈",
+    "ufb.sending":"提交中…",
+    "ufb.toastSent":"已收到你的反馈，感谢帮忙内测！",
+    "ufb.errEmpty":"请先填写反馈内容",
+    "ufb.errTooLong":"反馈内容最多 2000 字",
+    "ufb.errOffline":"当前处于离线状态，恢复联网后再试。",
+    "ufb.errBadType":"截图格式不支持，请换 JPG、PNG 或 WebP 图片",
+    "ufb.errTooLarge":"截图不能超过 15 MB",
+    "ufb.errRateLimited":"今天提交的反馈已达上限，请明天再试",
+    "ufb.errFail":"提交失败，请稍后再试"
   },
   en: {
     "app.title":"Lean Ritual",
@@ -1194,7 +1224,34 @@ const I18N = {
     "toast.favSaved":"Video saved", "toast.favRemoved":"Video removed",
     "toast.mealTypeChanged":"Changed to {type}", "toast.max4Photos":"Up to 4 photos per meal",
     "toast.restoredWorkouts":"Restored {n} day(s) of workouts from backup",
-    "toast.rescueDrafts":"Found unsaved workout entries on {dates} — open that day and tap \"Finish & save workout\""
+    "toast.rescueDrafts":"Found unsaved workout entries on {dates} — open that day and tap \"Finish & save workout\"",
+    "ufb.title":"Send feedback",
+    "ufb.subtitle":"Found a bug or have an idea? Tell us in under 30 seconds without leaving the app.",
+    "ufb.openBtn":"Send feedback",
+    "ufb.typeLabel":"Type",
+    "ufb.type.bug":"Bug",
+    "ufb.type.idea":"Idea",
+    "ufb.type.other":"Other",
+    "ufb.msgLabel":"Message (required)",
+    "ufb.msgPlaceholder":"Describe what happened or what could be better (up to 2,000 chars)",
+    "ufb.msgHint":"Do not include passwords or sensitive IDs",
+    "ufb.shotAdd":"+ Attach screenshot (optional)",
+    "ufb.shotReplace":"Replace screenshot",
+    "ufb.shotRemove":"Remove",
+    "ufb.shotHint":"1 image max, same limits as meal photos",
+    "ufb.shotAlt":"Selected screenshot preview",
+    "ufb.deviceLabel":"Include device info",
+    "ufb.deviceHint":"Attaches app version, current tab, browser, screen size, language, online status, and time. Never attaches health data, meal photos, or your profile.",
+    "ufb.submitBtn":"Send feedback",
+    "ufb.sending":"Sending…",
+    "ufb.toastSent":"Feedback sent — thank you!",
+    "ufb.errEmpty":"Please write your feedback first.",
+    "ufb.errTooLong":"Feedback can be at most 2,000 characters.",
+    "ufb.errOffline":"You're offline. Reconnect and try again.",
+    "ufb.errBadType":"Unsupported image format. Please use JPG, PNG, or WebP.",
+    "ufb.errTooLarge":"Screenshot must be 15 MB or smaller.",
+    "ufb.errRateLimited":"Daily feedback limit reached. Please try again tomorrow.",
+    "ufb.errFail":"Couldn't send feedback. Please try again."
   }
 };
 
@@ -1217,6 +1274,8 @@ const API_ERR_EN = {
   bad_type:"Unsupported image format. Use JPG, PNG, or WebP.",
   bad_idempotency_key:"Invalid upload key.",
   rate_limited:"Too many requests. Please try again later.",
+  feedback_rate_limited:"Daily feedback limit reached. Please try again tomorrow.",
+  message_too_long:"Feedback can be at most 2,000 characters.",
   storage_quota:"Photo storage limit reached. Delete unused photos or contact admin.",
   account_deleting:"Account deletion is in progress.",
   sampling_disabled:"AI is not enabled on this server.",
@@ -1273,6 +1332,8 @@ const API_ERR_ZH = {
   bad_type:"照片格式无效，请使用 JPG、PNG 或 WebP",
   bad_idempotency_key:"请求标识无效",
   rate_limited:"请求太频繁或已达今日上限，请稍后再试",
+  feedback_rate_limited:"今天提交的反馈已达上限，请明天再试",
+  message_too_long:"反馈内容最多 2000 字",
   storage_quota:"照片存储空间已达上限，请删除不需要的照片或联系管理员",
   account_deleting:"账号删除处理中，不能再写入或读取记录",
   sampling_disabled:"服务器没有配置 AI",
@@ -1513,7 +1574,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
-  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null };
+  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null, ufb:null };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
 
@@ -3540,6 +3601,127 @@ function viewHostedAccount(){
 }
 function viewAccount(){ return viewHostedAccount(); }
 function viewAI(){ return ""; }
+function collectFeedbackDeviceInfo(){
+  const nav = typeof navigator !== "undefined" ? navigator : null;
+  const win = typeof window !== "undefined" ? window : null;
+  const scr = win?.screen || (typeof screen !== "undefined" ? screen : null);
+  const w = Number(scr?.width) || 0, h = Number(scr?.height) || 0;
+  const vw = Number(win?.innerWidth) || 0, vh = Number(win?.innerHeight) || 0;
+  const dpr = Number.isFinite(Number(win?.devicePixelRatio)) ? Number(win.devicePixelRatio).toFixed(2) : "1.00";
+  const rev = win?.ritualErrorReporter?.getRevision?.() || "unknown";
+  const page = !S.ready ? "boot" : !S.profile ? "setup" : (S.tab || "me");
+  return {
+    revision: rev,
+    page,
+    userAgent: String(nav?.userAgent || "").slice(0, 300),
+    screen: `${w}x${h} (${vw}x${vh}, dpr ${dpr})`,
+    lang: getLang(),
+    online: nav && "onLine" in nav ? !!nav.onLine : true,
+    clientTime: new Date().toISOString()
+  };
+}
+function blobToBase64(blob){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const idx = s.indexOf(",");
+      resolve(idx >= 0 ? s.slice(idx + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error("read_failed"));
+    r.readAsDataURL(blob);
+  });
+}
+async function prepareFeedbackScreenshot(file){
+  const maxBytes = 15 * 1024 * 1024;
+  const r = await compress2(file);
+  if (r.ok && r.blob) {
+    if (r.blob.size > maxBytes) throw {code:"too_large"};
+    return {dataBase64: await blobToBase64(r.blob), contentType: r.blob.type || "image/jpeg"};
+  }
+  if (/^image\/(jpeg|png|webp|gif)$/i.test(file.type || "")) {
+    if (file.size > maxBytes) throw {code:"too_large"};
+    return {dataBase64: await blobToBase64(file), contentType: file.type};
+  }
+  throw {code:"bad_type"};
+}
+function closeTesterFeedback(restoreFocus){
+  if (S.ufb?.previewUrl) { try { URL.revokeObjectURL(S.ufb.previewUrl); } catch {} }
+  S.ufb = null;
+  render();
+  if (restoreFocus) focusEl($('[data-act="ufb-open"]'));
+}
+async function submitTesterFeedback(){
+  const f = S.ufb;
+  if (!f || f.busy) return;
+  const msgEl = $("#ufb-msg");
+  const rawMsg = msgEl ? String(msgEl.value ?? "") : String(f.message || "");
+  f.message = rawMsg;
+  const trimmed = rawMsg.trim();
+  if (!trimmed) { f.errKey = "ufb.errEmpty"; f.errObj = null; render(); focusEl($("#ufb-msg")); return; }
+  if (Array.from(trimmed).length > 2000) { f.errKey = "ufb.errTooLong"; f.errObj = null; render(); focusEl($("#ufb-msg")); return; }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    f.errKey = "ufb.errOffline"; f.errObj = null; render(); toast(t("ufb.errOffline"), 4000); return;
+  }
+  f.busy = true; f.errKey = null; f.errObj = null; render();
+  try {
+    const screenshot = f.file ? await prepareFeedbackScreenshot(f.file) : null;
+    const payload = {
+      type: f.type || "bug",
+      message: trimmed,
+      includeDeviceInfo: !!f.includeDeviceInfo,
+      deviceInfo: f.includeDeviceInfo ? collectFeedbackDeviceInfo() : null,
+      screenshot
+    };
+    if (!window.ritual?.sendFeedback) throw {code:"network"};
+    await window.ritual.sendFeedback(payload);
+    closeTesterFeedback(true);
+    toast(t("ufb.toastSent"), 3500);
+  } catch (e) {
+    if (!S.ufb) return;
+    S.ufb.busy = false;
+    const code = e?.code || "";
+    if (code === "network" || (typeof navigator !== "undefined" && navigator.onLine === false)) {
+      S.ufb.errKey = "ufb.errOffline"; S.ufb.errObj = null;
+    } else if (code === "bad_type") {
+      S.ufb.errKey = "ufb.errBadType"; S.ufb.errObj = null;
+    } else if (code === "too_large") {
+      S.ufb.errKey = "ufb.errTooLarge"; S.ufb.errObj = null;
+    } else if (code === "feedback_rate_limited") {
+      S.ufb.errKey = "ufb.errRateLimited"; S.ufb.errObj = null;
+    } else if (code === "storage_quota") {
+      S.ufb.errKey = "photoErr.storage_quota"; S.ufb.errObj = null;
+    } else if (code === "message_too_long") {
+      S.ufb.errKey = "ufb.errTooLong"; S.ufb.errObj = null;
+    } else {
+      S.ufb.errKey = null; S.ufb.errObj = e || {};
+    }
+    render();
+  }
+}
+function viewTesterFeedback(){
+  const f = S.ufb;
+  if (!f) {
+    return `<section class="card" id="tester-fb-card"><div class="row between"><h2>${esc(t("ufb.title"))}</h2><button type="button" class="btn primary" data-act="ufb-open">${esc(t("ufb.openBtn"))}</button></div><p class="small muted">${esc(t("ufb.subtitle"))}</p></section>`;
+  }
+  const errText = f.errKey ? t(f.errKey) : f.errObj ? apiErrMsg(f.errObj, t("ufb.errFail")) : "";
+  const count = Array.from(f.message || "").length;
+  const safePrev = f.previewUrl ? safeImage(f.previewUrl) : "";
+  return `<section class="card" id="tester-fb-card">
+    <div class="row between"><h2>${esc(t("ufb.title"))}</h2><button type="button" class="btn" data-act="ufb-cancel" ${f.busy?"disabled":""}>${esc(t("common.cancel"))}</button></div>
+    <fieldset class="ufb-group"><legend>${esc(t("ufb.typeLabel"))}</legend><div class="checks">${["bug","idea","other"].map(k => `<label><input type="radio" name="ufb-type" value="${k}" ${(f.type||"bug")===k?"checked":""} ${f.busy?"disabled":""}><span>${esc(t("ufb.type." + k))}</span></label>`).join("")}</div></fieldset>
+    <label><span>${esc(t("ufb.msgLabel"))}</span><textarea id="ufb-msg" rows="4" maxlength="2000" placeholder="${esc(t("ufb.msgPlaceholder"))}" ${f.busy?"disabled":""}>${esc(f.message || "")}</textarea></label>
+    <div class="row between small muted"><span>${esc(t("ufb.msgHint"))}</span><span id="ufb-count" class="num">${count} / 2000</span></div>
+    <div class="ufb-shot">
+      ${safePrev ? `<img class="preview" src="${esc(safePrev)}" alt="${esc(t("ufb.shotAlt"))}"><div class="row"><label class="chip">${esc(t("ufb.shotReplace"))}<input id="ufb-file" type="file" accept="image/*" ${f.busy?"disabled":""}></label><button type="button" class="chip bad" data-act="ufb-unpick" ${f.busy?"disabled":""}>${esc(t("ufb.shotRemove"))}</button></div>`
+      : `<div class="row"><label class="chip">${esc(t("ufb.shotAdd"))}<input id="ufb-file" type="file" accept="image/*" ${f.busy?"disabled":""}></label><span class="small muted">${esc(t("ufb.shotHint"))}</span></div>`}
+    </div>
+    <label class="checkline"><input id="ufb-device" type="checkbox" ${f.includeDeviceInfo?"checked":""} ${f.busy?"disabled":""}><span>${esc(t("ufb.deviceLabel"))}</span></label>
+    <p class="small muted">${esc(t("ufb.deviceHint"))}</p>
+    ${errText ? `<p class="small" role="alert" style="color:var(--bad)">${esc(errText)}</p>` : ""}
+    <div class="row"><button type="button" class="btn primary block" data-act="ufb-submit" ${f.busy?"disabled":""}>${esc(f.busy ? t("ufb.sending") : t("ufb.submitBtn"))}</button></div>
+  </section>`;
+}
 function viewMe(){
   const p = S.profile, tg = targets(), td = todayStr();
   const mult = tg.st === "cut" ? t("me.multCut") : tg.st === "bulk" ? t("me.multBulk") : t("me.multMaint");
@@ -3567,6 +3749,7 @@ function viewMe(){
   </section>
   ${(S.profileHistory||[]).length ? `<section class="card"><h3>${esc(t("me.historyTitle"))}</h3><p class="small muted">${esc(t("me.historyHint"))}</p>
     <ul class="clean small">${S.profileHistory.slice(0,10).map(h => `<li><span class="num">${esc((h.savedAt||"").slice(0,10))}</span> ${h.changes?.length ? h.changes.map(c => esc(fmtProfileChange(c))).join(getLang() === "en" ? "; " : "；") : esc(t("me.noChange"))}</li>`).join("")}</ul></section>` : ""}
+  ${viewTesterFeedback()}
   ${viewAccount()}
   ${viewAI()}
   <section class="card"><h3>${esc(t("me.guideTitle"))}</h3><p class="small">${esc(t("me.guideBody"))}</p><a class="link" href="${GUIDE_URL}" target="_blank" rel="noopener">${esc(t("me.guideLink"))}</a>
@@ -3593,6 +3776,7 @@ document.addEventListener("keydown", ev => {
   else if (S.ed) { const i = S.ed.i; S.ed = null; render(); focusEl($(`[data-act="ed-open"][data-v="${i}"]`)); ev.preventDefault(); }
   else if (S.label) { S.label = null; render(); ev.preventDefault(); }
   else if (S.pwEdit && !S.pwEdit.busy) { S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); ev.preventDefault(); }
+  else if (S.ufb && !S.ufb.busy) { closeTesterFeedback(true); ev.preventDefault(); }
 });
 document.addEventListener("click", async ev => {
   const b = ev.target.closest("[data-act]"); if (!b) return;
@@ -3611,6 +3795,10 @@ document.addEventListener("click", async ev => {
     case "cu-add": { const c = CORE.find(x => x[0] === v); updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = [...(d.custom.ex || []), c ? {name:c[0], sets:c[1], lo:c[2], hi:c[3]} : {name:"", sets:3, lo:10, hi:15}]; if (!d.override) d.override = "custom"; }).catch(()=>{}); break; }
     case "pw-edit": S.pwEdit = {}; render(); focusEl($("#pw-old")); break;
     case "pw-cancel": S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); break;
+    case "ufb-open": S.ufb = {type:"bug", message:"", includeDeviceInfo:true, file:null, previewUrl:null, busy:false, errKey:null, errObj:null}; render(); focusEl($("#ufb-msg")); break;
+    case "ufb-cancel": if (!S.ufb?.busy) closeTesterFeedback(true); break;
+    case "ufb-unpick": if (S.ufb && !S.ufb.busy) { if (S.ufb.previewUrl) { try { URL.revokeObjectURL(S.ufb.previewUrl); } catch {} } S.ufb.file = null; S.ufb.previewUrl = null; render(); } break;
+    case "ufb-submit": await submitTesterFeedback(); break;
     case "pw-save": {
       const o = $("#pw-old")?.value || "", n = $("#pw-new")?.value || "", n2 = $("#pw-new2")?.value || "";
       if (!o) { S.pwEdit = {msg:t("account.errOldPw")}; render(); break; }
@@ -3951,12 +4139,23 @@ document.addEventListener("input", ev => {
     const pl = planFor(S.date), d = getDraft(S.date, pl); d[el.dataset.f] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
   } else if (el.id === "m-text") lsSet("bj-mtext", el.value);
   else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
+  else if (el.id === "ufb-msg" && S.ufb) { S.ufb.message = el.value; const c = $("#ufb-count"); if (c) c.textContent = `${Array.from(el.value).length} / 2000`; }
   else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }
   else if (/^c-(weight|steps|sleep|bf|waist)$/.test(el.id)) { const k = el.id.slice(2); S.cfill = {...(S.cfill || {}), [S.date]: {...(S.cfill?.[S.date] || {}), [k]: el.value}}; }
 });
 document.addEventListener("change", async ev => {
   const el = ev.target;
   if (el.id === "lift-sel") { S.liftSel = el.value; lsSet("bj-lift", el.value); render(); return; }
+  if (el.name === "ufb-type" && S.ufb) { S.ufb.type = el.value; return; }
+  if (el.id === "ufb-device" && S.ufb) { S.ufb.includeDeviceInfo = !!el.checked; return; }
+  if (el.id === "ufb-file" && S.ufb && el.files?.[0]) {
+    if (S.ufb.previewUrl) { try { URL.revokeObjectURL(S.ufb.previewUrl); } catch {} }
+    S.ufb.file = el.files[0];
+    S.ufb.previewUrl = URL.createObjectURL(el.files[0]);
+    S.ufb.errKey = null; S.ufb.errObj = null;
+    render();
+    return;
+  }
   if (el.name === "mtype") { S.mtype = el.value; return; }
   if (el.dataset.mtypeOf) {
     const id = el.dataset.mtypeOf, v = el.value;

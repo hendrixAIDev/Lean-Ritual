@@ -66,6 +66,13 @@ const uploads = require("./lib/uploads").createUploads(db, CFG.dataDir, {
 });
 const {createDocQuota,docQuotaOptions} = require("./lib/doc-quota");
 const docQuota = createDocQuota(db, docQuotaOptions());
+const { createFeedback, feedbackOptions, MAX_BODY_BYTES: FEEDBACK_MAX_BODY } = require("./lib/feedback");
+const feedback = createFeedback(db, CFG.dataDir, {
+  uploads,
+  accountData,
+  releaseRevision,
+  ...feedbackOptions()
+});
 const normName = s => String(s || "").trim().toLowerCase();
 const clientIP = req => (CFG.trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress || "?";
 
@@ -270,6 +277,7 @@ async function handle(req, res){
       return send(res, 200, { ok: true });
     }
     if (p === "/api/ai" && m === "POST") { const b = await readJSON(req, 20e6); accountData.ensureActive(user.id); return send(res, 200, await aiProxy(user, b)); }
+    if (p === "/api/feedback" && m === "POST") { const b = await readJSON(req, FEEDBACK_MAX_BODY); accountData.ensureActive(user.id); return send(res, 201, await feedback.submit(user, b)); }
     throw httpErr(404, "not_found");
   }
 

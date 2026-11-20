@@ -683,10 +683,16 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       assert.equal(await page.locator('.chooser').count(), 0, 'Escape dismisses chooser');
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), 'adopt-open', 'Escape restores focus to adopt-open trigger');
 
-      // Me + delete-account disclosure + setup edit mode
+      // Me + tester feedback form + delete-account disclosure + setup edit mode
       await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
       await page.evaluate(() => { document.querySelector('details')?.setAttribute('open', ''); });
       await assertAxeClean(context, page, `${cfg.name}/me`);
+      await page.locator('[data-act="ufb-open"]').click();
+      await page.locator('#ufb-msg').waitFor({ state: 'visible' });
+      await assertAxeClean(context, page, `${cfg.name}/me-feedback`);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('#ufb-msg').count(), 0, 'Escape dismisses feedback form');
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), 'ufb-open', 'Escape restores focus to ufb-open trigger');
       await page.locator('[data-act="edit"]').click();
       await assertAxeClean(context, page, `${cfg.name}/setup`);
 
