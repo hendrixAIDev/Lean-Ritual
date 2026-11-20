@@ -252,6 +252,97 @@ test("feedback screenshot reuses upload validation, quotas, and cleans up on DB 
   assert.equal(realDb.prepare("SELECT COUNT(*) n FROM feedback").get().n, 0, "no feedback row created");
 });
 
+test("sustained SQLite lock where cleanup DELETE also fails preserves blob file so export keeps working, then sweep recovers", async t => {
+  const pngB64 = await tinyPngBase64("purple");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-fb-sustained-lock-"));
+  const dataDir = path.join(root, "data");
+  fs.mkdirSync(path.join(dataDir, "blobs"), { recursive: true });
+  const realDb = new DatabaseSync(path.join(dataDir, "bojin.db"));
+  realDb.exec(`
+    CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
+    CREATE TABLE ai_usage (uid TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(uid, day));
+    CREATE TABLE sessions (token TEXT PRIMARY KEY, uid TEXT NOT NULL, expires INTEGER NOT NULL);
+    CREATE TABLE users (id TEXT PRIMARY KEY);
+  `);
+  t.after(() => {
+    try { realDb.close(); } catch {}
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const accountData = createAccountData(realDb, dataDir);
+  const uploads = createUploads(realDb, dataDir);
+  const logs = [];
+  let sustainedLock = false;
+
+  const wrappedDb = {
+    exec(sql) {
+      if (sustainedLock && sql === "BEGIN IMMEDIATE") {
+        throw Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+      }
+      return realDb.exec(sql);
+    },
+    prepare(sql) {
+      if (sustainedLock && /^DELETE FROM blobs\b/i.test(sql.trim())) {
+        return {
+          run() {
+            throw Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+          }
+        };
+      }
+      return realDb.prepare(sql);
+    }
+  };
+
+  const fb = createFeedback(wrappedDb, dataDir, {
+    uploads,
+    accountData,
+    log: msg => logs.push(String(msg))
+  });
+
+  // Engage sustained lock right after uploads.save commits so both BEGIN IMMEDIATE and cleanup DELETE fail
+  const origSave = uploads.save.bind(uploads);
+  let committedBlobId = null;
+  uploads.save = (...args) => {
+    const saved = origSave(...args);
+    committedBlobId = saved.id;
+    sustainedLock = true;
+    return saved;
+  };
+
+  await assert.rejects(
+    () => fb.submit({ id: "u_sustained" }, {
+      type: "bug",
+      message: "sustained lock test",
+      screenshot: { contentType: "image/png", dataBase64: pngB64 }
+    }),
+    /database is locked/
+  );
+
+  assert.ok(committedBlobId, "expected screenshot blob to be saved before lock");
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM feedback").get().n, 0, "no feedback row created");
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(committedBlobId).n, 1, "blob row remained under lock");
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", committedBlobId)), true, "disk file MUST NOT be unlinked while DB row still exists");
+  assert.ok(logs.some(m => m.includes("cleanup db failed")));
+  assert.ok(logs.some(m => m.includes("db=false file=false")));
+
+  // Account export MUST still succeed cleanly without ENOENT
+  let ndjson = "";
+  for await (const chunk of accountData.exportChunks({ id: "u_sustained" })) {
+    ndjson += chunk;
+  }
+  const exported = ndjson.trim().split("\n").map(JSON.parse);
+  const photoEntry = exported.find(x => x.kind === "photo" && x.id === committedBlobId);
+  assert.ok(photoEntry, "export must cleanly stream the intact blob");
+  assert.deepEqual(Buffer.from(photoEntry.dataBase64, "base64"), fs.readFileSync(path.join(dataDir, "blobs", committedBlobId)));
+
+  // Once the lock clears, sweep() deletes the DB row first and then unlinks the disk file cleanly
+  sustainedLock = false;
+  fb.sweep();
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(committedBlobId).n, 0, "sweep removed deferred blob row");
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", committedBlobId)), false, "sweep unlinked blob file after DB row removal");
+});
+
 test("feedback concurrency bound, pre-body daily quota check, and UTC day reset", async t => {
   let clock = Date.parse("2026-11-20T10:00:00Z");
   const { feedback } = makeDbFixture(t, {
