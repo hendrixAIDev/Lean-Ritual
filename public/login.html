@@ -71,6 +71,7 @@ button.primary:disabled{opacity:.6}
     <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><a id="privacy-link" href="/privacy.html">隐私说明</a></p>
   </form>
 </main>
+<script src="/client-errors.js" referrerpolicy="no-referrer"></script>
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
@@ -433,7 +434,10 @@ button.primary:disabled{opacity:.6}
       else setErr(mode==="register"?"msg.verifySent":"msg.mailIfEligible");
     }catch{setErr("err.fallback")}finally{$("#go").disabled=false}
   };
-  if (typeof window !== "undefined") window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N };
+  if (typeof window !== "undefined") {
+    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N };
+    if (window.ritualErrorReporter) window.ritualErrorReporter.configure({ getPage: () => "login", getLang: () => curLang });
+  }
 })();
 </script>
 </body>

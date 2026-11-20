@@ -282,6 +282,18 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 
 - Configure external HTTPS uptime checks for `/api/health`, plus alerts for service restarts, disk capacity, backup age/offsite-copy failure and provider spending. Docker has an internal healthcheck; it does not prove mainland reachability.
 - Authentication failures and provider outages must not include passwords, keys, email links or record contents in logs. Do not turn on request-body logging. Backup/data paths are private. Each `/api/ai` call logs one metadata-only diagnostic line (`kind`, `images`, configured `model`, allowlisted `finish_reason` in `stop|length|content_filter|tool_calls|error|other`, numeric `prompt`/`completion`/`reasoning` token counts, `empty`, numeric `ms`) and never logs provider-returned free text, prompts, responses, or user IDs.
+- Client runtime error reports (`POST /api/client-error`): accepts JSON bodies up to 2 KiB from authenticated sessions or `/login.html` (with `X-Bojin: 1` and same-origin `Origin`/`Sec-Fetch-Site`/`Referer` checks), validates allowlisted fields and uses fixed messages (ignoring extras), enforces per-user (20/hour) and per-IP (40/hour authenticated; 5/hour anonymous login-page) rate limits, plus a 300/hour process-wide cap (dropping over-limit reports silently with `204`), writes nothing to SQLite, and logs one sanitized single-line entry prefixed `client-error` to journald. View recent client errors on the host:
+
+```sh
+# Last 24 hours of client errors
+journalctl -u bojin.service --since -24h -o cat | grep '^client-error '
+
+# Follow live during beta testing
+journalctl -u bojin.service -f -o cat | grep --line-buffered '^client-error '
+
+# Group by error name and source location (last 24h)
+journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error ' | sed -n 's/.*source=\([^ ]*\) name=\([^ ]*\).*/\2 \1/p' | sort | uniq -c | sort -rn
+```
 - Optional reasoning effort (`AI_REASONING_EFFORT`): unset or empty by default (no `reasoning` parameter sent). When set to `low`, `medium`, or `high`, `/api/ai` sends `reasoning: {"effort": "<value>"}` to OpenRouter; any other value fails startup naming `AI_REASONING_EFFORT`.
 - Issue/revoke invitations using scripts/auth-admin.js. Preserve legacy IDs with --legacy-user; verify the mapping with the owner first. After migrating, repeat the import only if needed; it fills missing records rather than overwriting.
 - Account deletion queues cleanup durably before deleting credentials. Files/records are removed after auth deletion, and interrupted cleanup retries at startup/every minute. If auth deletion itself failed, access stays blocked; the user can retry the authenticated /api/auth/delete-user endpoint with their password. Investigate repeated cleanup errors before launch.
