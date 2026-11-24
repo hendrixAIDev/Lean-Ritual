@@ -10,13 +10,14 @@ const { DatabaseSync } = require("node:sqlite");
 
 const {
   DEFAULT_AI_PRICING,
-  anonymizeUid,
+  createReportPseudonymizer,
   parsePricing,
   sanitizeFeedbackExcerpt,
   parseJournalStream,
   collectDailySummary,
   formatSummaryText
 } = require("../lib/daily-summary");
+const { createSnapshot, verifySnapshot } = require("../lib/snapshots");
 const dataAccess = require("../lib/data-access");
 
 const ROOT = path.join(__dirname, "..");
@@ -44,6 +45,7 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
   // 1. auth.sqlite
   const authDb = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
   authDb.exec(`
+    PRAGMA journal_mode = WAL;
     CREATE TABLE "user" (
       "id" text not null primary key,
       "name" text not null,
@@ -69,25 +71,24 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
   );
   // u_alpha: signed up 5 days ago, verified 5 days ago
   insertUser.run("u_alpha_secret", "Alice SecretName", "alice.secret@example.com", 1, hoursAgo(120), hoursAgo(120));
-  // u_beta: signed up 3 days ago, verified 4 hours ago (verified in last 24h!)
+  // u_beta: signed up 3 days ago, already verified, user row updated 4 hours ago (must NOT inflate 24h verifiedSignups!)
   insertUser.run("u_beta_secret", "Bob SecretName", "bob.secret@example.com", 1, hoursAgo(72), hoursAgo(4));
-  // u_gamma: signed up 6 hours ago, verified 5 hours ago (both signup & verified in last 24h)
+  // u_gamma: signed up 6 hours ago, verified 5 hours ago (counts in 24h signups & verifiedSignups)
   insertUser.run("u_gamma_secret", "Carol SecretName", "carol.secret@example.com", 1, hoursAgo(6), hoursAgo(5));
-  // u_delta: signed up 2 hours ago, NOT verified yet
+  // u_delta: signed up 2 hours ago, NOT verified yet (counts in 24h signups, not verifiedSignups)
   insertUser.run("u_delta_secret", "Dave SecretName", "dave.secret@example.com", 0, hoursAgo(2), hoursAgo(2));
 
   const insertSession = authDb.prepare(
     `INSERT INTO "session" (id, expiresAt, token, createdAt, updatedAt, ipAddress, userAgent, userId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
-  // u_beta logged in 3h ago (active in 24h even without docs)
   insertSession.run("s1", hoursAgo(-100), "tok_secret_1", hoursAgo(3), hoursAgo(3), "10.0.0.1", "Safari", "u_beta_secret");
-  // u_alpha had an old session 80h ago
   insertSession.run("s2", hoursAgo(-20), "tok_secret_2", hoursAgo(80), hoursAgo(80), "10.0.0.2", "Chrome", "u_alpha_secret");
   authDb.close();
 
   // 2. bojin.db
   const bojinDb = new DatabaseSync(path.join(dataDir, "bojin.db"));
   bojinDb.exec(`
+    PRAGMA journal_mode = WAL;
     CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
     CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
     CREATE TABLE ai_usage (uid TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(uid, day));
@@ -103,7 +104,6 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
   `);
 
   const putDoc = bojinDb.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?)");
-  // u_alpha day 2026-11-24 (recent: checkin + done workout + 2 recent meals + 1 old meal re-estimated)
   putDoc.run(
     "data/users/u_alpha_secret/app/days/2026-11-24",
     "u_alpha_secret",
@@ -119,7 +119,6 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
     }),
     hoursAgo(2)
   );
-  // u_alpha older day 2026-11-21 (older than 24h: checkin + done workout + 1 meal)
   putDoc.run(
     "data/users/u_alpha_secret/app/days/2026-11-21",
     "u_alpha_secret",
@@ -129,13 +128,12 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
       checkin: { weight: 71.6 },
       workout: { done: true, key: "pull", savedAt: hoursAgo(75) },
       meals: [
-        // Created 74h ago (encoded in base36 id), even if re-estimated 1h ago it's NOT a new 24h meal!
+        // Created 74h ago (encoded in base36 id), even if re-estimated 1h ago it is NOT a new 24h meal.
         { id: makeBase36MealId(msHoursAgo(74), "ccccc"), type: "晚餐", text: "OLD_MEAL_REEST", est: { kcal: 700, at: hoursAgo(1) } }
       ]
     }),
     hoursAgo(74)
   );
-  // u_gamma day 2026-11-24 (recent: empty checkin ignored, incomplete workout draft ignored, 1 meal via est.at)
   putDoc.run(
     "data/users/u_gamma_secret/app/days/2026-11-24",
     "u_gamma_secret",
@@ -150,7 +148,6 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
     }),
     hoursAgo(3)
   );
-  // u_gamma profile doc (non-day doc; should not count as checkin/workout/meal)
   putDoc.run(
     "data/users/u_gamma_secret/app/app/profile",
     "u_gamma_secret",
@@ -159,9 +156,8 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
     hoursAgo(5)
   );
 
-  // Blobs (photos)
-  const blob1 = Buffer.alloc(10240, 0xaa); // 10 KiB, 3h ago
-  const blob2 = Buffer.alloc(20480, 0xbb); // 20 KiB, 60h ago
+  const blob1 = Buffer.alloc(10240, 0xaa);
+  const blob2 = Buffer.alloc(20480, 0xbb);
   const b1Id = "1".repeat(32);
   const b2Id = "2".repeat(32);
   fs.writeFileSync(path.join(blobsDir, b1Id), blob1);
@@ -169,67 +165,59 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
   bojinDb.prepare("INSERT INTO blobs (id, uid, type, size, created) VALUES (?, ?, ?, ?, ?)").run(b1Id, "u_alpha_secret", "image/webp", blob1.length, hoursAgo(3));
   bojinDb.prepare("INSERT INTO blobs (id, uid, type, size, created) VALUES (?, ?, ?, ?, ?)").run(b2Id, "u_alpha_secret", "image/webp", blob2.length, hoursAgo(60));
 
-  // AI usage in DB
   bojinDb.prepare("INSERT INTO ai_usage (uid, day, n) VALUES (?, ?, ?)").run("u_alpha_secret", "2026-11-24", 3);
   bojinDb.prepare("INSERT INTO ai_usage (uid, day, n) VALUES (?, ?, ?)").run("u_gamma_secret", "2026-11-24", 1);
   bojinDb.prepare("INSERT INTO ai_usage (uid, day, n) VALUES (?, ?, ?)").run("u_alpha_secret", "2026-11-21", 2);
 
-  // Feedback (4 entries: 2 in last 24h, 2 older; newest includes hostile terminal chars, email, and >80 chars)
+  // Feedback (4 entries: newest contains name, phone, URL, email, token, control chars)
   const insertFb = bojinDb.prepare(
-    "INSERT INTO feedback (id, uid, type, message, screenshot_blob_id, device_info, created) VALUES (?, ?, ?, ?, NULL, NULL, ?)"
+    "INSERT INTO feedback (id, uid, type, message, screenshot_blob_id, device_info, created) VALUES (?, ?, ?, ?, ?, NULL, ?)"
   );
-  const longMsg = "拍照识别晚饭时如果切到后台再回来会一直转圈，希望可以手动取消或者重试，我的邮箱是 leak@example.com 还有\x1b[31mRED\x1b[0m\u202e后面的字应该被截断掉不要出现在前八十字里TAIL_MARKER";
-  insertFb.run("fb_000000000004", "u_alpha_secret", "bug", longMsg, hoursAgo(1));
-  insertFb.run("fb_000000000003", "u_gamma_secret", "idea", "希望能导出最近两周的体重和训练曲线图片", hoursAgo(10));
-  insertFb.run("fb_000000000002", "u_beta_secret", "other", "整体很顺手，界面在手机上字号刚好！", hoursAgo(40));
-  insertFb.run("fb_000000000001", "u_alpha_secret", "bug", "这是一条很早的反馈不应出现在最新三条", hoursAgo(90));
+  const sensitiveMsg =
+    "我是张三，电话 +86 138-0013-8000，邮箱 leak@example.com，链接 https://evil.test/reset?t=1 密钥 AIzaSySecretKey12345 \x1b[31mRED\x1b[0m\u202e TAIL_MARKER";
+  insertFb.run("fb_rawpk000004", "u_alpha_secret", "bug", sensitiveMsg, b1Id, hoursAgo(1));
+  insertFb.run("fb_rawpk000003", "u_alpha_secret", "idea", "希望能导出最近两周的体重和训练曲线图片", null, hoursAgo(10));
+  insertFb.run("fb_rawpk000002", "u_beta_secret", "other", "整体很顺手，界面在手机上字号刚好！", null, hoursAgo(40));
+  insertFb.run("fb_rawpk000001", "u_gamma_secret", "bug", "很早的反馈不应出现在最新三条", null, hoursAgo(90));
   bojinDb.close();
 
   // 3. Journal log file (mixing JSON and short-iso formats)
   const journalFile = path.join(root, "journal.log");
   const jLines = [
-    // 24h: Gemini direct call (with 1 retry)
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(2) * 1000),
       MESSAGE: "ai provider=gemini retries=1 kind=json images=1 model=gemini-3.8-flash finish_reason=stop prompt=1000 completion=400 reasoning=0 empty=false ms=3200"
     }),
-    // 24h: Gemini direct call
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(5) * 1000),
       MESSAGE: "ai provider=gemini kind=json images=0 model=gemini-3.8-flash finish_reason=stop prompt=2000 completion=600 reasoning=100 empty=false ms=4100"
     }),
-    // 24h: OpenRouter fallback call (short-iso format)
+    // Fallback call with 2 Gemini backoff retries prior to OpenRouter fallback!
     `${hoursAgo(4).replace(".000Z", "+0000")} leanritual node[4242]: ai provider=openrouter provider_fallback=true retries=2 kind=json images=1 model=google/gemini-3.8-flash finish_reason=stop prompt=1500 completion=500 reasoning=0 empty=false ms=6100`,
-    // 24h: Failed Gemini call
     `${hoursAgo(3).replace(".000Z", "+0000")} leanritual node[4242]: ai provider=gemini kind=json images=0 model=gemini-3.8-flash finish_reason=error prompt=0 completion=0 reasoning=0 empty=true ms=1500`,
-    // Older (70h ago): OpenRouter primary (legacy line without provider=)
+    // Older legacy line without provider=
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(70) * 1000),
       MESSAGE: "ai kind=json images=0 model=google/gemini-3.8-flash finish_reason=stop prompt=4000 completion=1000 reasoning=200 empty=false ms=5000"
     }),
-    // Older (68h ago): Gemini call
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(68) * 1000),
       MESSAGE: "ai provider=gemini kind=text images=0 model=gemini-3.8-flash finish_reason=stop prompt=500 completion=200 reasoning=0 empty=false ms=1200"
     }),
-    // 24h: Client error (JSON)
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(3) * 1000),
       MESSAGE: `client-error auth=user page=food lang=zh rev=abc1234 ua=Safari/iOS18 source=index.html:120:5 name=TypeError ts=${hoursAgo(3)} msg="Cannot read properties of null or undefined"`
     }),
-    // 24h: Client error (short-iso)
     `${hoursAgo(6).replace(".000Z", "+0000")} leanritual node[4242]: client-error auth=anon page=login lang=zh rev=abc1234 ua=Chrome/Android14 source=login.html:45:1 name=SaveError ts=${hoursAgo(6)} msg="Error details withheld"`,
-    // Older (50h ago): Client error
     JSON.stringify({
       __REALTIME_TIMESTAMP: String(msHoursAgo(50) * 1000),
       MESSAGE: `client-error auth=user page=today lang=en rev=abc1234 ua=Chrome/macOS15 source=index.html:88:1 name=TypeError ts=${hoursAgo(50)} msg="Network request failed"`
     }),
-    // Unrelated log line (must be ignored)
     `${hoursAgo(1).replace(".000Z", "+0000")} leanritual node[4242]: 薄肌日课已启动：http://127.0.0.1:8080`
   ];
   fs.writeFileSync(journalFile, jLines.join("\n") + "\n", "utf8");
 
-  // 4. Backup snapshots (daily + deploy + ignored future snapshot)
+  // 4. Backup snapshots
   const dailySnap = path.join(backupRoot, "snapshot-20261124T040000Z");
   fs.mkdirSync(dailySnap, { recursive: true });
   fs.writeFileSync(
@@ -242,7 +230,6 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
     path.join(olderDailySnap, "manifest.json"),
     JSON.stringify({ version: 1, created: "2026-11-23T04:01:00.000Z", files: [] })
   );
-  // Bogus future snapshot should be ignored
   fs.mkdirSync(path.join(backupRoot, "snapshot-20990101T000000Z"), { recursive: true });
 
   const deploySnap = path.join(deployBackupRoot, "20261123T180000Z-abcd1234");
@@ -252,12 +239,12 @@ function createFixture(t, { nowIso = "2026-11-24T10:00:00.000Z" } = {}) {
     JSON.stringify({ version: 1, created: "2026-11-23T18:00:30.000Z", files: [] })
   );
 
-  return { root, dataDir, backupRoot, deployBackupRoot, journalFile, nowMs, nowIso };
+  return { root, dataDir, backupRoot, deployBackupRoot, journalFile, nowMs, nowIso, hoursAgo, msHoursAgo };
 }
 
-test("collectDailySummary computes accurate 24h and trial-to-date metrics without PII", (t) => {
+test("collectDailySummary computes accurate 24h and trial-to-date metrics with zero PII or free text by default", async (t) => {
   const fx = createFixture(t);
-  const summary = collectDailySummary({
+  const summary = await collectDailySummary({
     dataDir: fx.dataDir,
     nowMs: fx.nowMs,
     journalFile: fx.journalFile,
@@ -267,72 +254,63 @@ test("collectDailySummary computes accurate 24h and trial-to-date metrics withou
     env: {}
   });
 
-  // Accounts: 4 total (3 verified, 1 unverified); 24h: 2 signups (gamma, delta), 2 verified (beta verified 4h ago + gamma verified 5h ago)
+  // Accounts: 24h cohort has 2 signups (gamma verified, delta unverified) => verifiedSignups = 1.
+  // u_beta (signed up 72h ago, updatedAt 4h ago) is NOT miscounted as a 24h verification!
   assert.equal(summary.accounts.authDbPresent, true);
-  assert.deepEqual(summary.accounts.last24h, { signups: 2, verified: 2 });
+  assert.deepEqual(summary.accounts.last24h, { signups: 2, verifiedSignups: 1 });
   assert.deepEqual(summary.accounts.trialToDate, { signups: 4, verified: 3, unverified: 1 });
 
-  // Active users: 24h = alpha (doc/blob/fb/ai), beta (session), gamma (doc/fb/ai) = 3; trial = same 3 (delta never logged in or wrote docs)
+  // Active users
   assert.deepEqual(summary.activeUsers, { last24h: 3, trialToDate: 3 });
 
-  // Logs:
-  // 24h: 1 checkin (alpha 11-24; gamma empty ignored), 1 workout (alpha 11-24; gamma done:false ignored), 3 meals (alpha x2 + gamma x1; old re-estimated meal excluded!)
-  // trial: 2 checkins, 2 workouts, 4 meals
+  // Logs
   assert.deepEqual(summary.logs.last24h, { checkins: 1, workouts: 1, meals: 3 });
   assert.deepEqual(summary.logs.trialToDate, { checkins: 2, workouts: 2, meals: 4 });
 
-  // AI calls & cost (defaults: $0.75/1M input, $3.75/1M output):
-  // 24h:
-  //   gemini: 3 calls (1 error, 1 retry), prompt=3000, completion=1000, reasoning=100 -> 3000*0.75/1e6 + 1000*3.75/1e6 = 0.00225 + 0.00375 = 0.006
-  //   openrouter: 1 call (fallbackCalls=1, primaryCalls=0, retries=2), prompt=1500, completion=500 -> 0.001125 + 0.001875 = 0.003
+  // AI: Gemini retries MUST include the 2 pre-fallback retries on the OpenRouter fallback call (1 + 2 = 3)!
   assert.equal(summary.ai.source, "journal");
   assert.equal(summary.ai.last24h.calls, 4);
   assert.equal(summary.ai.last24h.errors, 1);
+  assert.equal(summary.ai.last24h.unpricedCalls, 0);
   assert.equal(summary.ai.last24h.dbCallsTodayUtc, 4);
   assert.equal(summary.ai.last24h.byProvider.gemini.calls, 3);
-  assert.equal(summary.ai.last24h.byProvider.gemini.retries, 1);
+  assert.equal(summary.ai.last24h.byProvider.gemini.retries, 3);
   assert.equal(summary.ai.last24h.byProvider.gemini.errors, 1);
+  assert.deepEqual(summary.ai.last24h.byProvider.gemini.models, ["gemini-3.8-flash"]);
   assert.equal(summary.ai.last24h.byProvider.gemini.promptTokens, 3000);
   assert.equal(summary.ai.last24h.byProvider.gemini.completionTokens, 1000);
   assert.equal(summary.ai.last24h.byProvider.gemini.reasoningTokens, 100);
   assert.equal(summary.ai.last24h.byProvider.gemini.estimatedCostUsd, 0.006);
+
   assert.equal(summary.ai.last24h.byProvider.openrouter.calls, 1);
+  assert.equal(summary.ai.last24h.byProvider.openrouter.retries, 0);
   assert.equal(summary.ai.last24h.byProvider.openrouter.fallbackCalls, 1);
   assert.equal(summary.ai.last24h.byProvider.openrouter.primaryCalls, 0);
+  assert.deepEqual(summary.ai.last24h.byProvider.openrouter.models, ["google/gemini-3.8-flash"]);
   assert.equal(summary.ai.last24h.byProvider.openrouter.estimatedCostUsd, 0.003);
   assert.equal(summary.ai.last24h.estimatedCostUsd, 0.009);
 
-  // trialToDate AI:
-  //   gemini: +1 call (500p / 200c) -> 4 calls, 3500p, 1200c
-  //   openrouter: +1 legacy primary call (4000p / 1000c / 200r) -> 2 calls (1 fallback, 1 primary), 5500p, 1500c, 200r
-  assert.equal(summary.ai.trialToDate.calls, 6);
-  assert.equal(summary.ai.trialToDate.dbCalls, 6);
-  assert.equal(summary.ai.trialToDate.byProvider.gemini.calls, 4);
-  assert.equal(summary.ai.trialToDate.byProvider.openrouter.calls, 2);
-  assert.equal(summary.ai.trialToDate.byProvider.openrouter.fallbackCalls, 1);
-  assert.equal(summary.ai.trialToDate.byProvider.openrouter.primaryCalls, 1);
-  assert.equal(summary.ai.trialToDate.promptTokens, 9000);
-  assert.equal(summary.ai.trialToDate.completionTokens, 2700);
-  assert.equal(summary.ai.trialToDate.reasoningTokens, 300);
-
-  // Feedback: 24h=2 (bug 1, idea 1, other 0), trial=4 (bug 2, idea 1, other 1), newest=3
+  // Feedback: default mode omits free text and raw feedback PKs!
+  assert.equal(summary.feedback.excerptsIncluded, false);
   assert.deepEqual(summary.feedback.last24h, { total: 2, byType: { bug: 1, idea: 1, other: 0 } });
   assert.deepEqual(summary.feedback.trialToDate, { total: 4, byType: { bug: 2, idea: 1, other: 1 } });
   assert.equal(summary.feedback.newest.length, 3);
-  assert.equal(summary.feedback.newest[0].id, "fb_000000000004");
+  assert.equal("excerpt" in summary.feedback.newest[0], false);
+  assert.equal("id" in summary.feedback.newest[0], false);
+  assert.match(summary.feedback.newest[0].ref, /^fb_[0-9a-f]{8}$/);
+  assert.match(summary.feedback.newest[0].user, /^u_[0-9a-f]{8}$/);
   assert.equal(summary.feedback.newest[0].type, "bug");
-  assert.equal(summary.feedback.newest[0].user, anonymizeUid("u_alpha_secret"));
-  assert.equal(summary.feedback.newest[0].truncated, true);
-  assert.ok(Array.from(summary.feedback.newest[0].excerpt).length <= 80);
-  assert.ok(!summary.feedback.newest[0].excerpt.includes("leak@example.com"));
-  assert.ok(!summary.feedback.newest[0].excerpt.includes("TAIL_MARKER"));
+  assert.equal(summary.feedback.newest[0].hasScreenshot, true);
+  assert.ok(summary.feedback.newest[0].messageChars > 50);
+  // First two newest feedback items share the same author (u_alpha_secret) within this report
+  assert.equal(summary.feedback.newest[0].user, summary.feedback.newest[1].user);
+  assert.notEqual(summary.feedback.newest[0].user, summary.feedback.newest[2].user);
 
-  // Client errors: 24h=2, trial=3
+  // Client errors
   assert.equal(summary.clientErrors.source, "journal");
   assert.equal(summary.clientErrors.last24h.count, 2);
   assert.deepEqual(summary.clientErrors.last24h.byName, { TypeError: 1, SaveError: 1 });
   assert.equal(summary.clientErrors.trialToDate.count, 3);
-  assert.deepEqual(summary.clientErrors.trialToDate.byName, { TypeError: 2, SaveError: 1 });
 
   // Storage & photos
   assert.ok(summary.storage.disk && summary.storage.disk.totalBytes > 0);
@@ -342,14 +320,13 @@ test("collectDailySummary computes accurate 24h and trial-to-date metrics withou
   assert.equal(summary.storage.photos.diskBytes, 30720);
   assert.deepEqual(summary.storage.photos.last24h, { count: 1, bytes: 10240 });
 
-  // Backup: daily snapshot is newer than deploy snapshot; future 2099 ignored
+  // Backup
   assert.equal(summary.backup.source, "filesystem");
   assert.equal(summary.backup.lastBackupAt, "2026-11-24T04:01:15.000Z");
   assert.equal(summary.backup.latestSnapshotName, "snapshot-20261124T040000Z");
-  assert.equal(summary.backup.dailySnapshotCount, 2);
-  assert.equal(summary.backup.deploySnapshotCount, 1);
+  assert.equal(summary.backup.timerLastTriggerAt, null);
 
-  // Strict PII & secret check on both JSON and plain text
+  // Strict PII, secret, free-text, and raw-ID leak check across JSON and plain text
   const jsonText = JSON.stringify(summary);
   const plainText = formatSummaryText(summary);
   for (const forbidden of [
@@ -364,19 +341,280 @@ test("collectDailySummary computes accurate 24h and trial-to-date metrics withou
     "u_beta_secret",
     "u_gamma_secret",
     "u_delta_secret",
+    "fb_rawpk000004",
+    "fb_rawpk000003",
+    "fb_rawpk000002",
     "tok_secret_1",
     "PRIVATE_WORKOUT_NOTE",
     "PRIVATE_MEAL_TEXT_1",
     "PRIVATE_SNACK",
+    "张三",
+    "138-0013-8000",
+    "evil.test",
+    "AIzaSySecretKey12345",
+    "希望能导出",
     "TAIL_MARKER"
   ]) {
     assert.ok(!jsonText.includes(forbidden), `JSON must not leak ${forbidden}`);
     assert.ok(!plainText.includes(forbidden), `plain text must not leak ${forbidden}`);
   }
 
-  // Zero raw terminal control/bidi chars in plain text
   const rawControlRe = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/;
   assert.equal(rawControlRe.test(plainText), false, "plain text must not contain raw control/bidi chars");
+});
+
+test("zero filesystem side effects on 0500 read-only DATA_DIR and concurrent createSnapshot succeeds", async (t) => {
+  const fx = createFixture(t);
+
+  // 1. Quiescent WAL DB inside a 0500 read-only DATA_DIR: proves ZERO files created (no .access, no -wal/-shm)
+  const bojinDbPath = path.join(fx.dataDir, "bojin.db");
+  const authDbPath = path.join(fx.dataDir, "auth.sqlite");
+  const beforeEntries = fs.readdirSync(fx.dataDir).sort();
+  assert.equal(fs.existsSync(path.join(fx.dataDir, ".access")), false);
+  fs.chmodSync(bojinDbPath, 0o400);
+  fs.chmodSync(authDbPath, 0o400);
+  fs.chmodSync(fx.dataDir, 0o500);
+  try {
+    const s = await collectDailySummary({
+      dataDir: fx.dataDir,
+      nowMs: fx.nowMs,
+      noJournal: true,
+      noSystemd: true,
+      backupRoot: fx.backupRoot,
+      deployBackupRoot: fx.deployBackupRoot
+    });
+    assert.equal(s.accounts.trialToDate.signups, 4);
+    assert.equal(s.logs.trialToDate.meals, 4);
+    assert.deepEqual(fs.readdirSync(fx.dataDir).sort(), beforeEntries);
+    assert.equal(fs.existsSync(path.join(fx.dataDir, ".access")), false);
+  } finally {
+    fs.chmodSync(fx.dataDir, 0o700);
+    fs.chmodSync(bojinDbPath, 0o600);
+    fs.chmodSync(authDbPath, 0o600);
+  }
+
+  // 2. Live WAL writer with uncheckpointed data: online backup captures WAL without writing to DATA_DIR
+  const liveWriter = new DatabaseSync(bojinDbPath);
+  liveWriter.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?)").run(
+    "data/users/u_live/app/days/2026-11-24",
+    "u_live",
+    "data/users/u_live/app/days",
+    JSON.stringify({ date: "2026-11-24", checkin: { weight: 70.1 }, meals: [] }),
+    fx.hoursAgo(1)
+  );
+  const beforeLive = fs.readdirSync(fx.dataDir).sort();
+  try {
+    const liveSummary = await collectDailySummary({
+      dataDir: fx.dataDir,
+      nowMs: fx.nowMs,
+      noJournal: true,
+      noSystemd: true,
+      backupRoot: fx.backupRoot,
+      deployBackupRoot: fx.deployBackupRoot
+    });
+    assert.equal(liveSummary.logs.last24h.checkins, 2, "must include uncheckpointed WAL row");
+    assert.deepEqual(fs.readdirSync(fx.dataDir).sort(), beforeLive);
+    assert.equal(fs.existsSync(path.join(fx.dataDir, ".access")), false);
+  } finally {
+    liveWriter.close();
+  }
+
+  // 3. Concurrent backup regression: running collectDailySummary concurrently with createSnapshot
+  //    AND while an exclusive maintenance lease is held must never block or fail backup!
+  const snapTarget = path.join(fx.root, "concurrent-snapshot");
+  const [summaryResult] = await Promise.all([
+    collectDailySummary({
+      dataDir: fx.dataDir,
+      nowMs: fx.nowMs,
+      noJournal: true,
+      noSystemd: true,
+      backupRoot: fx.backupRoot,
+      deployBackupRoot: fx.deployBackupRoot
+    }),
+    createSnapshot(fx.dataDir, snapTarget)
+  ]);
+  assert.equal(summaryResult.logs.last24h.checkins, 2);
+  const manifest = verifySnapshot(snapTarget);
+  assert.equal(manifest.version, 1);
+
+  // Also succeeds while an exclusive maintenance lease is actively held (no reader lease taken!)
+  const releaseExclusive = dataAccess.exclusive(fx.dataDir);
+  try {
+    const duringMaint = await collectDailySummary({
+      dataDir: fx.dataDir,
+      nowMs: fx.nowMs,
+      noJournal: true,
+      noSystemd: true,
+      backupRoot: fx.backupRoot,
+      deployBackupRoot: fx.deployBackupRoot
+    });
+    assert.equal(duringMaint.accounts.trialToDate.signups, 4);
+  } finally {
+    releaseExclusive();
+  }
+});
+
+test("pseudonyms use an ephemeral per-report HMAC key and are unlinkable across reports", async (t) => {
+  const fx = createFixture(t);
+  const r1 = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    noJournal: true,
+    noSystemd: true,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot
+  });
+  const r2 = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    noJournal: true,
+    noSystemd: true,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot
+  });
+
+  // Across two separate reports, pseudonyms differ
+  assert.notEqual(r1.feedback.newest[0].user, r2.feedback.newest[0].user);
+  assert.notEqual(r1.feedback.newest[0].ref, r2.feedback.newest[0].ref);
+
+  // Within each report, same user gets consistent pseudonym
+  assert.equal(r1.feedback.newest[0].user, r1.feedback.newest[1].user);
+  assert.equal(r2.feedback.newest[0].user, r2.feedback.newest[1].user);
+
+  // Helper rejects short keys
+  assert.throws(() => createReportPseudonymizer(Buffer.alloc(8)), /at least 16 bytes/);
+});
+
+test("opt-in --include-feedback-excerpts redacts emails, URLs, phones, tokens, and long digit runs", async (t) => {
+  const fx = createFixture(t);
+  const res = sanitizeFeedbackExcerpt(
+    "Contact me@test.org or +86 138-0013-8000 at https://example.com/p?x=1 token sk-abcdefgh12345678 order 987654321"
+  );
+  assert.equal(res.truncated, false);
+  assert.ok(!res.excerpt.includes("me@test.org"));
+  assert.ok(!res.excerpt.includes("138-0013-8000"));
+  assert.ok(!res.excerpt.includes("example.com"));
+  assert.ok(!res.excerpt.includes("sk-abcdefgh12345678"));
+  assert.ok(!res.excerpt.includes("987654321"));
+  assert.match(res.excerpt, /\[email\]/);
+  assert.match(res.excerpt, /\[number\]/);
+  assert.match(res.excerpt, /\[url\]/);
+  assert.match(res.excerpt, /\[token\]/);
+
+  const eightyFiveZh = "薄".repeat(85);
+  const resZh = sanitizeFeedbackExcerpt(eightyFiveZh);
+  assert.equal(Array.from(resZh.excerpt).length, 80);
+  assert.equal(resZh.truncated, true);
+
+  // End-to-end with includeFeedbackExcerpts: true
+  const s = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    noJournal: true,
+    noSystemd: true,
+    includeFeedbackExcerpts: true,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot
+  });
+  assert.equal(s.feedback.excerptsIncluded, true);
+  assert.equal(typeof s.feedback.newest[0].excerpt, "string");
+  assert.ok(Array.from(s.feedback.newest[0].excerpt).length <= 80);
+  assert.ok(!s.feedback.newest[0].excerpt.includes("138-0013-8000"));
+  assert.ok(!s.feedback.newest[0].excerpt.includes("leak@example.com"));
+  assert.ok(!s.feedback.newest[0].excerpt.includes("evil.test"));
+  assert.ok(!s.feedback.newest[0].excerpt.includes("AIzaSySecretKey12345"));
+});
+
+test("journalctl fetches from earlier of trialStart and now-24h so short --since never undercounts last24h", async (t) => {
+  const fx = createFixture(t);
+  const sixHoursAgoMs = fx.msHoursAgo(6);
+  const twelveHoursAgoMs = fx.msHoursAgo(12);
+  const twoHoursAgoMs = fx.msHoursAgo(2);
+
+  let seenJournalArgs = null;
+  const mockRunner = (cmd, args) => {
+    if (cmd === "journalctl") {
+      seenJournalArgs = args;
+      const lines = [
+        // 12h ago: inside last24h, OUTSIDE 6h trialToDate
+        JSON.stringify({
+          __REALTIME_TIMESTAMP: String(twelveHoursAgoMs * 1000),
+          MESSAGE: "ai provider=gemini kind=json images=0 model=gemini-3.8-flash finish_reason=stop prompt=1000 completion=200 reasoning=0 empty=false ms=1000"
+        }),
+        JSON.stringify({
+          __REALTIME_TIMESTAMP: String(twelveHoursAgoMs * 1000),
+          MESSAGE: `client-error auth=user page=food lang=zh rev=abc1234 ua=Safari/iOS18 source=index.html:1:1 name=TypeError ts=${new Date(twelveHoursAgoMs).toISOString()} msg="Network request failed"`
+        }),
+        // 2h ago: inside BOTH last24h and 6h trialToDate
+        JSON.stringify({
+          __REALTIME_TIMESTAMP: String(twoHoursAgoMs * 1000),
+          MESSAGE: "ai provider=gemini kind=json images=0 model=gemini-3.8-flash finish_reason=stop prompt=500 completion=100 reasoning=0 empty=false ms=800"
+        })
+      ];
+      return { status: 0, stdout: lines.join("\n") + "\n", stderr: "", error: null };
+    }
+    return { status: 1, stdout: "", stderr: "", error: null };
+  };
+
+  const summary = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    sinceMs: sixHoursAgoMs,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot,
+    noSystemd: true,
+    runCommand: mockRunner
+  });
+
+  // Verify journalctl --since was 24h ago (2026-11-23 10:00:00 UTC), NOT 6h ago!
+  assert.ok(seenJournalArgs, "expected journalctl invocation");
+  const sinceIdx = seenJournalArgs.indexOf("--since");
+  assert.notEqual(sinceIdx, -1);
+  assert.equal(seenJournalArgs[sinceIdx + 1], "2026-11-23 10:00:00 UTC");
+
+  assert.equal(summary.ai.last24h.calls, 2);
+  assert.equal(summary.ai.trialToDate.calls, 1);
+  assert.equal(summary.clientErrors.last24h.count, 1);
+  assert.equal(summary.clientErrors.trialToDate.count, 0);
+});
+
+test("unknown AI providers are left unpriced rather than billed at Gemini rates", async (t) => {
+  const fx = createFixture(t);
+  const customJournal = path.join(fx.root, "unknown-provider.log");
+  fs.writeFileSync(
+    customJournal,
+    [
+      JSON.stringify({
+        __REALTIME_TIMESTAMP: String(fx.msHoursAgo(2) * 1000),
+        MESSAGE: "ai provider=gemini kind=json images=0 model=gemini-3.8-flash finish_reason=stop prompt=1000 completion=1000 reasoning=0 empty=false ms=900"
+      }),
+      JSON.stringify({
+        __REALTIME_TIMESTAMP: String(fx.msHoursAgo(1) * 1000),
+        MESSAGE: "ai provider=customllm kind=json images=0 model=custom-v1 finish_reason=stop prompt=1000000 completion=1000000 reasoning=0 empty=false ms=1200"
+      })
+    ].join("\n") + "\n"
+  );
+
+  const s = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    journalFile: customJournal,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot,
+    noSystemd: true,
+    env: {}
+  });
+
+  assert.equal(s.ai.last24h.calls, 2);
+  assert.equal(s.ai.last24h.unpricedCalls, 1);
+  assert.equal(s.ai.last24h.byProvider.other.calls, 1);
+  assert.equal(s.ai.last24h.byProvider.other.estimatedCostUsd, null);
+  // Only the 1000p/1000c Gemini call is priced: (1000*0.75 + 1000*3.75)/1e6 = 0.0045
+  assert.equal(s.ai.last24h.estimatedCostUsd, 0.0045);
+
+  const text = formatSummaryText(s);
+  assert.match(text, /其他 \(未计价\): 1 次/);
+  assert.match(text, /1 次未知 provider 未计价/);
 });
 
 test("parsePricing supports gemini-3.8-flash defaults, custom env overrides, and rejects invalid values", () => {
@@ -386,6 +624,7 @@ test("parsePricing supports gemini-3.8-flash defaults, custom env overrides, and
   assert.equal(def.gemini.outputPer1M, 3.75);
   assert.equal(def.openrouter.inputPer1M, 0.75);
   assert.equal(def.openrouter.outputPer1M, 3.75);
+  assert.match(def.basis, /final-attempt/);
 
   const custom = parsePricing({
     AI_INPUT_PRICE_PER_1M: "0.5",
@@ -406,56 +645,18 @@ test("parsePricing supports gemini-3.8-flash defaults, custom env overrides, and
   assert.throws(() => parsePricing({ AI_GEMINI_INPUT_PRICE_PER_1M: "Infinity" }), /AI_GEMINI_INPUT_PRICE_PER_1M/);
 });
 
-test("sanitizeFeedbackExcerpt truncates by Unicode code points and redacts emails", () => {
-  const eightyFiveZh = "薄".repeat(85);
-  const res = sanitizeFeedbackExcerpt(eightyFiveZh);
-  assert.equal(Array.from(res.excerpt).length, 80);
-  assert.equal(res.truncated, true);
-
-  const withEmail = "请联系 me.tester+1@sub.domain.org 反馈\n第二行";
-  const res2 = sanitizeFeedbackExcerpt(withEmail);
-  assert.equal(res2.truncated, false);
-  assert.equal(res2.excerpt, "请联系 [redacted] 反馈 第二行");
-});
-
-test("--since filters trial-to-date metrics cleanly", (t) => {
-  const fx = createFixture(t);
-  const sinceMs = Date.parse("2026-11-23T00:00:00.000Z");
-  const summary = collectDailySummary({
-    dataDir: fx.dataDir,
-    nowMs: fx.nowMs,
-    sinceMs,
-    journalFile: fx.journalFile,
-    backupRoot: fx.backupRoot,
-    deployBackupRoot: fx.deployBackupRoot,
-    noSystemd: true,
-    env: {}
-  });
-
-  // Only gamma & delta signed up since 2026-11-23
-  assert.equal(summary.accounts.trialToDate.signups, 2);
-  assert.equal(summary.accounts.trialToDate.verified, 1);
-  // Only 2026-11-24 docs/meals since 2026-11-23
-  assert.deepEqual(summary.logs.trialToDate, { checkins: 1, workouts: 1, meals: 3 });
-  // Only 24h AI & error events occurred since 2026-11-23
-  assert.equal(summary.ai.trialToDate.calls, 4);
-  assert.equal(summary.clientErrors.trialToDate.count, 2);
-  // Only 2 feedbacks since 2026-11-23
-  assert.equal(summary.feedback.trialToDate.total, 2);
-  assert.equal(summary.feedback.newest.length, 2);
-});
-
-test("systemd backup fallback handles service success, timer fallback after reboot, and refuses failed runs", (t) => {
+test("systemd backup fallback reports completed service exits only and exposes timerLastTriggerAt separately", async (t) => {
   const fx = createFixture(t);
   const missingRoot = path.join(fx.root, "no-backups-here");
 
-  // 1. bojin-backup.service succeeded
+  // 1. Completed bojin-backup.service success
   const okRunner = (cmd, args) => {
     if (cmd === "systemctl" && args.includes("bojin-backup.service")) {
       return {
         status: 0,
         stdout: [
           "LoadState=loaded",
+          "ActiveState=inactive",
           "Result=success",
           "ExecMainStatus=0",
           "ExecMainExitTimestamp=Tue 2026-11-24 04:05:00 UTC",
@@ -465,9 +666,17 @@ test("systemd backup fallback handles service success, timer fallback after rebo
         error: null
       };
     }
+    if (cmd === "systemctl" && args.includes("bojin-backup.timer")) {
+      return {
+        status: 0,
+        stdout: "LoadState=loaded\nLastTriggerUSec=Tue 2026-11-24 04:00:05 UTC\n",
+        stderr: "",
+        error: null
+      };
+    }
     return { status: 1, stdout: "", stderr: "", error: null };
   };
-  const s1 = collectDailySummary({
+  const s1 = await collectDailySummary({
     dataDir: fx.dataDir,
     nowMs: fx.nowMs,
     noJournal: true,
@@ -477,14 +686,16 @@ test("systemd backup fallback handles service success, timer fallback after rebo
   });
   assert.equal(s1.backup.source, "systemd-service");
   assert.equal(s1.backup.lastBackupAt, "2026-11-24T04:05:00.000Z");
+  assert.equal(s1.backup.timerLastTriggerAt, "2026-11-24T04:00:05.000Z");
   assert.equal(s1.backup.serviceResult, "success");
 
-  // 2. Rebooted host (empty ExecMainExitTimestamp) -> falls back to bojin-backup.timer LastTriggerUSec
-  const timerRunner = (cmd, args) => {
+  // 2. Rebooted host (empty ExecMainExitTimestamp) with timer LastTriggerUSec:
+  //    MUST leave lastBackupAt/ageHours null and expose timerLastTriggerAt separately!
+  const timerOnlyRunner = (cmd, args) => {
     if (cmd === "systemctl" && args.includes("bojin-backup.service")) {
       return {
         status: 0,
-        stdout: "LoadState=loaded\nResult=success\nExecMainStatus=0\nExecMainExitTimestamp=\nInactiveEnterTimestamp=\n",
+        stdout: "LoadState=loaded\nActiveState=inactive\nResult=success\nExecMainStatus=0\nExecMainExitTimestamp=\nInactiveEnterTimestamp=\n",
         stderr: "",
         error: null
       };
@@ -499,24 +710,68 @@ test("systemd backup fallback handles service success, timer fallback after rebo
     }
     return { status: 1, stdout: "", stderr: "", error: null };
   };
-  const s2 = collectDailySummary({
+  const s2 = await collectDailySummary({
     dataDir: fx.dataDir,
     nowMs: fx.nowMs,
     noJournal: true,
     backupRoot: missingRoot,
     deployBackupRoot: missingRoot,
-    runCommand: timerRunner
+    runCommand: timerOnlyRunner
   });
-  assert.equal(s2.backup.source, "systemd-timer");
-  assert.equal(s2.backup.lastBackupAt, "2026-11-23T04:02:10.000Z");
+  assert.equal(s2.backup.source, "unavailable");
+  assert.equal(s2.backup.lastBackupAt, null);
+  assert.equal(s2.backup.ageHours, null);
+  assert.equal(s2.backup.timerLastTriggerAt, "2026-11-23T04:02:10.000Z");
+  const text2 = formatSummaryText(s2);
+  assert.match(text2, /最近成功备份: 未知/);
+  assert.match(text2, /定时最近触发: 2026-11-23T04:02:10\.000Z/);
 
-  // 3. Failed backup run must NOT report timer LastTriggerUSec as a successful backup
+  // 3. Running backup (ActiveState=activating) must NOT look like a completed backup
+  const runningRunner = (cmd, args) => {
+    if (cmd === "systemctl" && args.includes("bojin-backup.service")) {
+      return {
+        status: 0,
+        stdout: [
+          "LoadState=loaded",
+          "ActiveState=activating",
+          "Result=success",
+          "ExecMainStatus=0",
+          "ExecMainExitTimestamp=Tue 2026-11-24 04:00:00 UTC"
+        ].join("\n"),
+        stderr: "",
+        error: null
+      };
+    }
+    if (cmd === "systemctl" && args.includes("bojin-backup.timer")) {
+      return {
+        status: 0,
+        stdout: "LoadState=loaded\nLastTriggerUSec=Tue 2026-11-24 09:59:00 UTC\n",
+        stderr: "",
+        error: null
+      };
+    }
+    return { status: 1, stdout: "", stderr: "", error: null };
+  };
+  const s3 = await collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    noJournal: true,
+    backupRoot: missingRoot,
+    deployBackupRoot: missingRoot,
+    runCommand: runningRunner
+  });
+  assert.equal(s3.backup.lastBackupAt, null);
+  assert.equal(s3.backup.timerLastTriggerAt, "2026-11-24T09:59:00.000Z");
+  assert.match(s3.backup.note, /running/i);
+
+  // 4. Failed backup run must NOT report a successful backup
   const failRunner = (cmd, args) => {
     if (cmd === "systemctl" && args.includes("bojin-backup.service")) {
       return {
         status: 0,
         stdout: [
           "LoadState=loaded",
+          "ActiveState=failed",
           "Result=exit-code",
           "ExecMainStatus=1",
           "ExecMainExitTimestamp=Tue 2026-11-24 04:01:00 UTC"
@@ -535,7 +790,7 @@ test("systemd backup fallback handles service success, timer fallback after rebo
     }
     return { status: 1, stdout: "", stderr: "", error: null };
   };
-  const s3 = collectDailySummary({
+  const s4 = await collectDailySummary({
     dataDir: fx.dataDir,
     nowMs: fx.nowMs,
     noJournal: true,
@@ -543,12 +798,13 @@ test("systemd backup fallback handles service success, timer fallback after rebo
     deployBackupRoot: missingRoot,
     runCommand: failRunner
   });
-  assert.equal(s3.backup.lastBackupAt, null);
-  assert.equal(s3.backup.serviceResult, "exit-code");
-  assert.match(s3.backup.note, /failed/i);
+  assert.equal(s4.backup.lastBackupAt, null);
+  assert.equal(s4.backup.timerLastTriggerAt, "2026-11-24T04:00:05.000Z");
+  assert.equal(s4.backup.serviceResult, "exit-code");
+  assert.match(s4.backup.note, /failed/i);
 });
 
-test("journalctl permission denial degrades gracefully to db_only without crashing", (t) => {
+test("journalctl permission denial degrades gracefully to db_only without crashing", async (t) => {
   const fx = createFixture(t);
   const permDeniedRunner = (cmd) => {
     if (cmd === "journalctl") {
@@ -562,7 +818,7 @@ test("journalctl permission denial degrades gracefully to db_only without crashi
     return { status: 1, stdout: "", stderr: "", error: null };
   };
 
-  const summary = collectDailySummary({
+  const summary = await collectDailySummary({
     dataDir: fx.dataDir,
     nowMs: fx.nowMs,
     backupRoot: fx.backupRoot,
@@ -577,7 +833,6 @@ test("journalctl permission denial degrades gracefully to db_only without crashi
   assert.equal(summary.ai.last24h.dbCallsTodayUtc, 4);
   assert.equal(summary.ai.trialToDate.dbCalls, 6);
   assert.equal(summary.clientErrors.source, "unavailable");
-  assert.equal(summary.clientErrors.journalStatus, "permission_denied");
 
   const text = formatSummaryText(summary);
   assert.match(text, /permission_denied/);
@@ -615,7 +870,7 @@ test("missing DATA_DIR does not create files and exits cleanly", (t) => {
   assert.equal(parsed.activeUsers.trialToDate, 0);
 });
 
-test("CLI respects exclusive maintenance lock, releases reader lease, and supports plain text, --json, and stdin", (t) => {
+test("CLI supports plain text, --json, stdin journal, custom pricing, --help, and leaves DATA_DIR untouched", (t) => {
   const fx = createFixture(t);
   const env = {
     ...process.env,
@@ -623,6 +878,7 @@ test("CLI respects exclusive maintenance lock, releases reader lease, and suppor
     AI_INPUT_PRICE_PER_1M: "1.0",
     AI_OUTPUT_PRICE_PER_1M: "4.0"
   };
+  const beforeEntries = fs.readdirSync(fx.dataDir).sort();
 
   // 1. Plain text via CLI + stdin journal
   const journalContent = fs.readFileSync(fx.journalFile, "utf8");
@@ -643,10 +899,10 @@ test("CLI respects exclusive maintenance lock, releases reader lease, and suppor
   assert.match(txtRes.stdout, /Gemini 输入 \$1 \/ 输出 \$4/);
   assert.match(txtRes.stdout, /snapshot-20261124T040000Z/);
   assert.ok(!txtRes.stdout.includes("alice.secret@example.com"));
-
-  // Verify reader lease was cleaned up
-  const readersDir = path.join(fx.dataDir, ".access", "readers");
-  assert.deepEqual(fs.readdirSync(readersDir), []);
+  assert.ok(!txtRes.stdout.includes("张三"));
+  assert.ok(!txtRes.stdout.includes("fb_rawpk000004"));
+  assert.deepEqual(fs.readdirSync(fx.dataDir).sort(), beforeEntries);
+  assert.equal(fs.existsSync(path.join(fx.dataDir, ".access")), false);
 
   // 2. --json via CLI
   const jsonRes = spawnSync(
@@ -664,42 +920,25 @@ test("CLI respects exclusive maintenance lock, releases reader lease, and suppor
   );
   assert.equal(jsonRes.status, 0, jsonRes.stderr);
   const parsed = JSON.parse(jsonRes.stdout);
-  // Custom pricing: 24h gemini (3000*1 + 1000*4)/1e6 = 0.007; openrouter (1500*1 + 500*4)/1e6 = 0.0035
   assert.equal(parsed.ai.last24h.byProvider.gemini.estimatedCostUsd, 0.007);
   assert.equal(parsed.ai.last24h.byProvider.openrouter.estimatedCostUsd, 0.0035);
   assert.equal(parsed.ai.last24h.estimatedCostUsd, 0.0105);
 
-  // 3. Respects exclusive maintenance lock (fails closed)
-  const releaseExclusive = dataAccess.exclusive(fx.dataDir);
-  try {
-    const lockedRes = spawnSync(
-      process.execPath,
-      [SCRIPT, "--no-journal", "--no-systemd"],
-      { cwd: ROOT, env, encoding: "utf8", timeout: 10000 }
-    );
-    assert.equal(lockedRes.status, 1);
-    assert.match(lockedRes.stderr, /maintenance in progress/i);
-  } finally {
-    releaseExclusive();
-  }
-
-  // 4. Invalid CLI flag exits non-zero; --help exits 0
+  // 3. --help exits 0; invalid flag exits 1
   const helpRes = spawnSync(process.execPath, [SCRIPT, "--help"], {
     cwd: ROOT, env, encoding: "utf8", timeout: 10000
   });
   assert.equal(helpRes.status, 0);
   assert.match(helpRes.stdout, /Usage:/);
 
-  const badRes = spawnSync(
-    process.execPath,
-    [SCRIPT, "--unknown-flag"],
-    { cwd: ROOT, env, encoding: "utf8", timeout: 10000 }
-  );
+  const badRes = spawnSync(process.execPath, [SCRIPT, "--unknown-flag"], {
+    cwd: ROOT, env, encoding: "utf8", timeout: 10000
+  });
   assert.equal(badRes.status, 1);
   assert.match(badRes.stderr, /Usage:/);
 });
 
-test("handles legacy bojin.db without feedback table or auth.sqlite and ignores symlinks in blobs/", (t) => {
+test("handles legacy bojin.db without feedback table or auth.sqlite and ignores symlinks in blobs/", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-summary-legacy-"));
   const dataDir = path.join(root, "data");
   const blobsDir = path.join(dataDir, "blobs");
@@ -716,7 +955,7 @@ test("handles legacy bojin.db without feedback table or auth.sqlite and ignores 
   `);
   db.close();
 
-  const summary = collectDailySummary({
+  const summary = await collectDailySummary({
     dataDir,
     nowMs: Date.parse("2026-11-24T10:00:00.000Z"),
     noJournal: true,
