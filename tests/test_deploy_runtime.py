@@ -93,7 +93,7 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 class BackupServiceRuntimeTest(unittest.TestCase):
     def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False,
-                          non_root_paths=None, disk_usage=None, extra_env=None):
+                          non_root_paths=None, disk_usage=None, extra_env=None, py_prelude=None):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
@@ -217,28 +217,26 @@ class BackupServiceRuntimeTest(unittest.TestCase):
             echo "rsync:lock=$state:fd9=$fd9:fd8=$fd8:$*" >> "{events}"
         """)
 
-        if disk_usage is not None:
-            total_b, used_b, free_b = disk_usage
+        if disk_usage is not None or free_bytes is not None or py_prelude:
+            du_line = ""
+            if disk_usage is not None:
+                total_b, used_b, free_b = disk_usage
+                du_line = f'shutil.disk_usage = lambda p: U({total_b}, {used_b}, {free_b})\n'
+            elif free_bytes is not None:
+                du_line = f'shutil.disk_usage = lambda p: U({free_bytes} * 2, {free_bytes}, {free_bytes})\n'
+            prelude_file = root / "py-prelude.py"
+            prelude_file.write_text(
+                "import shutil\nfrom collections import namedtuple\n"
+                'U = namedtuple("U", ["total", "used", "free"])\n'
+                + du_line
+                + (py_prelude or ""),
+                encoding="utf-8",
+            )
             write_stub("python3", f"""
                 if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
                 exec "{real_py}" -c '
-import shutil, sys
-from collections import namedtuple
-U = namedtuple("U", ["total", "used", "free"])
-shutil.disk_usage = lambda p: U({total_b}, {used_b}, {free_b})
-code = sys.stdin.read()
-sys.argv = sys.argv[1:]
-exec(compile(code, "<stdin>", "exec"))
-' "$@"
-            """)
-        elif free_bytes is not None:
-            write_stub("python3", f"""
-                if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
-                exec "{real_py}" -c '
-import shutil, sys
-from collections import namedtuple
-U = namedtuple("U", ["total", "used", "free"])
-shutil.disk_usage = lambda p: U({free_bytes} * 2, {free_bytes}, {free_bytes})
+import pathlib, sys
+exec(compile(pathlib.Path({json.dumps(str(prelude_file))}).read_text(), "<prelude>", "exec"))
 code = sys.stdin.read()
 sys.argv = sys.argv[1:]
 exec(compile(code, "<stdin>", "exec"))
@@ -265,6 +263,7 @@ exec(compile(code, "<stdin>", "exec"))
             "DATA_DIR": str(data_dir),
             "BACKUP_ROOT": str(backup_root),
             "OFFSITE_DEST": f"backup@host:{offsite_dir}",
+            "BOJIN_WATCHDOG_STATE_DIR": str(root / "watchdog-state"),
             **(extra_env or {}),
         }
         result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=20)
@@ -550,15 +549,166 @@ os.close(fd)
             for p in list(backup_root.glob("deletions-*.json")):
                 p.rename(backup_root / "deletions-20261120T040000Z.json")
 
+            state_dir = root / "watchdog-state"
+            uptime_file = root / "uptime"
+            uptime_file.write_text("1000.00 9999.00\n", encoding="utf-8")
+            shared_env = {
+                "BOJIN_ALERT_BIN": str(alert_bin),
+                "BOJIN_WATCHDOG_STATE_DIR": str(state_dir),
+                "BOJIN_WATCHDOG_UPTIME_FILE": str(uptime_file),
+            }
+
             # 80% full (32 GiB used, 8 GiB free on 40 GiB disk) -> succeeds AND alerts via BOJIN_ALERT_BIN.
             res_warn, _, _ = self.run_backup_script(
                 root,
                 disk_usage=(40 * gib, 32 * gib, 8 * gib),
-                extra_env={"BOJIN_ALERT_BIN": str(alert_bin)},
+                extra_env=shared_env,
             )
             self.assertEqual(res_warn.returncode, 0, res_warn.stderr)
             self.assertTrue(alert_log.is_file())
             self.assertIn("80%", alert_log.read_text())
+            self.assertEqual(len(alert_log.read_text().splitlines()), 1)
+
+            # Second run at 82% within 6h cooldown -> throttled (no duplicate warning).
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name != "snapshot-20261120T040000Z":
+                    p.rename(backup_root / "snapshot-20261121T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name != "deletions-20261120T040000Z.json":
+                    p.rename(backup_root / "deletions-20261121T040000Z.json")
+            uptime_file.write_text("1100.00 9999.00\n", encoding="utf-8")
+            res_dup, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 33 * gib, 7 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_dup.returncode, 0, res_dup.stderr)
+            self.assertEqual(len(alert_log.read_text().splitlines()), 1)
+
+            # Escalation to 90% -> immediately fires CRITICAL alert.
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name not in ("snapshot-20261120T040000Z", "snapshot-20261121T040000Z"):
+                    p.rename(backup_root / "snapshot-20261122T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name not in ("deletions-20261120T040000Z.json", "deletions-20261121T040000Z.json"):
+                    p.rename(backup_root / "deletions-20261122T040000Z.json")
+            uptime_file.write_text("1200.00 9999.00\n", encoding="utf-8")
+            res_crit, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 36 * gib, 4 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_crit.returncode, 0, res_crit.stderr)
+            lines = alert_log.read_text().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertIn("CRITICAL", lines[1])
+
+            # Dropping back to 85% while 90% critical cooldown is active -> warning suppressed.
+            for p in list(state_dir.glob("alert-disk-*")):
+                if not p.name.startswith("alert-disk-crit-"):
+                    p.unlink()
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name not in ("snapshot-20261120T040000Z", "snapshot-20261121T040000Z", "snapshot-20261122T040000Z"):
+                    p.rename(backup_root / "snapshot-20261123T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name not in ("deletions-20261120T040000Z.json", "deletions-20261121T040000Z.json", "deletions-20261122T040000Z.json"):
+                    p.rename(backup_root / "deletions-20261123T040000Z.json")
+            uptime_file.write_text("1300.00 9999.00\n", encoding="utf-8")
+            res_sup, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 34 * gib, 6 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_sup.returncode, 0, res_sup.stderr)
+            self.assertEqual(len(alert_log.read_text().splitlines()), 2)
+
+    def test_daily_preflight_blocks_on_corrupt_history_or_link_failure_and_fsyncs_before_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a = "a" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # Seed an initial backup and age it into 3 old snapshots so retention will prune the oldest one.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            orig_snap = next(backup_root.glob("snapshot-*"))
+            orig_ldg = next(backup_root.glob("deletions-*.json"))
+            snap_old1 = backup_root / "snapshot-20000101T000000Z"
+            snap_old2 = backup_root / "snapshot-20000102T000000Z"
+            snap_old3 = backup_root / "snapshot-20000103T000000Z"
+            orig_snap.rename(snap_old3)
+            orig_ldg.rename(backup_root / "deletions-20000103T000000Z.json")
+            for old_s, old_l in [
+                (snap_old1, backup_root / "deletions-20000101T000000Z.json"),
+                (snap_old2, backup_root / "deletions-20000102T000000Z.json"),
+            ]:
+                shutil.copytree(snap_old3, old_s)
+                old_l.write_text('{"version":1,"users":[]}', encoding="utf-8")
+            for p in list(backup_root.iterdir()):
+                os.utime(p, (1, 1))
+
+            # 1. Simulated os.link EMLINK failure with tight space (< full 4 MiB + 1.5 GiB) must block BEFORE stopping service!
+            (root / "events.log").unlink(missing_ok=True)
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            emlink_prelude = (
+                "import errno, os\n"
+                "def _fail_link(*a, **kw): raise OSError(errno.EMLINK, 'too many links')\n"
+                "os.link = _fail_link\n"
+            )
+            res_emlink, log_emlink, _ = self.run_backup_script(root, free_bytes=tight_free, py_prelude=emlink_prelude)
+            self.assertNotEqual(res_emlink.returncode, 0)
+            self.assertIn("Insufficient free space", res_emlink.stderr)
+            self.assertNotIn("systemctl:stop bojin.service", log_emlink)
+
+            # 2. Same-length corruption across all historical copies with tight space must ALSO block BEFORE stopping service!
+            (root / "events.log").unlink(missing_ok=True)
+            for s in (snap_old1, snap_old2, snap_old3):
+                (s / "blobs" / id_a).write_bytes(b"X" * len(blob_a_bytes))
+            res_corrupt, log_corrupt, _ = self.run_backup_script(root, free_bytes=tight_free)
+            self.assertNotEqual(res_corrupt.returncode, 0)
+            self.assertIn("Insufficient free space", res_corrupt.stderr)
+            self.assertNotIn("systemctl:stop bojin.service", log_corrupt)
+
+            # Restore healthy blob in snap_old3 and verify fsync occurs BEFORE retention prunes snap_old1!
+            (snap_old3 / "blobs" / id_a).write_bytes(blob_a_bytes)
+            trace_file = root / "durability-trace.log"
+            trace_prelude = (
+                f"import os, shutil\n"
+                f"_trace = {str(trace_file)!r}\n"
+                f"_orig_fsync = os.fsync\n"
+                f"_orig_rmtree = shutil.rmtree\n"
+                f"def _t_fsync(fd):\n"
+                f"    st = os.fstat(fd)\n"
+                f"    with open(_trace, 'a') as fh: fh.write(f'fsync:{{st.st_dev}}:{{st.st_ino}}\\n')\n"
+                f"    return _orig_fsync(fd)\n"
+                f"def _t_rmtree(p, *a, **kw):\n"
+                f"    with open(_trace, 'a') as fh: fh.write(f'prune:{{p}}\\n')\n"
+                f"    return _orig_rmtree(p, *a, **kw)\n"
+                f"os.fsync = _t_fsync\n"
+                f"shutil.rmtree = _t_rmtree\n"
+            )
+            res_dur, _, _ = self.run_backup_script(root, free_bytes=tight_free, py_prelude=trace_prelude)
+            self.assertEqual(res_dur.returncode, 0, res_dur.stderr)
+            self.assertFalse(snap_old1.exists(), "Oldest snapshot should have been pruned")
+            trace_lines = trace_file.read_text(encoding="utf-8").splitlines()
+            prune_indices = [i for i, line in enumerate(trace_lines) if line.startswith("prune:") and "snapshot-20000101T000000Z" in line]
+            self.assertTrue(prune_indices, f"Expected prune event in {trace_lines}")
+            first_prune = prune_indices[0]
+            backup_root_st = backup_root.lstat()
+            backup_root_sync = f"fsync:{backup_root_st.st_dev}:{backup_root_st.st_ino}"
+            sync_indices = [i for i, line in enumerate(trace_lines) if line == backup_root_sync]
+            self.assertTrue(sync_indices, f"Expected BACKUP_ROOT fsync in {trace_lines}")
+            self.assertLess(sync_indices[0], first_prune, "BACKUP_ROOT must be fsynced BEFORE retention prunes old snapshots")
 
 
 if __name__ == "__main__":

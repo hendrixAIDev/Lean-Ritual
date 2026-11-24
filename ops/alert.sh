@@ -57,7 +57,7 @@ fi
 
 [[ -n "$url" ]] || exit 0
 
-if [[ ! "$url" =~ ^https://[^[:space:]/]+ || "$url" =~ [[:space:]] ]]; then
+if [[ ! "$url" =~ ^https://[^[:space:]/]+ || "$url" =~ [[:space:]\"\\[:cntrl:]] ]]; then
   log_best_effort -t bojin-alert -p daemon.err -- "Refusing invalid or non-HTTPS ALERT_URL"
   exit 1
 fi
@@ -67,20 +67,23 @@ if [[ ! "$max_time" =~ ^[1-9][0-9]*$ ]]; then max_time=10; fi
 connect_timeout=5
 if (( max_time < connect_timeout )); then connect_timeout=$max_time; fi
 
+# Pass ALERT_URL on stdin via --config - so secret topic/bearer tokens never appear in process argv.
 if [[ "${BOJIN_ALERT_WRAPPED:-0}" != 1 ]] && command -v timeout >/dev/null 2>&1; then
-  http_code=$(timeout -k 1s "$((max_time + 1))s" curl --proto '=https' --proto-redir '=https' \
+  http_code=$(printf 'url = "%s"\n' "$url" | timeout -k 1s "$((max_time + 1))s" curl --config - \
+    --proto '=https' --proto-redir '=https' \
     --location --max-redirs 5 --post301 --post302 --post303 \
     --fail --silent --show-error \
     --connect-timeout "$connect_timeout" --max-time "$max_time" \
     -H "Title: Lean Ritual" -H "Tags: warning" \
-    --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+    --data-binary "$message" -o /dev/null -w '%{http_code}')
 else
-  http_code=$(curl --proto '=https' --proto-redir '=https' \
+  http_code=$(printf 'url = "%s"\n' "$url" | curl --config - \
+    --proto '=https' --proto-redir '=https' \
     --location --max-redirs 5 --post301 --post302 --post303 \
     --fail --silent --show-error \
     --connect-timeout "$connect_timeout" --max-time "$max_time" \
     -H "Title: Lean Ritual" -H "Tags: warning" \
-    --data-binary "$message" -o /dev/null -w '%{http_code}' -- "$url")
+    --data-binary "$message" -o /dev/null -w '%{http_code}')
 fi
 curl_rc=$?
 if (( curl_rc != 0 )) || [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then

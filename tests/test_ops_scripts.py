@@ -184,9 +184,14 @@ sys.exit(0)
             self.bin_dir / "curl",
             stub_prelude
             + """
-import time
+import re, time
 args = sys.argv[1:]
 url = args[-1]
+if "--config" in args and args[args.index("--config") + 1] == "-":
+    cfg_text = sys.stdin.read()
+    m = re.search(r'^url\s*=\s*"([^"]+)"\s*$', cfg_text, re.M)
+    if m:
+        url = m.group(1)
 record("curl", args=args, url=url)
 
 max_time = None
@@ -478,14 +483,22 @@ class OpsScriptsTests(unittest.TestCase):
         curls = [e for e in self.h.events() if e["kind"] == "curl"]
         self.assertEqual(len(curls), 1)
         self.assertEqual(curls[0]["url"], exported_url)
+        self.assertNotIn(exported_url, curls[0]["args"], "ALERT_URL must be passed via stdin --config -, never argv")
+        self.assertIn("--config", curls[0]["args"])
+        self.assertEqual(curls[0]["args"][curls[0]["args"].index("--config") + 1], "-")
         self.assertIn("--proto", curls[0]["args"])
         proto_idx = curls[0]["args"].index("--proto")
         self.assertEqual(curls[0]["args"][proto_idx + 1], "=https")
 
-        # 3. Typo http:// URL is rejected with non-zero exit and never sent via curl.
+        # 3. Typo http:// or quote/backslash URL is rejected with non-zero exit and never sent via curl.
         self.h.clear_events()
-        res_env = self.h.run_alert("secret check", env_extra={"ALERT_URL": "http://ntfy.sh/leaked-topic"})
-        self.assertNotEqual(res_env.returncode, 0)
+        for bad_url in (
+            "http://ntfy.sh/leaked-topic",
+            'https://ntfy.sh/bad"quote',
+            r"https://ntfy.sh/bad\slash",
+        ):
+            res_env = self.h.run_alert("secret check", env_extra={"ALERT_URL": bad_url})
+            self.assertNotEqual(res_env.returncode, 0, bad_url)
         self.assertEqual([e for e in self.h.events() if e["kind"] == "curl"], [])
 
         self.h.alert_env_file.write_text("ALERT_URL=http://ntfy.sh/leaked-file-topic\n", encoding="utf-8")
@@ -1481,6 +1494,17 @@ os.close(fd)
         self.assertEqual(len(delivered90), 1, delivered90)
         self.assertIn("CRITICAL", delivered90[0])
         self.assertIn("90%", delivered90[0])
+
+        # 4b. Dropping back to 84% while critical cooldown is active must NOT emit a warning alert
+        #     (even if the earlier 80% warning stamp expired or was removed).
+        for stamp in list(self.h.state_dir.glob("alert-disk-_")):
+            stamp.unlink()
+        self.h.clear_events()
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "84%", "ipcent": "50%", "target": "/"}
+        self.h.set_uptime(1105.0)
+        self.h.run_watchdog()
+        self.assertEqual([e for e in self.h.events() if e["kind"] == "curl" and "ntfy.sh" in e["url"]], [])
 
         # 5. 80% inodes -> warns at 80% threshold.
         self.h.clear_events()

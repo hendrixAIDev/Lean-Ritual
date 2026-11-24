@@ -40,7 +40,7 @@ function readMails(dir) {
     .map(f => JSON.parse(fs.readFileSync(path.join(mailDir, f), 'utf8')));
 }
 
-async function startLocalServer(extraEnv = {}) {
+async function startLocalServer(extraEnv = {}, { mockOpenRouterPort = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-browser-'));
   const port = await getFreePort();
   const base = `http://127.0.0.1:${port}`;
@@ -54,10 +54,30 @@ async function startLocalServer(extraEnv = {}) {
     COOKIE_SECURE: '0',
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
+    AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: '',
+    GEMINI_API_KEY: '',
     ...extraEnv
   };
-  const server = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  delete env.OPENROUTER_BASE;
+  delete env.GEMINI_BASE;
+  const nodeArgs = ['server.js'];
+  if (mockOpenRouterPort) {
+    const preloadPath = path.join(dir, '.mock-openrouter-fetch.cjs');
+    fs.writeFileSync(preloadPath, `'use strict';
+const origFetch = globalThis.fetch;
+const mockBase = 'http://127.0.0.1:' + ${JSON.stringify(String(mockOpenRouterPort))} + '/v1/';
+globalThis.fetch = function(input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+  if (url.startsWith('https://openrouter.ai/api/v1/')) {
+    return origFetch.call(this, mockBase + url.slice('https://openrouter.ai/api/v1/'.length), init);
+  }
+  return origFetch.call(this, input, init);
+};
+`, { mode: 0o600 });
+    nodeArgs.unshift('--require', preloadPath);
+  }
+  const server = spawn(process.execPath, nodeArgs, { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   server.stderr.on('data', d => { stderr += d.toString(); });
   await new Promise((resolve, reject) => {
@@ -514,9 +534,8 @@ async function runReadGuardOcrAndAiSmoke(browser) {
   });
   await new Promise(r => provider.listen(providerPort, '127.0.0.1', r));
   const srv = await startLocalServer({
-    OPENROUTER_API_KEY: 'local-test-provider-key',
-    OPENROUTER_BASE: `http://127.0.0.1:${providerPort}/v1`
-  });
+    OPENROUTER_API_KEY: 'local-test-provider-key'
+  }, { mockOpenRouterPort: providerPort });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);

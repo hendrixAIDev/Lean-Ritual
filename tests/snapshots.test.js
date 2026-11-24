@@ -197,3 +197,43 @@ test('data-backup.js CLI supports --link-dest and --defer-blobs safely',async t=
  assert.equal(fs.readFileSync(path.join(restored,'blobs',idA),'utf8'),'photo');
  assert.equal(fs.readFileSync(path.join(restored,'blobs',idB),'utf8'),'new-blob');
 });
+
+test('createSnapshot fsyncs new files, snapshot directories, and parent directory',async t=>{
+ const {root,data}=fixture(t);
+ const idA='a'.repeat(32);
+ const syncedInodes=[];
+ const origFsync=fs.fsyncSync;
+ fs.fsyncSync=fd=>{const st=fs.fstatSync(fd);syncedInodes.push(`${st.dev}:${st.ino}`);return origFsync(fd);};
+ let snap;
+ try{
+  snap=path.join(root,'durable-snap');
+  await createSnapshot(data,snap);
+ }finally{fs.fsyncSync=origFsync;}
+ for(const p of [path.join(snap,'bojin.db'),path.join(snap,'manifest.json'),path.join(snap,'blobs',idA),path.join(snap,'blobs'),snap,root]){
+  const st=fs.lstatSync(p);
+  assert.ok(syncedInodes.includes(`${st.dev}:${st.ino}`),`Expected fsyncSync on ${p}`);
+ }
+});
+
+test('legacy server.js import uses exclusive blob creation and never overwrites orphaned files',t=>{
+ const {spawnSync}=require('node:child_process');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-legacy-import-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const data=path.join(root,'data'),src=path.join(root,'export');
+ fs.mkdirSync(path.join(data,'blobs'),{recursive:true});
+ fs.mkdirSync(path.join(src,'blobs'),{recursive:true});
+ const db=new DatabaseSync(path.join(data,'bojin.db'));
+ db.exec("CREATE TABLE users(id TEXT PRIMARY KEY,username TEXT UNIQUE,pass TEXT,created TEXT); CREATE TABLE docs(path TEXT PRIMARY KEY,uid TEXT,parent TEXT,data TEXT,updated TEXT); CREATE TABLE blobs(id TEXT PRIMARY KEY,uid TEXT,type TEXT,size INT,created TEXT); INSERT INTO users VALUES('u1','alice','h','2026-01-01');");
+ db.close();
+ const orphanId='d'.repeat(32),freshId='e'.repeat(32);
+ // Plant an orphaned file on disk that is absent from the blobs table.
+ fs.writeFileSync(path.join(data,'blobs',orphanId),'original-orphan-bytes',{mode:0o600});
+ fs.writeFileSync(path.join(src,'blobs',orphanId+'.jpg'),'malicious-overwrite');
+ fs.writeFileSync(path.join(src,'blobs',freshId+'.webp'),'fresh-import-bytes');
+ const env={...process.env,DATA_DIR:data,AUTH_SECRET:'legacy-import-test-secret-at-least-32-chars',COOKIE_SECURE:'0',MAIL_MODE:'file',AUTH_BASE_URL:'http://127.0.0.1:18080'};
+ const res=spawnSync(process.execPath,[path.join(__dirname,'../server.js'),'import','alice',src],{env,encoding:'utf8'});
+ assert.equal(res.status,0,res.stderr);
+ assert.equal(fs.readFileSync(path.join(data,'blobs',orphanId),'utf8'),'original-orphan-bytes');
+ assert.equal(fs.readFileSync(path.join(data,'blobs',freshId),'utf8'),'fresh-import-bytes');
+ assert.equal(fs.lstatSync(path.join(data,'blobs',freshId)).mode&0o777,0o600);
+});

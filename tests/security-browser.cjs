@@ -6,13 +6,23 @@ const {spawn,spawnSync}=require('node:child_process');
 const http=require('node:http');
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-browser-')),base='http://127.0.0.1:18083';
- const env={...process.env,DATA_DIR:dir,PORT:'18083',HOST:'127.0.0.1',AUTH_BASE_URL:base,AUTH_SECRET:'browser-test-only-secret-at-least-32-characters',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_API_KEY:'local-test-provider-key',OPENROUTER_BASE:'http://127.0.0.1:18084/v1'};
+ const env={...process.env,DATA_DIR:dir,PORT:'18083',HOST:'127.0.0.1',AUTH_BASE_URL:base,AUTH_SECRET:'browser-test-only-secret-at-least-32-characters',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',AI_PROVIDER:'openrouter',OPENROUTER_API_KEY:'local-test-provider-key',GEMINI_API_KEY:''};
+ delete env.OPENROUTER_BASE;delete env.GEMINI_BASE;
+ const preloadPath=path.join(dir,'.mock-openrouter-fetch.cjs');
+ fs.writeFileSync(preloadPath,`'use strict';
+const origFetch=globalThis.fetch;
+globalThis.fetch=function(input,init){
+ const url=typeof input==='string'?input:(input&&input.url?input.url:'');
+ if(url.startsWith('https://openrouter.ai/api/v1/'))return origFetch.call(this,'http://127.0.0.1:18084/v1/'+url.slice('https://openrouter.ai/api/v1/'.length),init);
+ return origFetch.call(this,input,init);
+};
+`,{mode:0o600});
  let server,browser,provider;const providerRequests=[];
  try {
   provider=http.createServer(async(req,res)=>{const parts=[];for await(const chunk of req)parts.push(chunk);providerRequests.push(JSON.parse(Buffer.concat(parts).toString()));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({kcal:321,protein:20,carbs:40,fat:9,items:[],confidence:'中',tip:'test estimate'})}}]}));});
   await new Promise(r=>provider.listen(18084,'127.0.0.1',r));
   const issued=spawnSync(process.execPath,['scripts/auth-admin.js','invite','browser@example.com'],{env,encoding:'utf8',timeout:5000});if(issued.error)throw issued.error;assert.equal(issued.status,0,issued.stderr);const invite=JSON.parse(issued.stdout);
-  server=spawn(process.execPath,['server.js'],{env,stdio:['ignore','pipe','pipe']});let errors='';server.stderr.on('data',d=>errors+=d);
+  server=spawn(process.execPath,['--require',preloadPath,'server.js'],{env,stdio:['ignore','pipe','pipe']});let errors='';server.stderr.on('data',d=>errors+=d);
   await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('startup timeout '+errors)),8000);server.stdout.once('data',()=>{clearTimeout(timer);resolve();});server.once('error',reject);server.once('exit',()=>{clearTimeout(timer);reject(new Error(errors));});});
   browser=await (process.env.BROWSER==='webkit'?webkit:chromium).launch({executablePath:process.env.BROWSER==='webkit'?undefined:process.env.CHROMIUM_PATH||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
   const page=await browser.newPage({viewport:{width:390,height:844},locale:'zh-CN'}),failures=[],external=[];

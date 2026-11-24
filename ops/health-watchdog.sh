@@ -247,8 +247,10 @@ check_filesystems() {
         queue_alert "disk-crit-$mount_key" 21600 \
           "CRITICAL: disk holding $path ($mount_id) is ${used}% full; free space before writes start failing"
       elif (( used >= DISK_WARN_PERCENT )); then
-        queue_alert "disk-$mount_key" 21600 \
-          "disk holding $path ($mount_id) is ${used}% full (warning threshold ${DISK_WARN_PERCENT}%); inspect backups, releases, and photos before disk fills"
+        if ! is_cooled_down "disk-crit-$mount_key" 21600; then
+          queue_alert "disk-$mount_key" 21600 \
+            "disk holding $path ($mount_id) is ${used}% full (warning threshold ${DISK_WARN_PERCENT}%); inspect backups, releases, and photos before disk fills"
+        fi
       fi
     fi
 
