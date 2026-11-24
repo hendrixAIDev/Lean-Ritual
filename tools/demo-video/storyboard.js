@@ -40,7 +40,7 @@ const STORYBOARDS = {
       footnote: '浏览器打开即用 · 可添加到主屏幕',
       duration: 5.5,
       narration: '薄肌日课目前邀请制内测，欢迎访问 leanritual.app 了解详情。',
-      spoken: '薄肌日课目前邀请制内测，欢迎访问 lean ritual dot app 了解详情。'
+      spoken: '薄机日课，现已开启邀请制内测，欢迎访问 lean ritual dot app 了解详情。'
     },
     poster: {
       eyebrow: '薄肌日课 · LEAN RITUAL',
@@ -64,7 +64,7 @@ const STORYBOARDS = {
           {
             caption: '立刻生成专属课表与热量目标，自动避开伤处',
             callout: '专属课表 · 1930 kcal · 伤处自动替动作',
-            narration: '提交立刻生成每日课表和热量目标，还会自动替换伤处动作。'
+            narration: '提交立刻生成每日课表和热量目标，还会自动替换受伤部位的动作。'
           }
         ]
       },
@@ -97,12 +97,13 @@ const STORYBOARDS = {
           {
             caption: '根据历史自动推荐重量，填完组数一键保存',
             callout: '渐进超负荷 · 自动推荐 60 kg',
-            narration: '训练时按历史自动推荐重量，填完组数一键保存。'
+            narration: '训练时按历史自动推荐重量，填完组数一键保存。',
+            spoken: '训练时按历史记录自动推荐负重，填完组数一键保存。'
           },
           {
             caption: '体重曲线、热量收支与力量进步全自动生成',
             callout: '7 天均重 · 热量收支 · 力量进步',
-            narration: '切到记录页，体重、热量和力量曲线一目了然。'
+            narration: '切换到记录页，体重、热量和力量曲线一目了然。'
           }
         ]
       },
@@ -115,12 +116,12 @@ const STORYBOARDS = {
         beats: [
           {
             caption: '拍张餐食照，AI 自动估算热量与三大营养素',
-            narration: '吃饭不用称重，拍张餐食照点 AI 估算。'
+            narration: '吃饭不用称重，拍张餐食照，点击 AI 估算。'
           },
           {
             caption: '热量与蛋白质秒出结果，今日进度条实时更新',
             callout: '540 kcal · 46.5g 蛋白质 · 实时更新',
-            narration: '几秒算出热量和蛋白质，进度条实时更新。'
+            narration: '几秒钟就能算出热量和蛋白质，上方进度条也会实时更新。'
           }
         ]
       },
@@ -134,7 +135,7 @@ const STORYBOARDS = {
           {
             caption: 'AI 教练结合近 14 天记录，给出针对性调整建议',
             callout: '14 天数据复盘 · 针对性调整建议',
-            narration: '训练有紧绷或瓶颈？写句感受，AI 教练结合近十四天数据帮你复盘。'
+            narration: '训练有紧绷或瓶颈？写句感受，AI 教练结合近十四天数据为你复盘。'
           },
           {
             caption: '建议一键采纳，不满意随时一键撤销',

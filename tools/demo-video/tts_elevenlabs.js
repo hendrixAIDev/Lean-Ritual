@@ -103,50 +103,46 @@ function probeDuration(wavPath) {
 }
 
 /**
- * Decode ElevenLabs MP3 to 48kHz stereo PCM WAV, trim leading/trailing silence,
- * apply 12ms edge micro-fades, and peak-normalize to -1.5 dBFS to match Kokoro levels.
+ * Decode ElevenLabs MP3 to 48kHz stereo PCM WAV, apply 8ms edge micro-fades,
+ * and peak-normalize to -1.5 dBFS to match Kokoro levels without clipping initial consonants.
  */
 function normalizeMp3ToWav(mp3Path, wavPath) {
-  const tmpTrimmed = wavPath.replace(/\.wav$/, '.tmp-trim.wav');
+  const tmpDecoded = wavPath.replace(/\.wav$/, '.tmp-dec.wav');
   try {
-    // Pass 1: decode to 48kHz stereo and gently trim leading/trailing silence
+    // Pass 1: decode to 48kHz stereo PCM intact (preserve voiceless consonant onsets cleanly)
     runBin(FFMPEG, [
       '-y',
       '-i', mp3Path,
-      '-af',
-      'silenceremove=start_periods=1:start_duration=0.02:start_threshold=-45dB:detection=peak,' +
-      'areverse,silenceremove=start_periods=1:start_duration=0.02:start_threshold=-45dB:detection=peak,areverse,' +
-      'apad=pad_dur=0.045,adelay=45|45',
       '-ar', '48000',
       '-ac', '2',
       '-c:a', 'pcm_s16le',
-      tmpTrimmed
+      tmpDecoded
     ]);
 
-    const dur = probeDuration(tmpTrimmed);
+    const dur = probeDuration(tmpDecoded);
     // Measure max peak volume so we normalize to -1.5 dBFS cleanly
     let maxDb = -1.5;
-    const vd = spawnSync(FFMPEG, ['-hide_banner', '-i', tmpTrimmed, '-af', 'volumedetect', '-f', 'null', '-'], {
+    const vd = spawnSync(FFMPEG, ['-hide_banner', '-i', tmpDecoded, '-af', 'volumedetect', '-f', 'null', '-'], {
       encoding: 'utf8'
     });
     const m = (vd.stderr || '').match(/max_volume:\s*([-\d.]+)\s*dB/);
     if (m) maxDb = Number(m[1]);
 
     const gainDb = Number.isFinite(maxDb) && maxDb > -60 ? Math.min(18, -1.5 - maxDb) : 0;
-    const fadeOutStart = Math.max(0.02, dur - 0.014);
+    const fadeOutStart = Math.max(0.02, dur - 0.010);
 
     runBin(FFMPEG, [
       '-y',
-      '-i', tmpTrimmed,
+      '-i', tmpDecoded,
       '-af',
-      `volume=${gainDb.toFixed(2)}dB,afade=t=in:st=0:d=0.012,afade=t=out:st=${fadeOutStart.toFixed(4)}:d=0.012`,
+      `volume=${gainDb.toFixed(2)}dB,afade=t=in:st=0:d=0.008,afade=t=out:st=${fadeOutStart.toFixed(4)}:d=0.008`,
       '-ar', '48000',
       '-ac', '2',
       '-c:a', 'pcm_s16le',
       wavPath
     ]);
   } finally {
-    fs.rmSync(tmpTrimmed, { force: true });
+    fs.rmSync(tmpDecoded, { force: true });
   }
   return probeDuration(wavPath);
 }
@@ -361,6 +357,7 @@ module.exports = {
   requireElevenLabsApiKey,
   getCacheDir,
   computeCacheKey,
+  normalizeMp3ToWav,
   getAccountSubscription,
   listMyVoices,
   searchSharedVoices,

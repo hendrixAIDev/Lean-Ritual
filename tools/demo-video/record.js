@@ -297,6 +297,9 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
     viewport: VIEWPORT,
     deviceScaleFactor: 2,
     locale: sb.locale,
+    extraHTTPHeaders: {
+      'Accept-Language': sb.lang === 'zh' ? 'zh-CN,zh;q=0.9' : 'en-US,en;q=0.9'
+    },
     colorScheme: 'light',
     storageState,
     acceptDownloads: true

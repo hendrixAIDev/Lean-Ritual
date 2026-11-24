@@ -104,6 +104,37 @@ function ensureBuilt() {
   if (res.status !== 0) throw new Error('build.js failed');
 }
 
+function launchLocalizedRecordBrowser(chromium, executablePath, sb, workDir) {
+  const isZh = sb.lang === 'zh';
+  const posixLocale = isZh ? 'zh_CN.UTF-8' : 'en_US.UTF-8';
+  const env = {
+    ...process.env,
+    LANG: posixLocale,
+    LC_ALL: posixLocale,
+    LANGUAGE: isZh ? 'zh_CN:zh' : 'en_US:en'
+  };
+  let launchExec = executablePath;
+  if (process.platform === 'darwin') {
+    // macOS Chromium resolves native widget strings (e.g. <input type="file">) from AppleLanguages.
+    const appleLang = isZh ? 'zh-Hans' : 'en';
+    const wrapPath = path.join(workDir, `chrome-locale-${sb.lang}.sh`);
+    const escapedExec = executablePath.replace(/"/g, '\\"');
+    fs.writeFileSync(
+      wrapPath,
+      `#!/bin/sh\nexec "${escapedExec}" "$@" -AppleLanguages "(${appleLang})"\n`,
+      { mode: 0o755 }
+    );
+    launchExec = wrapPath;
+  }
+  return chromium.launch({
+    executablePath: launchExec,
+    headless: true,
+    // Chromium screencast needs --force-device-scale-factor=2 so 390x844 @2x fills 780x1688 cleanly.
+    args: ['--no-sandbox', '--force-device-scale-factor=2', `--lang=${sb.locale}`],
+    env
+  });
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.skipBuild) ensureBuilt();
@@ -122,12 +153,6 @@ async function main() {
     executablePath,
     headless: true,
     args: ['--no-sandbox']
-  });
-  // Chromium screencast needs --force-device-scale-factor=2 so 390x844 @2x fills 780x1688 cleanly.
-  const recordBrowser = await chromium.launch({
-    executablePath,
-    headless: true,
-    args: ['--no-sandbox', '--force-device-scale-factor=2']
   });
 
   const summary = [];
@@ -169,6 +194,7 @@ async function main() {
         ? null
         : await generateLangAssets(assetBrowser, sb, workDir, { formats: opts.formats, titleDur, outroDur });
       const seeded = await seedDemoAccount(assetBrowser, sb, shared.breakfastPhoto);
+      const recordBrowser = await launchLocalizedRecordBrowser(chromium, executablePath, sb, workDir);
 
       try {
         if (opts.dryRun) {
@@ -289,6 +315,7 @@ async function main() {
           sizeMB: `${(fs.statSync(scriptPath).size / 1024).toFixed(1)} KB`
         });
       } finally {
+        await recordBrowser.close();
         await seeded.srv.stop();
       }
     }
@@ -296,7 +323,6 @@ async function main() {
     console.log('\n=== DONE ===');
     console.table(summary);
   } finally {
-    await recordBrowser.close();
     await assetBrowser.close();
     if (!opts.keepWork) {
       fs.rmSync(workDir, { recursive: true, force: true });
