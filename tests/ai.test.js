@@ -2,7 +2,7 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');const {DatabaseSync}=require('node:sqlite');const {createAIProxy}=require('../lib/ai');
 function fixture(overrides={},fetcher=async()=>({ok:true,json:async()=>({choices:[{message:{content:'ok'}}]})})) {
  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE ai_usage(uid TEXT,day TEXT,n INTEGER,PRIMARY KEY(uid,day))');
- const proxy=createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'test-only',orBase:'https://example.invalid',orModel:'test',...overrides},fetcher);
+ const proxy=createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'test-only',orBase:'https://openrouter.ai/api/v1',orModel:'test',...overrides},fetcher);
  return {db,proxy};
 }
 const body={messages:[{content:'test'}]};
@@ -110,7 +110,7 @@ test('retry never runs for unrelated 400s, HTTP-200 error envelopes, text calls,
 test('AI_REASONING_EFFORT validates at startup and passes reasoning.effort only when set',async()=>{
  for(const bad of ['minimal','LOW','none','invalid',123]){
   const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE ai_usage(uid TEXT,day TEXT,n INTEGER,PRIMARY KEY(uid,day))');
-  try{assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'k',orBase:'https://example.invalid',orModel:'test',aiReasoningEffort:bad}),/AI_REASONING_EFFORT/);}
+  try{assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'k',orBase:'https://openrouter.ai/api/v1',orModel:'test',aiReasoningEffort:bad}),/AI_REASONING_EFFORT/);}
   finally{db.close();}
  }
  for(const empty of [undefined,'','   ']){
@@ -435,20 +435,87 @@ test('Gemini direct provider sends expected payload, headers, images, reasoning_
  }finally{db.close();}
 });
 
+test('provider base URLs enforce exact official HTTPS origins, reject misrouted hosts, and disable redirects',async()=>{
+ const badOrBases=[
+  'http://openrouter.ai/api/v1',
+  'https://example.invalid/v1',
+  'https://openrouter.ai.evil.example/api/v1',
+  'https://generativelanguage.googleapis.com/v1beta/openai',
+  'https://user:pass@openrouter.ai/api/v1',
+  'https://openrouter.ai/api/v1?x=1',
+  'https://openrouter.ai/api/v1#frag',
+  'http://127.0.0.1:18080/v1',
+  'not-a-url'
+ ];
+ for(const bad of badOrBases){
+  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE ai_usage(uid TEXT,day TEXT,n INTEGER,PRIMARY KEY(uid,day))');
+  try{assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'k',orBase:bad}),/OPENROUTER_BASE/,bad);}
+  finally{db.close();}
+ }
+ const badGeminiBases=[
+  'http://generativelanguage.googleapis.com/v1beta/openai',
+  'https://example.invalid/v1beta/openai',
+  'https://generativelanguage.googleapis.com.evil.example/v1beta/openai',
+  'https://openrouter.ai/api/v1',
+  'https://user:pass@generativelanguage.googleapis.com/v1beta/openai',
+  'https://generativelanguage.googleapis.com/v1beta/openai?key=leak',
+  'https://generativelanguage.googleapis.com/v1beta/openai#frag',
+  'http://127.0.0.1:18080/gemini',
+  'not-a-url'
+ ];
+ for(const bad of badGeminiBases){
+  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE ai_usage(uid TEXT,day TEXT,n INTEGER,PRIMARY KEY(uid,day))');
+  try{assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,aiProvider:'gemini',geminiKey:'k',geminiBase:bad}),/GEMINI_BASE/,bad);}
+  finally{db.close();}
+ }
+ // Server refuses loopback/foreign overrides whenever not in explicit localhost file-mail dev mode
+ const {spawnSync}=require('node:child_process'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-ai-base-'));
+ try{
+  const r1=spawnSync(process.execPath,['server.js'],{
+   env:{...process.env,DATA_DIR:dir,AUTH_BASE_URL:'https://leanritual.app',COOKIE_SECURE:'1',MAIL_MODE:'smtp',GEMINI_BASE:'http://127.0.0.1:18080/gemini'},
+   encoding:'utf8',timeout:5000
+  });
+  assert.notEqual(r1.status,0);
+  assert.match(r1.stderr,/GEMINI_BASE/);
+  const r2=spawnSync(process.execPath,['server.js'],{
+   env:{...process.env,DATA_DIR:dir,AUTH_BASE_URL:'http://127.0.0.1:18080',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_BASE:'https://generativelanguage.googleapis.com/v1beta/openai'},
+   encoding:'utf8',timeout:5000
+  });
+  assert.notEqual(r2.status,0);
+  assert.match(r2.stderr,/OPENROUTER_BASE/);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+
+ // Every fetch sets redirect: 'manual' and 3xx redirects fail closed without falling back
+ const optsSeen=[];
+ const {db,proxy}=fixture({
+  aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',aiDaily:10,aiGlobalDaily:10
+ },async(url,opts)=>{
+  optsSeen.push({url,redirect:opts.redirect});
+  return {ok:false,status:302,json:async()=>null};
+ });
+ try{
+  await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
+  assert.equal(optsSeen.length,1);
+  assert.equal(optsSeen[0].redirect,'manual');
+  assert.equal(new URL(optsSeen[0].url).origin,'https://generativelanguage.googleapis.com');
+ }finally{db.close();}
+});
+
 test('Gemini direct JSON-mode 400 retries once on Gemini without response_format and handles array-wrapped errors',async()=>{
  const calls=[],logs=[];
  const {db,proxy}=fixture({
   aiProvider:'gemini',
   geminiKey:'g-key',
-  geminiBase:'https://gemini.invalid/v1beta/openai/',
+  geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai/',
   geminiModel:'gemini-3.8-flash',
   orKey:'or-key',
-  orBase:'https://or.invalid/v1',
+  orBase:'https://openrouter.ai/api/v1',
   aiDaily:10,
   aiGlobalDaily:10,
   log:l=>logs.push(l)
  },async(url,opts)=>{
-  calls.push({url,body:JSON.parse(opts.body)});
+  calls.push({url,redirect:opts.redirect,body:JSON.parse(opts.body)});
   if(calls.length===1){
    return {ok:false,status:400,json:async()=>([{error:{code:400,status:'INVALID_ARGUMENT',message:'response_format json_object is not supported'}}])};
   }
@@ -458,8 +525,9 @@ test('Gemini direct JSON-mode 400 retries once on Gemini without response_format
   const res=await proxy({id:'a'},{messages:[{content:'json'}],json:true});
   assert.deepEqual(res,{text:'{"ok":1}',truncated:false});
   assert.equal(calls.length,2);
-  assert.equal(calls[0].url,'https://gemini.invalid/v1beta/openai/chat/completions');
-  assert.equal(calls[1].url,'https://gemini.invalid/v1beta/openai/chat/completions');
+  assert.equal(calls[0].url,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  assert.equal(calls[1].url,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  assert.equal(calls[0].redirect,'manual');
   assert.deepEqual(calls[0].body.response_format,{type:'json_object'});
   assert.equal(Object.hasOwn(calls[1].body,'response_format'),false);
   assert.match(logs[0],/\bprovider=gemini\b/);
@@ -469,29 +537,27 @@ test('Gemini direct JSON-mode 400 retries once on Gemini without response_format
  }finally{db.close();}
 });
 
-test('Gemini direct falls back once to OpenRouter on quota, billing, auth, 5xx, and network errors',async()=>{
+test('Gemini direct falls back once to OpenRouter ONLY on transient/quota/timeout errors',async()=>{
  const cases=[
   {label:'429 quota',transient:true,fn:async()=>({ok:false,status:429,json:async()=>({error:{code:429,status:'RESOURCE_EXHAUSTED',message:'Quota exceeded'}})})},
-  {label:'402 billing',transient:false,fn:async()=>({ok:false,status:402,json:async()=>({error:{code:402,message:'Payment required'}})})},
-  {label:'401 auth',transient:false,fn:async()=>({ok:false,status:401,json:async()=>({error:{code:401,status:'UNAUTHENTICATED',message:'Invalid API key'}})})},
-  {label:'403 permission/billing',transient:false,fn:async()=>({ok:false,status:403,json:async()=>({error:{code:403,status:'PERMISSION_DENIED',message:'Billing disabled'}})})},
   {label:'500 internal',transient:true,fn:async()=>({ok:false,status:500,json:async()=>({error:{code:500,status:'INTERNAL',message:'Internal error'}})})},
+  {label:'502 bad gateway',transient:true,fn:async()=>({ok:false,status:502,json:async()=>{throw new SyntaxError('html');}})},
   {label:'503 unavailable',transient:true,fn:async()=>({ok:false,status:503,json:async()=>({error:{code:503,status:'UNAVAILABLE',message:'This model is currently experiencing high demand.'}})})},
+  {label:'504 deadline exceeded',transient:true,fn:async()=>({ok:false,status:504,json:async()=>({error:{code:504,status:'DEADLINE_EXCEEDED',message:'Timed out'}})})},
   {label:'network error',transient:false,fn:async()=>{throw new Error('ECONNRESET');}},
-  {label:'400 Google API_KEY_INVALID',transient:false,fn:async()=>({ok:false,status:400,json:async()=>({error:{code:400,status:'INVALID_ARGUMENT',message:'API key not valid. Please pass a valid API key.',details:[{reason:'API_KEY_INVALID'}]}})})},
-  {label:'400 Google billing precondition',transient:false,fn:async()=>({ok:false,status:400,json:async()=>({error:{code:400,status:'FAILED_PRECONDITION',message:'Billing account not enabled'}})})},
   {label:'200 envelope 429',transient:true,fn:async()=>({ok:true,status:200,json:async()=>({error:{code:429,status:'RESOURCE_EXHAUSTED',message:'Quota exceeded'}})})},
-  {label:'200 envelope UNAVAILABLE without code',transient:true,fn:async()=>({ok:true,status:200,json:async()=>({error:{status:'UNAVAILABLE',message:'model is currently experiencing high demand'}})})}
+  {label:'200 envelope UNAVAILABLE without code',transient:true,fn:async()=>({ok:true,status:200,json:async()=>({error:{status:'UNAVAILABLE',message:'model is currently experiencing high demand'}})})},
+  {label:'200 envelope structured RATE_LIMIT_EXCEEDED reason',transient:true,fn:async()=>({ok:true,status:200,json:async()=>({error:{details:[{reason:'RATE_LIMIT_EXCEEDED'}]}})})}
  ];
  for(const tc of cases){
   const calls=[],logs=[],sleeps=[];
   const {db,proxy}=fixture({
    aiProvider:'gemini',
    geminiKey:'PLANTED_GEM_KEY',
-   geminiBase:'https://gemini.invalid/v1beta/openai',
+   geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
    geminiModel:'gemini-3.8-flash',
    orKey:'PLANTED_OR_KEY',
-   orBase:'https://openrouter.invalid/v1',
+   orBase:'https://openrouter.ai/api/v1',
    orModel:'google/gemini-3.8-flash',
    authSecret:'PLANTED_SECRET_VALUE',
    aiReasoningEffort:'low',
@@ -500,8 +566,8 @@ test('Gemini direct falls back once to OpenRouter on quota, billing, auth, 5xx, 
    sleep:async ms=>{sleeps.push(ms);},
    log:l=>logs.push(l)
   },async(url,opts)=>{
-   calls.push({url,headers:opts.headers,body:JSON.parse(opts.body)});
-   if(url.startsWith('https://gemini.invalid'))return tc.fn();
+   calls.push({url,headers:opts.headers,redirect:opts.redirect,body:JSON.parse(opts.body)});
+   if(url.startsWith('https://generativelanguage.googleapis.com'))return tc.fn();
    return {
     ok:true,status:200,
     json:async()=>({choices:[{message:{content:'{"from":"backup"}'},finish_reason:'stop'}],usage:{prompt_tokens:50,completion_tokens:30}})
@@ -513,9 +579,13 @@ test('Gemini direct falls back once to OpenRouter on quota, billing, auth, 5xx, 
    const expectedGeminiCalls=tc.transient?3:1;
    assert.equal(calls.length,expectedGeminiCalls+1,tc.label);
    assert.deepEqual(sleeps,tc.transient?[400,1000]:[],tc.label);
-   for(let i=0;i<expectedGeminiCalls;i++)assert.equal(calls[i].url,'https://gemini.invalid/v1beta/openai/chat/completions',tc.label);
+   for(let i=0;i<expectedGeminiCalls;i++){
+    assert.equal(calls[i].url,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',tc.label);
+    assert.equal(calls[i].redirect,'manual',tc.label);
+   }
    const orCall=calls[calls.length-1];
-   assert.equal(orCall.url,'https://openrouter.invalid/v1/chat/completions',tc.label);
+   assert.equal(orCall.url,'https://openrouter.ai/api/v1/chat/completions',tc.label);
+   assert.equal(orCall.redirect,'manual',tc.label);
    assert.equal(orCall.headers.Authorization,'Bearer PLANTED_OR_KEY',tc.label);
    assert.equal(orCall.headers['X-Title'],'Bojin Rike',tc.label);
    assert.equal(orCall.body.model,'google/gemini-3.8-flash',tc.label);
@@ -545,10 +615,10 @@ test('Gemini transient 503/429 retries with backoff recover on Gemini without sp
   const {db,proxy}=fixture({
    aiProvider:'gemini',
    geminiKey:'g-key',
-   geminiBase:'https://gemini.invalid/v1beta/openai',
+   geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
    geminiModel:'gemini-3.8-flash',
    orKey:'or-key',
-   orBase:'https://openrouter.invalid/v1',
+   orBase:'https://openrouter.ai/api/v1',
    aiDaily:10,
    aiGlobalDaily:10,
    sleep:async ms=>{sleeps.push(ms);},
@@ -564,7 +634,7 @@ test('Gemini transient 503/429 retries with backoff recover on Gemini without sp
    const res=await proxy({id:'a'},{messages:[{content:'retry me'}],json:true});
    assert.deepEqual(res,{text:'{"recovered":true}',truncated:false});
    assert.equal(calls.length,failCount+1);
-   assert.ok(calls.every(u=>u.startsWith('https://gemini.invalid')));
+   assert.ok(calls.every(u=>u.startsWith('https://generativelanguage.googleapis.com')));
    assert.deepEqual(sleeps,[400,1000].slice(0,failCount));
    assert.equal(db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
    assert.match(logs[0],/\bprovider=gemini\b/);
@@ -574,33 +644,60 @@ test('Gemini transient 503/429 retries with backoff recover on Gemini without sp
  }
 });
 
-test('Gemini direct does NOT fall back on user-input 4xx errors, truncation, missing OpenRouter key, or when AI_PROVIDER=openrouter',async()=>{
- // 1. User-input 4xx errors must not fall back
+test('Gemini direct does NOT fall back on 400/401/402/403, policy/safety blocks, truncation, missing OpenRouter key, or when AI_PROVIDER=openrouter',async()=>{
+ // 1. Permanent auth/billing/permission, user-input 4xx (even mentioning quota/billing in message!), and 3xx redirects must NEVER disclose payload to OpenRouter
  for(const nonFallback of [
   {status:400,body:{error:{code:400,status:'INVALID_ARGUMENT',message:'Invalid image data'}}},
-  {status:400,body:{error:{code:400,message:'maximum context length exceeded'}}},
+  {status:400,body:{error:{code:400,status:'INVALID_ARGUMENT',message:'Prompt exceeded quota or billing limit text echoed from user input'}}},
+  {status:400,body:{error:{code:400,status:'INVALID_ARGUMENT',message:'API key not valid. Please pass a valid API key.',details:[{reason:'API_KEY_INVALID'}]}}},
+  {status:400,body:{error:{code:400,status:'FAILED_PRECONDITION',message:'Billing account not enabled'}}},
+  {status:401,body:{error:{code:401,status:'UNAUTHENTICATED',message:'Invalid API key'}}},
+  {status:402,body:{error:{code:402,message:'Payment required'}}},
+  {status:403,body:{error:{code:403,status:'PERMISSION_DENIED',message:'Safety policy blocked request'}}},
+  {status:403,body:{error:{code:403,status:'PERMISSION_DENIED',message:'Caller does not have permission or billing disabled'}}},
   {status:404,body:{error:{code:404,message:'Model not found'}}},
-  {status:422,body:{error:{code:422,message:'Unprocessable entity'}}}
+  {status:422,body:{error:{code:422,message:'Unprocessable entity'}}},
+  {ok:true,status:200,body:{error:{code:400,status:'INVALID_ARGUMENT',message:'quota exceeded in user prompt'}}}
  ]){
   const calls=[],logs=[];
   const {db,proxy}=fixture({
-   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://gemini.invalid/v1beta/openai',
-   orKey:'or-key',orBase:'https://or.invalid/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
-  },async url=>{calls.push(url);return {ok:false,status:nonFallback.status,json:async()=>nonFallback.body};});
+   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
+   orKey:'or-key',orBase:'https://openrouter.ai/api/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
+  },async url=>{calls.push(url);return {ok:Boolean(nonFallback.ok),status:nonFallback.status,json:async()=>nonFallback.body};});
   try{
    await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
    assert.equal(calls.length,1,`unexpected fallback for ${JSON.stringify(nonFallback)}`);
+   assert.equal(db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
    assert.match(logs[0],/\bprovider=gemini\b/);
    assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
   }finally{db.close();}
  }
 
- // 2. Truncated empty response from Gemini surfaces truncated error without fallback
+ // 2. Safety content_filter response (empty content) must NOT fall back to OpenRouter
  {
   const calls=[],logs=[];
   const {db,proxy}=fixture({
-   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://gemini.invalid/v1beta/openai',
-   orKey:'or-key',orBase:'https://or.invalid/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
+   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
+   orKey:'or-key',orBase:'https://openrouter.ai/api/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
+  },async url=>{
+   calls.push(url);
+   return {ok:true,status:200,json:async()=>({choices:[{message:{content:''},finish_reason:'content_filter'}],usage:{prompt_tokens:100,completion_tokens:0}})};
+  });
+  try{
+   await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
+   assert.equal(calls.length,1);
+   assert.match(logs[0],/\bprovider=gemini\b/);
+   assert.match(logs[0],/\bfinish_reason=content_filter\b/);
+   assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
+  }finally{db.close();}
+ }
+
+ // 3. Truncated empty response from Gemini surfaces truncated error without fallback
+ {
+  const calls=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
+   orKey:'or-key',orBase:'https://openrouter.ai/api/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
   },async url=>{
    calls.push(url);
    return {ok:true,status:200,json:async()=>({choices:[{message:{content:''},finish_reason:'length'}],usage:{prompt_tokens:100,completion_tokens:2000,completion_tokens_details:{reasoning_tokens:2000}}})};
@@ -614,11 +711,11 @@ test('Gemini direct does NOT fall back on user-input 4xx errors, truncation, mis
   }finally{db.close();}
  }
 
- // 3. No OpenRouter key set -> Gemini 429 retries with backoff then fails directly with 429 rate_limited
+ // 4. No OpenRouter key set -> Gemini 429 retries with backoff then fails directly with 429 rate_limited
  {
   const calls=[],logs=[],sleeps=[];
   const {db,proxy}=fixture({
-   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://gemini.invalid/v1beta/openai',
+   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
    orKey:'',aiDaily:10,aiGlobalDaily:10,sleep:async ms=>{sleeps.push(ms);},log:l=>logs.push(l)
   },async url=>{calls.push(url);return {ok:false,status:429,json:async()=>({error:{code:429,status:'RESOURCE_EXHAUSTED',message:'Quota exceeded'}})};});
   try{
@@ -632,45 +729,174 @@ test('Gemini direct does NOT fall back on user-input 4xx errors, truncation, mis
   }finally{db.close();}
  }
 
- // 4. AI_PROVIDER=openrouter never falls back to Gemini even when GEMINI_API_KEY is set
+ // 5. AI_PROVIDER=openrouter never falls back to Gemini even when GEMINI_API_KEY is set
  {
   const calls=[],logs=[];
   const {db,proxy}=fixture({
-   aiProvider:'openrouter',geminiKey:'g-key',geminiBase:'https://gemini.invalid/v1beta/openai',
-   orKey:'or-key',orBase:'https://or.invalid/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
+   aiProvider:'openrouter',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
+   orKey:'or-key',orBase:'https://openrouter.ai/api/v1',aiDaily:10,aiGlobalDaily:10,log:l=>logs.push(l)
   },async url=>{calls.push(url);return {ok:false,status:503,json:async()=>({error:{code:503,message:'Down'}})};});
   try{
    assert.equal(proxy.hasFallback,false);
    await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
    assert.equal(calls.length,1);
-   assert.equal(calls[0],'https://or.invalid/v1/chat/completions');
+   assert.equal(calls[0],'https://openrouter.ai/api/v1/chat/completions');
    assert.match(logs[0],/\bprovider=openrouter\b/);
    assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
   }finally{db.close();}
  }
 
- // 5. Both Gemini and OpenRouter fail -> retries OpenRouter at most once, maps final status, counts 1 quota unit
+ // 6. Both Gemini and OpenRouter fail -> retries OpenRouter at most once, maps final status, counts 1 quota unit
  {
   const calls=[],logs=[];
   const {db,proxy}=fixture({
-   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://gemini.invalid/v1beta/openai',
-   orKey:'or-key',orBase:'https://or.invalid/v1',orModel:'google/gemini-3.8-flash',
+   aiProvider:'gemini',geminiKey:'g-key',geminiBase:'https://generativelanguage.googleapis.com/v1beta/openai',
+   orKey:'or-key',orBase:'https://openrouter.ai/api/v1',orModel:'google/gemini-3.8-flash',
    aiDaily:10,aiGlobalDaily:10,sleep:async()=>{},log:l=>logs.push(l)
   },async url=>{
    calls.push(url);
-   if(url.startsWith('https://gemini.invalid'))return {ok:false,status:503,json:async()=>({error:{code:503,message:'Gemini down'}})};
+   if(url.startsWith('https://generativelanguage.googleapis.com'))return {ok:false,status:503,json:async()=>({error:{code:503,message:'Gemini down'}})};
    return {ok:false,status:429,json:async()=>({error:{code:429,message:'OpenRouter rate limit'}})};
   });
   try{
    await assert.rejects(proxy({id:'a'},body),e=>e.status===429&&e.code==='rate_limited');
    assert.equal(calls.length,4);
-   assert.equal(calls.filter(u=>u.startsWith('https://or.invalid')).length,1);
+   assert.equal(calls.filter(u=>u.startsWith('https://openrouter.ai')).length,1);
    assert.equal(db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
    assert.match(logs[0],/\bprovider=openrouter\b/);
    assert.match(logs[0],/\bprovider_fallback=true\b/);
    assert.match(logs[0],/\bretries=2\b/);
    assert.match(logs[0],/\bfinish_reason=error\b/);
    assert.match(logs[0],/\bempty=true\b/);
+  }finally{db.close();}
+ }
+});
+
+test('hard 120s deadline, 30s fallback reserve, retry budget, and aborted body reads under controlled clock',async()=>{
+ // 1. Slow Gemini call hitting 90s primary cap leaves 30s reserve for OpenRouter fallback
+ {
+  let clock=1000000;
+  const seen=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',orModel:'google/gemini-3.8-flash',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{clock+=ms;},log:l=>logs.push(l)
+  },async url=>{
+   seen.push({url,at:clock-1000000});
+   if(url.startsWith('https://generativelanguage.googleapis.com')){
+    clock+=90000;
+    const err=new Error('aborted');err.name='TimeoutError';throw err;
+   }
+   clock+=4000;
+   return {ok:true,status:200,json:async()=>({choices:[{message:{content:'{"ok":true}'},finish_reason:'stop'}]})};
+  });
+  try{
+   const res=await proxy({id:'a'},{messages:[{content:'slow'}],json:true});
+   assert.deepEqual(res,{text:'{"ok":true}',truncated:false});
+   assert.equal(seen.length,2);
+   assert.equal(seen[1].url,'https://openrouter.ai/api/v1/chat/completions');
+   assert.equal(seen[1].at,90000);
+   assert.match(logs[0],/\bprovider=openrouter\b/);
+   assert.match(logs[0],/\bprovider_fallback=true\b/);
+   assert.match(logs[0],/\bms=94000\b/);
+  }finally{db.close();}
+ }
+
+ // 2. Once full 120s deadline is reached, NEVER start a retry or fallback past expiration
+ {
+  let clock=2000000;
+  const seen=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{clock+=ms;},log:l=>logs.push(l)
+  },async url=>{
+   seen.push(url);
+   clock+=120000;
+   return {ok:false,status:503,json:async()=>({error:{code:503,status:'UNAVAILABLE'}})};
+  });
+  try{
+   await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
+   assert.equal(seen.length,1);
+   assert.match(logs[0],/\bprovider=gemini\b/);
+   assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
+   assert.match(logs[0],/\bms=120000\b/);
+  }finally{db.close();}
+ }
+
+ // 3. Slow Gemini 503 near 15s retry budget skips backoff retries and falls back immediately
+ {
+  let clock=3000000;
+  const seen=[],sleeps=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',orModel:'google/gemini-3.8-flash',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{sleeps.push(ms);clock+=ms;},log:l=>logs.push(l)
+  },async url=>{
+   seen.push(url);
+   if(url.startsWith('https://generativelanguage.googleapis.com')){
+    clock+=14800;
+    return {ok:false,status:503,json:async()=>({error:{code:503,status:'UNAVAILABLE'}})};
+   }
+   clock+=2500;
+   return {ok:true,status:200,json:async()=>({choices:[{message:{content:'ok'},finish_reason:'stop'}]})};
+  });
+  try{
+   const res=await proxy({id:'a'},body);
+   assert.deepEqual(res,{text:'ok',truncated:false});
+   assert.equal(seen.length,2);
+   assert.deepEqual(sleeps,[]);
+   assert.match(logs[0],/\bprovider=openrouter\b/);
+   assert.match(logs[0],/\bprovider_fallback=true\b/);
+   assert.doesNotMatch(logs[0],/\bretries=/);
+  }finally{db.close();}
+ }
+
+ // 4. Timeout/abort during HTTP 200 response body parsing triggers OpenRouter fallback instead of null-payload failure
+ {
+  let clock=4000000;
+  const seen=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',orModel:'google/gemini-3.8-flash',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{clock+=ms;},log:l=>logs.push(l)
+  },async url=>{
+   seen.push(url);
+   if(url.startsWith('https://generativelanguage.googleapis.com')){
+    return {
+     ok:true,status:200,
+     json:async()=>{
+      clock+=90000;
+      const err=new Error('body read timed out');err.name='TimeoutError';throw err;
+     }
+    };
+   }
+   clock+=3000;
+   return {ok:true,status:200,json:async()=>({choices:[{message:{content:'recovered-after-body-timeout'},finish_reason:'stop'}]})};
+  });
+  try{
+   const res=await proxy({id:'a'},body);
+   assert.deepEqual(res,{text:'recovered-after-body-timeout',truncated:false});
+   assert.equal(seen.length,2);
+   assert.equal(seen[1],'https://openrouter.ai/api/v1/chat/completions');
+   assert.match(logs[0],/\bprovider=openrouter\b/);
+   assert.match(logs[0],/\bprovider_fallback=true\b/);
+  }finally{db.close();}
+ }
+
+ // 5. Non-JSON body SyntaxError on HTTP 200 before deadline fails without spurious fallback
+ {
+  let clock=5000000;
+  const seen=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,log:l=>logs.push(l)
+  },async url=>{
+   seen.push(url);
+   clock+=1000;
+   return {ok:true,status:200,json:async()=>{throw new SyntaxError('Unexpected token <');}};
+  });
+  try{
+   await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
+   assert.equal(seen.length,1);
+   assert.match(logs[0],/\bprovider=gemini\b/);
+   assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
   }finally{db.close();}
  }
 });
@@ -794,15 +1020,22 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  }
 });
 
-test('privacy.html, .env.example, and docs/OPERATIONS.md document Gemini direct provider, OpenRouter backup, switching, and rollback',()=>{
+test('privacy.html, .env.example, and docs/OPERATIONS.md accurately document Gemini direct provider, OpenRouter backup, pre-cutover smoke test, switching, and rollback',()=>{
  const fs=require('node:fs'),path=require('node:path');
  const root=path.join(__dirname,'..');
  const privacy=fs.readFileSync(path.join(root,'public/privacy.html'),'utf8');
  const zh=privacy.match(/<article id="doc-zh">([\s\S]*?)<\/article>/)[1];
  const en=privacy.match(/<article id="doc-en" hidden>([\s\S]*?)<\/article>/)[1];
- assert.match(zh,/Google Gemini API（付费档，美国/);
+ // Qualified paid-tier & processing location + pseudonymous metadata + user-supplied free-text/photo disclosure
+ assert.match(zh,/Google Gemini API/);
+ assert.match(zh,/无法强制验证计费档位或限定处理地区/);
+ assert.match(zh,/HMAC/);
+ assert.match(zh,/原样发送/);
  assert.match(zh,/OpenRouter.*备用/);
- assert.match(en,/Google Gemini API.*paid tier.*US/i);
+ assert.match(en,/Google Gemini API/);
+ assert.match(en,/cannot itself enforce billing tier status or processing location/i);
+ assert.match(en,/HMAC-derived pseudonymous user identifier/i);
+ assert.match(en,/free-text notes and photos you submit are transmitted as supplied/i);
  assert.match(en,/OpenRouter.*backup/i);
 
  const envEx=fs.readFileSync(path.join(root,'.env.example'),'utf8');
@@ -810,7 +1043,20 @@ test('privacy.html, .env.example, and docs/OPERATIONS.md document Gemini direct 
   assert.ok(envEx.includes(key),`.env.example missing ${key}`);
  }
  const ops=fs.readFileSync(path.join(root,'docs/OPERATIONS.md'),'utf8');
- for(const snippet of ['AI_PROVIDER=gemini','AI_PROVIDER=openrouter','GEMINI_API_KEY','GEMINI_MODEL','provider_fallback=true','bojin-maintenance-lock -- systemctl restart bojin.service']){
+ for(const snippet of [
+  'AI_PROVIDER=gemini',
+  'AI_PROVIDER=openrouter',
+  'GEMINI_API_KEY',
+  'GEMINI_MODEL',
+  'OPENROUTER_MODEL=google/gemini-3.8-flash',
+  'Pre-cutover direct Gemini smoke test',
+  'response_format: { type: "json_object" }',
+  'image_url',
+  'reasoning_effort',
+  'redirect: "manual"',
+  'provider_fallback=true',
+  'bojin-maintenance-lock -- systemctl restart bojin.service'
+ ]){
   assert.ok(ops.includes(snippet),`docs/OPERATIONS.md missing ${snippet}`);
  }
 });

@@ -304,24 +304,76 @@ journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error
 
 `/api/ai` supports two providers selected via `AI_PROVIDER` in `/etc/bojin/environment` (any other non-empty value fails startup naming `AI_PROVIDER`):
 
-- `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE`).
-- `AI_PROVIDER=gemini`: calls Google Gemini API directly via its OpenAI-compatible endpoint (`GEMINI_API_KEY`, `GEMINI_MODEL` defaulting to `gemini-3.8-flash`, optional `GEMINI_BASE` defaulting to `https://generativelanguage.googleapis.com/v1beta/openai`). Transient Gemini `5xx`/`UNAVAILABLE` and `429` responses do up to two short backoff retries (`400 ms`, `1000 ms`, skipped if > 15 s have already elapsed) before falling back. When `OPENROUTER_API_KEY` is also set, any remaining Gemini quota, billing, auth, 5xx, or network/timeout error automatically retries once via OpenRouter (user-input 4xx errors do not retry or fall back), counting as a single request against per-user and global daily caps.
+- `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL` defaulting to `google/gemini-2.5-flash` in code — keep `OPENROUTER_MODEL=google/gemini-3.8-flash` pinned in `/etc/bojin/environment` so backup behavior and thinking limits match direct Gemini, and `OPENROUTER_BASE` locked to `https://openrouter.ai`).
+- `AI_PROVIDER=gemini`: calls Google Gemini API directly via its OpenAI-compatible endpoint (`GEMINI_API_KEY`, `GEMINI_MODEL` defaulting to `gemini-3.8-flash`, `GEMINI_BASE` locked to `https://generativelanguage.googleapis.com`).
+- **Origin & redirect pinning:** In production, `GEMINI_BASE` only accepts exact HTTPS origin `https://generativelanguage.googleapis.com` and `OPENROUTER_BASE` only accepts `https://openrouter.ai` (non-matching hosts, non-HTTPS URLs, credentials, or query/fragment strings fail startup), and upstream requests set `redirect: "manual"` so credentials and payloads are never forwarded across origins.
+- **Bounded retries & fallback:** Transient Gemini `5xx`/`UNAVAILABLE` and `429` responses run up to two short backoff retries (`400 ms`, `1000 ms`, skipped once 15 s have elapsed). When `OPENROUTER_API_KEY` is also set, remaining Gemini transient/quota/timeout failures (`5xx`/`UNAVAILABLE`, `429`, or network/read timeouts — never user-input `400`, permanent `401`/`402`/`403`, redirects, safety blocks, or truncation) retry once via OpenRouter within a hard 120 s total deadline (reserving 30 s for fallback; Gemini attempts cap at 90 s), counting as a single request against per-user and global daily caps.
 
 Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc/bojin/environment` owned by `root:bojin` (`0640`).
 
 **Switch host from OpenRouter to direct Gemini API (keep OpenRouter as backup):**
 
-1. Edit `/etc/bojin/environment` (e.g. `sudo editor /etc/bojin/environment`) to add `GEMINI_API_KEY=<AI Studio key>`, set `AI_PROVIDER=gemini`, and optionally pin `GEMINI_MODEL=gemini-3.8-flash` (the default). Leave `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `AI_REASONING_EFFORT=low`, `AI_MAX_OUTPUT_TOKENS=2000`, and daily caps in place so OpenRouter stays active as automatic backup.
-2. Restart the service under the maintenance lock:
+1. Edit `/etc/bojin/environment` (e.g. `sudo editor /etc/bojin/environment`) to add `GEMINI_API_KEY=<AI Studio key>` and optionally pin `GEMINI_MODEL=gemini-3.8-flash` (the default), while leaving `AI_PROVIDER=openrouter` (or unset) for now. Confirm `OPENROUTER_API_KEY`, `OPENROUTER_MODEL=google/gemini-3.8-flash`, `AI_REASONING_EFFORT=low`, `AI_MAX_OUTPUT_TOKENS=2000`, and daily caps remain set.
+2. **Pre-cutover direct Gemini smoke test (before flipping `AI_PROVIDER`):** Run one scripted synthetic call on the host directly against `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` exercising structured JSON (`response_format`), a tiny synthetic PNG `image_url`, `reasoning_effort` (`AI_REASONING_EFFORT`), and `max_tokens` (`AI_MAX_OUTPUT_TOKENS`) without printing keys or response text:
+   ```sh
+   sudo -u bojin /usr/bin/node --env-file=/etc/bojin/environment -e '
+   (async () => {
+     const key = (process.env.GEMINI_API_KEY || "").trim();
+     const model = (process.env.GEMINI_MODEL || "gemini-3.8-flash").trim();
+     const maxTokens = Number(process.env.AI_MAX_OUTPUT_TOKENS || 2000);
+     const effort = (process.env.AI_REASONING_EFFORT || "").trim();
+     if (!key) throw new Error("GEMINI_API_KEY is empty");
+     const png1x1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=";
+     const payload = {
+       model,
+       max_tokens: maxTokens,
+       response_format: { type: "json_object" },
+       ...(effort ? { reasoning_effort: effort } : {}),
+       messages: [{ role: "user", content: [
+         { type: "text", text: "Reply ONLY with JSON: {\"ok\":true,\"hasImage\":true}" },
+         { type: "image_url", image_url: { url: png1x1 } }
+       ] }]
+     };
+     const t0 = Date.now();
+     const res = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+       method: "POST",
+       redirect: "manual",
+       headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+       body: JSON.stringify(payload),
+       signal: AbortSignal.timeout(30000)
+     });
+     const data = await res.json().catch(() => null);
+     const choice = data?.choices?.[0];
+     const text = choice?.message?.content;
+     let validJson = false;
+     try { JSON.parse(String(text || "")); validJson = true; } catch {}
+     const u = data?.usage || {};
+     console.log(JSON.stringify({
+       status: res.status,
+       model,
+       finish_reason: choice?.finish_reason || "error",
+       valid_json: validJson,
+       prompt_tokens: u.prompt_tokens || 0,
+       completion_tokens: u.completion_tokens || 0,
+       reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? u.reasoning_tokens ?? 0,
+       ms: Date.now() - t0
+     }));
+     if (!res.ok || !validJson || choice?.finish_reason !== "stop") process.exit(1);
+   })().catch(e => { console.error(e.message); process.exit(1); });
+   '
+   ```
+   Proceed only when this exits `0` with `status: 200`, `valid_json: true`, `finish_reason: "stop"`, and `completion_tokens` well below `AI_MAX_OUTPUT_TOKENS`.
+3. Set `AI_PROVIDER=gemini` in `/etc/bojin/environment` and restart the service under the maintenance lock:
    ```sh
    sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
    ```
-3. Verify health and startup confirmation:
+4. **Post-cutover verification:** Verify `/api/health`, startup line (`已配置 gemini/gemini-3.8-flash，备用 openrouter/google/gemini-3.8-flash`), AND trigger one authenticated synthetic `/api/ai` request (e.g., a test-account meal-with-photo estimate or swap) and confirm the resulting `journalctl` `^ai ` line shows `provider=gemini`, **no** `provider_fallback=true`, `kind=json`, `finish_reason=stop`, and `empty=false`:
    ```sh
    curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/api/health
    journalctl -u bojin.service -n 20 --no-pager -o cat | grep '薄肌日课已启动'
+   # After running one authenticated synthetic /api/ai request:
+   journalctl -u bojin.service --since -10m --no-pager -o cat | grep '^ai ' | tail -n 5
    ```
-   Expected startup line includes `已配置 gemini/gemini-3.8-flash，备用 openrouter/...`.
 
 **Roll back to OpenRouter (one env edit + restart):**
 
@@ -330,7 +382,7 @@ Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc
    ```sh
    sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
    ```
-3. Verify `/api/health` and the startup line (`已配置 openrouter/...`).
+3. Verify `/api/health`, the startup line (`已配置 openrouter/google/gemini-3.8-flash`), and trigger one authenticated synthetic `/api/ai` request confirming `journalctl` logs `provider=openrouter` (without `provider_fallback=true`), `finish_reason=stop`, and `empty=false`.
 
 **Check which provider is serving:**
 
