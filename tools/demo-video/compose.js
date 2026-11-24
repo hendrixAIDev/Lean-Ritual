@@ -21,6 +21,7 @@ const {
   W16_PANEL_X,
   W16_PANEL_Y
 } = require('./assets');
+const elevenlabs = require('./tts_elevenlabs');
 
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
 const FFPROBE = process.env.FFPROBE_BIN || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe');
@@ -81,7 +82,7 @@ function resolveSayVoice(preferredList) {
   return preferredList[preferredList.length - 1];
 }
 
-function synthesizeAllVoices({ sb, compDir, ttsEngine = 'kokoro' }) {
+async function synthesizeAllVoices({ sb, compDir, ttsEngine = 'kokoro', elevenlabsVoiceId = null }) {
   const items = [];
   const addItem = (id, text) => {
     items.push({ id, text, outWav: path.join(compDir, `vo-${id}.wav`) });
@@ -94,6 +95,24 @@ function synthesizeAllVoices({ sb, compDir, ttsEngine = 'kokoro' }) {
     });
   });
   addItem('outro', sb.outroCard.spoken || sb.outroCard.narration);
+
+  if (ttsEngine === 'elevenlabs') {
+    const elCfg = sb.voice.elevenlabs || {};
+    const voiceId = elevenlabsVoiceId || elCfg.voiceId;
+    if (!voiceId) {
+      throw new Error(
+        `No ElevenLabs voice ID configured for language "${sb.lang}". Pass --voice-${sb.lang} <voice_id> or set sb.voice.elevenlabs.voiceId.`
+      );
+    }
+    const voiceName = elevenlabsVoiceId && elevenlabsVoiceId !== elCfg.voiceId ? '' : (elCfg.voiceName || '');
+    return elevenlabs.synthesizeBatch({
+      items,
+      voiceId,
+      voiceName,
+      modelId: elCfg.modelId || elevenlabs.DEFAULT_MODEL_ID,
+      voiceSettings: elCfg.voiceSettings
+    });
+  }
 
   if (ttsEngine === 'kokoro') {
     const jobPath = path.join(compDir, `tts-job-${sb.lang}.json`);
@@ -169,22 +188,12 @@ function renderAnimatedCardSegment({ videoPath, trimStart, duration, width, heig
   ]);
 }
 
-function buildZoomPanFilter({ phoneW, phoneH, sceneDur, camera }) {
-  const totalFrames = Math.max(30, Math.round(sceneDur * FPS));
-  const maxZoom = camera?.maxZoom || 1.1;
-  const delta = Math.max(0.01, maxZoom - 1.0);
-  const fx = camera?.fx ?? 0.5;
-  const fy = camera?.fy ?? 0.45;
-  // Supersample 2x before zoompan so sub-pixel motion has zero integer-pixel jitter.
-  const superW = phoneW * 2;
-  const superH = phoneH * 2;
-  const zExpr = `1+${delta.toFixed(4)}*pow(sin(PI*min(1,in/${totalFrames})),1.4)`;
-  const xExpr = `(iw-iw/zoom)*${fx.toFixed(3)}`;
-  const yExpr = `(ih-ih/zoom)*${fy.toFixed(3)}`;
-  return `scale=${superW}:${superH}:flags=lanczos,zoompan=z='${zExpr}':x='${xExpr}':y='${yExpr}':d=1:s=${phoneW}x${phoneH}:fps=${FPS}`;
+// Fixed, rock-solid static scaling inside the phone frame (no zoompan jitter or cropping).
+function buildStaticPhoneScaleFilter({ phoneW, phoneH }) {
+  return `scale=${phoneW}:${phoneH}:flags=lanczos`;
 }
 
-function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sceneOverlays, camera, outMp4 }) {
+function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sceneOverlays, outMp4 }) {
   const rawInfo = probeMedia(rawWebm);
   const avail = Math.max(0.5, rawInfo.duration - trimStart);
   const padNeeded = Math.max(0.25, sceneDur - avail + 0.5);
@@ -210,11 +219,11 @@ function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sce
   });
 
   const filters = [];
-  const zp = buildZoomPanFilter({ phoneW: PHONE_W, phoneH: PHONE_H, sceneDur, camera });
+  const phoneScale = buildStaticPhoneScaleFilter({ phoneW: PHONE_W, phoneH: PHONE_H });
 
   filters.push(`color=c=#0C1714:s=${CANVAS_W}x${CANVAS_H}:r=${FPS}:d=${sceneDur.toFixed(3)}[base]`);
   filters.push(
-    `[0:v]fps=${FPS},tpad=stop_mode=clone:stop_duration=${padNeeded.toFixed(3)},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,${zp}[phone]`
+    `[0:v]fps=${FPS},tpad=stop_mode=clone:stop_duration=${padNeeded.toFixed(3)},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,${phoneScale}[phone]`
   );
   filters.push(`[base][phone]overlay=${PHONE_X}:${PHONE_Y}:shortest=1[staged]`);
   filters.push(`[staged][1:v]overlay=0:0:shortest=1[framed]`);
@@ -311,7 +320,7 @@ function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sce
   runBin(FFMPEG, args);
 }
 
-function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path, panels, camera, outMp4 }) {
+function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path, panels, outMp4 }) {
   const rawInfo = probeMedia(rawWebm);
   const avail = Math.max(0.5, rawInfo.duration - trimStart);
   const padNeeded = Math.max(0.25, sceneDur - avail + 0.5);
@@ -325,11 +334,11 @@ function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path,
   panels.forEach(p => args.push('-loop', '1', '-i', p));
 
   const filters = [];
-  const zp = buildZoomPanFilter({ phoneW: W16_PHONE_W, phoneH: W16_PHONE_H, sceneDur, camera });
+  const phoneScale = buildStaticPhoneScaleFilter({ phoneW: W16_PHONE_W, phoneH: W16_PHONE_H });
 
   filters.push(`color=c=#0C1714:s=${W16_CANVAS_W}x${W16_CANVAS_H}:r=${FPS}:d=${sceneDur.toFixed(3)}[base]`);
   filters.push(
-    `[0:v]fps=${FPS},tpad=stop_mode=clone:stop_duration=${padNeeded.toFixed(3)},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,${zp}[phone]`
+    `[0:v]fps=${FPS},tpad=stop_mode=clone:stop_duration=${padNeeded.toFixed(3)},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,${phoneScale}[phone]`
   );
   filters.push(`[base][phone]overlay=${W16_PHONE_X}:${W16_PHONE_Y}:shortest=1[staged]`);
   filters.push(`[staged][1:v]overlay=0:0:shortest=1[framed]`);
@@ -413,9 +422,9 @@ function concatWithTransitions({ segments, width, outVideoOnly }) {
     '-profile:v', 'high',
     '-level', '4.1',
     '-preset', 'medium',
-    '-crf', '24',
-    '-maxrate', '1450k',
-    '-bufsize', '2900k',
+    '-crf', '20',
+    '-maxrate', '1600k',
+    '-bufsize', '3200k',
     '-movflags', '+faststart',
     '-an',
     outVideoOnly
@@ -479,7 +488,7 @@ function buildMasterAudioMix({ voiceCues, sfxCues, bgmWav, totalDur, outWav }) {
       `[0:a]asplit=2[vmain][vsc]`,
       `[1:a]atrim=0:${totalDur.toFixed(3)},volume=0.24[bgm0]`,
       `[bgm0][vsc]sidechaincompress=threshold=0.022:ratio=6.5:attack=35:release=460:makeup=1[bgm_duck]`,
-      `[vmain][bgm_duck][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.95,atrim=0:${totalDur.toFixed(3)}[aout]`
+      `[vmain][bgm_duck][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.89,atrim=0:${totalDur.toFixed(3)}[aout]`
     ].join(';'),
     '-map', '[aout]',
     '-ar', '48000',
@@ -648,7 +657,7 @@ function planLanguageTimeline({ sb, recordedScenes, voiceCuesMap }) {
   return { plan, timeline, totalDur, titleDur, outroDur, voicePlan, sfxPlan };
 }
 
-function composeLanguageVideo({
+async function composeLanguageVideo({
   sb,
   recordedScenes,
   langAssets,
@@ -657,13 +666,14 @@ function composeLanguageVideo({
   outDir,
   formats = ['9x16', '16x9'],
   ttsEngine = 'kokoro',
+  elevenlabsVoiceId = null,
   preSynth = null
 }) {
   const compDir = path.join(workDir, `compose-${sb.lang}`);
   fs.mkdirSync(compDir, { recursive: true });
   fs.mkdirSync(outDir, { recursive: true });
 
-  const synth = preSynth || synthesizeAllVoices({ sb, compDir, ttsEngine });
+  const synth = preSynth || (await synthesizeAllVoices({ sb, compDir, ttsEngine, elevenlabsVoiceId }));
   const { plan, timeline, totalDur, voicePlan, sfxPlan } = planLanguageTimeline({
     sb,
     recordedScenes,
@@ -752,7 +762,6 @@ function composeLanguageVideo({
           splitAt: p.splitAt,
           shell16x9Path: sharedAssets.shell16x9Path,
           panels: langAssets.panels16x9[p.id],
-          camera: p.scene.camera,
           outMp4: segMp4
         });
       } else {
@@ -763,7 +772,6 @@ function composeLanguageVideo({
           splitAt: p.splitAt,
           shellPath: sharedAssets.shellPath,
           sceneOverlays: langAssets.overlays9x16[p.id],
-          camera: p.scene.camera,
           outMp4: segMp4
         });
       }

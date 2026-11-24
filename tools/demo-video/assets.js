@@ -391,7 +391,7 @@ async function renderPanel16x9(browser, { sceneIdx, totalScenes, chapter, captio
   }
 </style></head><body>
   <div class="stack">
-    <div class="chapter"><span class="num">${String(sceneIdx + 1).padStart(2, '0')} / ${String(totalScenes).padStart(2, '0')}</span><span>${escHtml(chapter)}</span></div>
+    <div class="chapter"><span class="num">${String(sceneIdx + 1).padStart(2, '0')} / ${String(totalScenes).padStart(2, '0')}</span><span>${escHtml(String(chapter || '').replace(/^\d+\s*[·•-]\s*/, ''))}</span></div>
     <h2>${escHtml(caption)}</h2>
     ${calloutHtml}
     <div class="dots">${dotsHtml}</div>

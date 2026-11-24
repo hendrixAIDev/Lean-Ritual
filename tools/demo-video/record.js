@@ -3,9 +3,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const VIEWPORT = { width: 390, height: 844 };
 const RECORD_SIZE = { width: 780, height: 1688 };
+const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
 
 function buildInitScript() {
   return ({ tab, initialLang, uid }) => {
@@ -61,7 +63,7 @@ function buildInitScript() {
           100% { opacity: 0; transform: scale(1.015); }
         }
         ::-webkit-scrollbar { display: none; }
-        html, body { scrollbar-width: none; }
+        html, body { scrollbar-width: none; scroll-behavior: auto !important; }
       `;
       (document.head || document.documentElement).appendChild(style);
     };
@@ -115,7 +117,7 @@ function buildInitScript() {
         const endY = Math.max(0, Math.min(maxY, targetY));
         const delta = endY - startY;
         if (Math.abs(delta) < 2 || durationMs <= 0) {
-          window.scrollTo(0, endY);
+          window.scrollTo({ top: endY, left: 0, behavior: 'instant' });
           resolve();
           return;
         }
@@ -123,7 +125,7 @@ function buildInitScript() {
         const step = now => {
           const p = Math.min(1, (now - t0) / durationMs);
           const ease = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-          window.scrollTo(0, startY + delta * ease);
+          window.scrollTo({ top: startY + delta * ease, left: 0, behavior: 'instant' });
           if (p < 1) requestAnimationFrame(step);
           else resolve();
         };
@@ -255,6 +257,40 @@ async function attachGuardsAndMocks(page, baseUrl, sb, sceneId) {
   return guards;
 }
 
+function encodeScreencastFrames({ frames, totalDurSec, outMp4, concatPath }) {
+  assert.ok(frames.length > 0, 'No screencast frames captured');
+  const lines = [];
+  for (let i = 0; i < frames.length; i++) {
+    const cur = frames[i];
+    const nextT = i + 1 < frames.length ? frames[i + 1].t : Math.max(totalDurSec, cur.t + 0.033);
+    const dur = Math.max(0.008, nextT - cur.t);
+    const escaped = cur.file.replace(/'/g, "'\\''");
+    lines.push(`file '${escaped}'`);
+    lines.push(`duration ${dur.toFixed(6)}`);
+  }
+  const lastEsc = frames[frames.length - 1].file.replace(/'/g, "'\\''");
+  lines.push(`file '${lastEsc}'`);
+  fs.writeFileSync(concatPath, lines.join('\n') + '\n', 'utf8');
+
+  execFileSync(
+    FFMPEG,
+    [
+      '-y',
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', concatPath,
+      '-vf', `fps=30,scale=${RECORD_SIZE.width}:${RECORD_SIZE.height}:flags=lanczos,format=yuv420p`,
+      '-r', '30',
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '12',
+      '-an',
+      outMp4
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 }
+  );
+}
+
 async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, sceneId, startTab, run }) {
   console.log(`  [${sb.lang}] recording scene: ${sceneId} (tab=${startTab})`);
   const context = await browser.newContext({
@@ -263,18 +299,35 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
     locale: sb.locale,
     colorScheme: 'light',
     storageState,
-    acceptDownloads: true,
-    recordVideo: { dir: rawDir, size: RECORD_SIZE }
+    acceptDownloads: true
   });
 
   await context.addInitScript(buildInitScript(), { tab: startTab, initialLang: sb.lang, uid });
 
-  const pageCreatedAt = Date.now();
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const guards = await attachGuardsAndMocks(page, srv.base, sb, sceneId);
+  const cdp = await context.newCDPSession(page);
 
-  let trimStart = 0;
+  const sceneFramesDir = path.join(rawDir, `frames-${sceneId}`);
+  fs.mkdirSync(sceneFramesDir, { recursive: true });
+  const frames = [];
+  let frameSeq = 0;
+  let recording = false;
+  let sceneReadyAt = 0;
+
+  cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
+    const now = Date.now();
+    try {
+      await cdp.send('Page.screencastFrameAck', { sessionId });
+    } catch {}
+    if (!recording) return;
+    const t = Math.max(0, (now - sceneReadyAt) / 1000);
+    const file = path.join(sceneFramesDir, `f-${String(frameSeq++).padStart(6, '0')}.png`);
+    fs.writeFileSync(file, Buffer.from(data, 'base64'));
+    frames.push({ file, t });
+  });
+
   const beatSplits = [];
   const events = [];
   let posterShotPath = null;
@@ -291,9 +344,19 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
     // Ensure no banner errors are visible before recording begins
     assert.equal(await page.locator('.banner').count(), 0, `[${sceneId}] Unexpected error/offline banner`);
 
-    const sceneReadyAt = Date.now();
-    // Leave a tiny safety buffer so trim cuts past any navigation/hydration paint.
-    trimStart = Math.max(0.25, (sceneReadyAt - pageCreatedAt) / 1000);
+    // Capture exact initial lossless frame at t=0, then start CDP PNG screencast
+    sceneReadyAt = Date.now();
+    const initialFile = path.join(sceneFramesDir, `f-${String(frameSeq++).padStart(6, '0')}.png`);
+    await page.screenshot({ path: initialFile, type: 'png' });
+    frames.push({ file: initialFile, t: 0 });
+
+    recording = true;
+    await cdp.send('Page.startScreencast', {
+      format: 'png',
+      maxWidth: RECORD_SIZE.width,
+      maxHeight: RECORD_SIZE.height,
+      everyNthFrame: 1
+    });
 
     const markBeat = () => {
       beatSplits.push((Date.now() - sceneReadyAt) / 1000);
@@ -307,29 +370,37 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
 
     const sceneDuration = (Date.now() - sceneReadyAt) / 1000;
 
-    // Wait briefly so final frames flush cleanly into WebM
-    await page.waitForTimeout(250);
+    // Wait briefly for any in-flight screencast frame then stop cleanly
+    await page.waitForTimeout(180);
+    recording = false;
+    await cdp.send('Page.stopScreencast').catch(() => {});
 
     assert.deepEqual(guards.cspViolations, [], `[${sceneId}] CSP violations: ${guards.cspViolations.join('; ')}`);
     assert.deepEqual(guards.pageErrors, [], `[${sceneId}] Page errors: ${guards.pageErrors.join('; ')}`);
     assert.deepEqual(guards.consoleErrors, [], `[${sceneId}] Console errors: ${guards.consoleErrors.join('; ')}`);
     assert.deepEqual(guards.external, [], `[${sceneId}] External requests: ${guards.external.join('; ')}`);
 
-    const video = page.video();
     await context.close();
-    const videoPath = await video.path();
+
+    const videoPath = path.join(rawDir, `raw-${sceneId}.mp4`);
+    const concatPath = path.join(sceneFramesDir, 'concat.txt');
+    encodeScreencastFrames({ frames, totalDurSec: sceneDuration, outMp4: videoPath, concatPath });
+    fs.rmSync(sceneFramesDir, { recursive: true, force: true });
 
     return {
       id: sceneId,
       videoPath,
-      trimStart,
+      trimStart: 0,
       recordedDuration: sceneDuration,
       beatSplits,
       events,
       posterShotPath
     };
   } catch (err) {
+    recording = false;
+    await cdp.send('Page.stopScreencast').catch(() => {});
     await context.close().catch(() => {});
+    fs.rmSync(sceneFramesDir, { recursive: true, force: true });
     throw err;
   }
 }

@@ -11,14 +11,50 @@ const { generateSharedAssets, generateLangAssets, renderPoster } = require('./as
 const { seedDemoAccount } = require('./seed');
 const { recordAllScenes } = require('./record');
 const { synthesizeAllVoices, composeLanguageVideo, probeMedia } = require('./compose');
+const { hasElevenLabsApiKey } = require('./tts_elevenlabs');
 
 const ROOT = path.resolve(__dirname, '../..');
+const VALID_TTS = new Set(['auto', 'kokoro', 'elevenlabs', 'say']);
+
+function parseTtsSpec(spec) {
+  const raw = String(spec || 'auto').trim();
+  if (VALID_TTS.has(raw)) {
+    return { defaultEngine: raw, byLang: {} };
+  }
+  const byLang = {};
+  for (const part of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+    const [k, v] = part.split('=').map(s => s.trim());
+    if (!k || !v || !STORYBOARDS[k] || !VALID_TTS.has(v)) {
+      throw new Error(`Unsupported TTS spec: "${spec}" (use auto, kokoro, elevenlabs, say, or e.g. zh=elevenlabs,en=kokoro)`);
+    }
+    byLang[k] = v;
+  }
+  if (Object.keys(byLang).length === 0) {
+    throw new Error(`Unsupported TTS spec: "${spec}"`);
+  }
+  return { defaultEngine: 'auto', byLang };
+}
+
+function resolveTtsEngineForLang(ttsSpec, lang, voiceOverrides = {}) {
+  const req = ttsSpec.byLang[lang] || ttsSpec.defaultEngine;
+  if (req !== 'auto') return req;
+  const sb = STORYBOARDS[lang];
+  if (hasElevenLabsApiKey() && (voiceOverrides[lang] || sb.voice?.elevenlabs?.voiceId)) {
+    return 'elevenlabs';
+  }
+  return 'kokoro';
+}
 
 function parseArgs(argv) {
   const opts = {
     langs: ['zh', 'en'],
     formats: ['9x16', '16x9'],
-    tts: 'kokoro',
+    ttsRaw: 'auto',
+    ttsSpec: parseTtsSpec('auto'),
+    voiceOverrides: {
+      zh: process.env.ELEVENLABS_VOICE_ZH || null,
+      en: process.env.ELEVENLABS_VOICE_EN || null
+    },
     outDir: path.join(os.tmpdir(), 'lean-ritual-demo-video'),
     keepWork: false,
     skipBuild: false,
@@ -33,7 +69,12 @@ function parseArgs(argv) {
       const v = argv[++i];
       opts.formats = v === 'all' ? ['9x16', '16x9'] : v.split(',').map(s => s.trim()).filter(Boolean);
     } else if (a === '--tts' && argv[i + 1]) {
-      opts.tts = argv[++i].trim();
+      opts.ttsRaw = argv[++i].trim();
+      opts.ttsSpec = parseTtsSpec(opts.ttsRaw);
+    } else if (a === '--voice-zh' && argv[i + 1]) {
+      opts.voiceOverrides.zh = argv[++i].trim();
+    } else if (a === '--voice-en' && argv[i + 1]) {
+      opts.voiceOverrides.en = argv[++i].trim();
     } else if (a === '--out' && argv[i + 1]) {
       opts.outDir = path.resolve(argv[++i]);
     } else if (a === '--keep-work') {
@@ -44,7 +85,7 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (a === '-h' || a === '--help') {
       console.log(
-        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts kokoro|say] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
+        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts auto|kokoro|elevenlabs|say|zh=elevenlabs,en=kokoro] [--voice-zh <id>] [--voice-en <id>] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
       );
       process.exit(0);
     }
@@ -54,9 +95,6 @@ function parseArgs(argv) {
   }
   for (const f of opts.formats) {
     if (!['9x16', '16x9'].includes(f)) throw new Error(`Unsupported format: ${f} (use 9x16, 16x9, or all)`);
-  }
-  if (!['kokoro', 'say'].includes(opts.tts)) {
-    throw new Error(`Unsupported TTS engine: ${opts.tts} (use kokoro or say)`);
   }
   return opts;
 }
@@ -74,7 +112,7 @@ async function main() {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lean-ritual-video-work-'));
   console.log(`Output dir: ${opts.outDir}`);
   console.log(`Work dir:   ${workDir}`);
-  console.log(`Formats:    ${opts.formats.join(', ')} | TTS: ${opts.tts}`);
+  console.log(`Formats:    ${opts.formats.join(', ')} | TTS: ${opts.ttsRaw}`);
 
   const { chromium, executablePath, modulePath } = resolvePlaywright();
   console.log(`Playwright: ${modulePath}`);
@@ -98,6 +136,7 @@ async function main() {
 
     for (const lang of opts.langs) {
       const sb = STORYBOARDS[lang];
+      const langTts = resolveTtsEngineForLang(opts.ttsSpec, lang, opts.voiceOverrides);
       const compDir = path.join(workDir, `compose-${lang}`);
       fs.mkdirSync(compDir, { recursive: true });
 
@@ -106,9 +145,21 @@ async function main() {
       let outroDur = sb.outroCard.duration;
 
       if (!opts.dryRun) {
-        console.log(`\n=== [${lang}] Synthesizing neural narration (${opts.tts}) ===`);
-        preSynth = synthesizeAllVoices({ sb, compDir, ttsEngine: opts.tts });
+        console.log(`\n=== [${lang}] Synthesizing neural narration (${langTts}) ===`);
+        preSynth = await synthesizeAllVoices({
+          sb,
+          compDir,
+          ttsEngine: langTts,
+          elevenlabsVoiceId: opts.voiceOverrides[lang]
+        });
         console.log(`  voice: ${preSynth.voiceLabel}`);
+        if (preSynth.stats) {
+          console.log(
+            `  elevenlabs usage: apiCalls=${preSynth.stats.apiCalls}, cacheHits=${preSynth.stats.cacheHits}, ` +
+            `textCharsNew=${preSynth.stats.textCharsNew}/${preSynth.stats.textCharsTotal}, ` +
+            `charsBilled=${preSynth.stats.charsBilled}, charsCached=${preSynth.stats.charsCached}`
+          );
+        }
         titleDur = Math.max(sb.titleCard.duration, preSynth.cues.title.duration + 0.85);
         outroDur = Math.max(sb.outroCard.duration, preSynth.cues.outro.duration + 1.15);
       }
@@ -189,7 +240,7 @@ async function main() {
         }
 
         console.log(`=== [${lang}] Composing final MP4s (${opts.formats.join(', ')}) + ducked BGM/SFX + contact sheets ===`);
-        const composed = composeLanguageVideo({
+        const composed = await composeLanguageVideo({
           sb,
           recordedScenes: recorded,
           langAssets,
@@ -197,7 +248,8 @@ async function main() {
           workDir,
           outDir: opts.outDir,
           formats: opts.formats,
-          ttsEngine: opts.tts,
+          ttsEngine: langTts,
+          elevenlabsVoiceId: opts.voiceOverrides[lang],
           preSynth
         });
 

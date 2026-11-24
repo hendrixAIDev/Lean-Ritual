@@ -11,6 +11,14 @@ const STORYBOARDS = {
       speaker: 'zf_001',
       sid: 3,
       speed: 1.08,
+      elevenlabs: {
+        modelId: process.env.ELEVENLABS_MODEL_ID || 'eleven_v3',
+        voiceId: 'MI36FIkp9wRP7cpWKPTl',
+        voiceName: 'Evan Zhao - Warm, Calm and Trustworthy',
+        voiceSettings: {
+          stability: 0.5
+        }
+      },
       sayFallback: {
         preferred: ['Tingting (Enhanced)', 'Tingting (Premium)', 'Lilian (Premium)', 'Meijia (Premium)', 'Tingting'],
         rate: 192
@@ -47,7 +55,6 @@ const STORYBOARDS = {
         chapter: '薄肌日课 · 今天',
         transition: 'circleopen',
         minDuration: 5.2,
-        camera: { maxZoom: 1.09, fx: 0.50, fy: 0.28, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: '打开即看今日课表，练什么、吃多少一目了然',
@@ -61,7 +68,6 @@ const STORYBOARDS = {
         chapter: '01 · 每日打卡',
         transition: 'smoothleft',
         minDuration: 15.0,
-        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.44, holdStart: 0.12, holdEnd: 0.88 },
         beats: [
           {
             caption: '每天 10 秒记下体重、步数与睡眠',
@@ -80,7 +86,6 @@ const STORYBOARDS = {
         chapter: '02 · 记训练 & 记录',
         transition: 'smoothleft',
         minDuration: 26.5,
-        camera: { maxZoom: 1.11, fx: 0.50, fy: 0.42, holdStart: 0.10, holdEnd: 0.90 },
         beats: [
           {
             caption: '根据历史自动推荐重量，填完组数一键保存',
@@ -100,7 +105,6 @@ const STORYBOARDS = {
         chapter: '03 · 饮食拍照估算',
         transition: 'smoothup',
         minDuration: 19.5,
-        camera: { maxZoom: 1.13, fx: 0.50, fy: 0.48, holdStart: 0.14, holdEnd: 0.88 },
         beats: [
           {
             caption: '拍张餐食照，AI 自动估算热量与三大营养素',
@@ -119,7 +123,6 @@ const STORYBOARDS = {
         chapter: '04 · AI 教练反馈',
         transition: 'smoothleft',
         minDuration: 22.0,
-        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.54, holdStart: 0.12, holdEnd: 0.90 },
         beats: [
           {
             caption: 'AI 教练结合近 14 天记录，给出针对性调整建议',
@@ -138,7 +141,6 @@ const STORYBOARDS = {
         chapter: '05 · 我的 & 数据主权',
         transition: 'smoothleft',
         minDuration: 16.0,
-        camera: { maxZoom: 1.10, fx: 0.50, fy: 0.46, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: '支持中英双语；Safari 分享即可「添加到主屏幕」',
@@ -212,6 +214,14 @@ const STORYBOARDS = {
       speaker: 'af_heart',
       sid: 3,
       speed: 1.0,
+      elevenlabs: {
+        modelId: process.env.ELEVENLABS_MODEL_ID || 'eleven_v3',
+        voiceId: 'hpp4J3VqNfWAUOO0d1Us',
+        voiceName: 'Bella - Professional, Bright, Warm',
+        voiceSettings: {
+          stability: 0.5
+        }
+      },
       sayFallback: {
         preferred: ['Ava (Premium)', 'Zoe (Premium)', 'Samantha (Enhanced)', 'Samantha'],
         rate: 178
@@ -248,7 +258,6 @@ const STORYBOARDS = {
         chapter: 'Lean Ritual · Today',
         transition: 'circleopen',
         minDuration: 5.2,
-        camera: { maxZoom: 1.09, fx: 0.50, fy: 0.28, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: 'Open the app to see today’s workout and macro targets at a glance',
@@ -262,7 +271,6 @@ const STORYBOARDS = {
         chapter: '01 · Daily Check-in',
         transition: 'smoothleft',
         minDuration: 15.0,
-        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.44, holdStart: 0.12, holdEnd: 0.88 },
         beats: [
           {
             caption: 'Log morning weight, steps, and sleep in 10 seconds',
@@ -281,7 +289,6 @@ const STORYBOARDS = {
         chapter: '02 · Workouts & Log',
         transition: 'smoothleft',
         minDuration: 26.5,
-        camera: { maxZoom: 1.11, fx: 0.50, fy: 0.42, holdStart: 0.10, holdEnd: 0.90 },
         beats: [
           {
             caption: 'Progressive load suggestions — log sets and reps in seconds',
@@ -301,7 +308,6 @@ const STORYBOARDS = {
         chapter: '03 · Photo Macro AI',
         transition: 'smoothup',
         minDuration: 19.5,
-        camera: { maxZoom: 1.13, fx: 0.50, fy: 0.48, holdStart: 0.14, holdEnd: 0.88 },
         beats: [
           {
             caption: 'Snap a meal photo — AI estimates calories and protein for you',
@@ -320,7 +326,6 @@ const STORYBOARDS = {
         chapter: '04 · AI Coach Review',
         transition: 'smoothleft',
         minDuration: 22.0,
-        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.54, holdStart: 0.12, holdEnd: 0.90 },
         beats: [
           {
             caption: 'AI coach reviews your last 14 days and proposes concrete tweaks',
@@ -339,7 +344,6 @@ const STORYBOARDS = {
         chapter: '05 · Me & Your Data',
         transition: 'smoothleft',
         minDuration: 16.0,
-        camera: { maxZoom: 1.10, fx: 0.50, fy: 0.46, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: 'Switch languages anytime · Add to Home Screen for app-like access',
@@ -412,8 +416,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v2（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v2 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v3（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v3 (English)`
   );
   lines.push('');
   lines.push(
