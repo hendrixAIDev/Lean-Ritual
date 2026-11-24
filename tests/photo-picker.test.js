@@ -564,6 +564,80 @@ test('meal-save race: photo edits are disabled and guarded during deferred uploa
   assert.equal(vm.runInContext('S.pendingPhotos[0].url', app.ctx), 'blob:untracked-extra');
 });
 
+test('failed meal write cleans up attempt S.files cache while keeping draft, and retry-photo defers preview revocation until day update succeeds', async () => {
+  // 1) Assets unavailable + day write failure -> attempt cache entry & URL released, draft + selection preserved
+  const noAssetsApp = mountApp({
+    lang: 'zh',
+    profile: SAMPLE_PROFILE,
+    assetsImpl: null,
+    failNextDayWrite: true
+  });
+  await noAssetsApp.waitBoot();
+  vm.runInContext(`
+    compress2 = async file => ({ ok: true, blob: { tag: file.name, type: "image/jpeg" }, thumb: "data:image/jpeg;base64,AA==" });
+    S.tab = "food";
+    S.date = todayStr();
+    S.mealMode = "manual";
+    render();
+  `, noAssetsApp.ctx);
+
+  const draftFile = { name: 'offline-meal.jpg', type: 'image/jpeg' };
+  await noAssetsApp.dispatchChange({ id: 'm-photo', dataset: {}, files: [draftFile], value: 'offline-meal.jpg' });
+  const draftUrl = noAssetsApp.createdUrls[0].url;
+  noAssetsApp.mTextState.value = 'Offline draft meal';
+
+  await noAssetsApp.dispatchClick({ act: 'add-meal', v: 'manual' });
+
+  // Attempt created a transient S.files[mealId].url and must have revoked & deleted it on write failure
+  assert.equal(noAssetsApp.createdUrls.length, 2, 'expected draft URL + attempt S.files URL');
+  const attemptUrl = noAssetsApp.createdUrls[1].url;
+  assert.deepEqual(vm.runInContext('Object.keys(S.files)', noAssetsApp.ctx), [], 'failed attempt must not leave an unreferenced entry in S.files');
+  assert.ok(noAssetsApp.revokedUrls.includes(attemptUrl), 'failed attempt S.files URL must be revoked');
+  assert.equal(noAssetsApp.revokedUrls.includes(draftUrl), false, 'draft preview URL must stay live for retry');
+  assert.equal(vm.runInContext('S.pendingPhotos?.length', noAssetsApp.ctx), 1, 'draft selection preserved for retry');
+  assert.equal(noAssetsApp.mTextState.value, 'Offline draft meal', 'draft meal text preserved for retry');
+
+  // Now retry succeeds -> draft URL revoked, S.pendingPhotos cleared, saved meal retains its active S.files entry
+  await noAssetsApp.dispatchClick({ act: 'add-meal', v: 'manual' });
+  assert.equal(vm.runInContext('S.pendingPhotos', noAssetsApp.ctx), null);
+  assert.ok(noAssetsApp.revokedUrls.includes(draftUrl), 'draft URL revoked once retry succeeds');
+  assert.equal(vm.runInContext('Object.keys(S.files).length', noAssetsApp.ctx), 1, 'saved meal keeps its local fallback cache entry');
+
+  // 2) retry-photo: upload succeeds, day write fails -> fallback preview URL must NOT be revoked yet; succeeds on retry -> revoked
+  const today = new Date().toISOString().slice(0, 10);
+  const retryApp = mountApp({
+    lang: 'zh',
+    profile: SAMPLE_PROFILE,
+    days: {
+      [today]: {
+        date: today,
+        meals: [{ id: 'm-retry', type: '午餐', text: 'Retry meal', time: '12:00', photo: null, photoErr: 'network', est: null }]
+      }
+    },
+    assetsImpl: { async upload() { return { id: 'e'.repeat(32) }; } },
+    failNextDayWrite: true
+  });
+  await retryApp.waitBoot();
+  vm.runInContext(`
+    S.tab = "food";
+    S.date = todayStr();
+    S.files["m-retry"] = { blob: { tag: "retry.jpg", type: "image/jpeg" }, url: URL.createObjectURL({ tag: "retry.jpg" }), key: "retry-key-12345678" };
+    render();
+  `, retryApp.ctx);
+  const fallbackUrl = retryApp.createdUrls[0].url;
+
+  // First retry-photo: upload succeeds, day write fails -> preview URL remains intact
+  await retryApp.dispatchClick({ act: 'retry-photo', v: 'm-retry' });
+  assert.equal(retryApp.revokedUrls.includes(fallbackUrl), false, 'fallback preview URL must not be revoked when day write fails');
+  assert.equal(vm.runInContext('S.files["m-retry"]?.url', retryApp.ctx), fallbackUrl);
+
+  // Second retry-photo: upload and day write both succeed -> preview URL is revoked
+  await retryApp.dispatchClick({ act: 'retry-photo', v: 'm-retry' });
+  assert.ok(retryApp.revokedUrls.includes(fallbackUrl), 'fallback preview URL revoked after day update succeeds');
+  assert.equal(vm.runInContext('S.files["m-retry"]?.url', retryApp.ctx), null);
+  assert.equal(vm.runInContext('S.days[S.date].meals[0].photo', retryApp.ctx), 'e'.repeat(32));
+});
+
 function resolvePlaywright() {
   const home = os.homedir();
   const candidates = ['playwright', 'playwright-core'];

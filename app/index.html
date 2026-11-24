@@ -2608,10 +2608,11 @@ async function addMeal(mode, btn){
   if (!text && !file) { toast(t("toast.needMealInput")); return; }
   S.busy.addMeal = true; if (btn) btn.disabled = true;
   render(); if (textEl && $("#m-text")) $("#m-text").value = rawText;
-  let saved = false;
+  let saved = false, mealId = null;
   try {
     const now = new Date();
     const m = {id:uid(), type, text, time:`${pad(now.getHours())}:${pad(now.getMinutes())}`, photo:null, est:null};
+    mealId = m.id;
     const early = null, anchor = null;
     let blob = null, photoKey = null;
     if (file) {
@@ -2660,6 +2661,10 @@ async function addMeal(mode, btn){
     S.busy.addMeal = false;
     if (btn) btn.disabled = false;
     if (!saved) {
+      if (mealId && S.files[mealId]) {
+        if (S.files[mealId].url) { try { URL.revokeObjectURL(S.files[mealId].url); } catch {} }
+        delete S.files[mealId];
+      }
       const keep = $("#m-text")?.value;
       render();
       if (keep != null && $("#m-text")) $("#m-text").value = keep;
@@ -3973,7 +3978,7 @@ document.addEventListener("click", async ev => {
     case "retry-photo": {
       const m = S.days[S.date]?.meals?.find(x => x.id === v), entry = S.files[v], f = entry?.blob; if (!m || !f || !S.assets) break;
       entry.key = entry.key || makeUploadKey();
-      try { const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id; if (entry.url) { try { URL.revokeObjectURL(entry.url); } catch {} entry.url = null; } await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); toast(t("toast.photoSaved")); }
+      try { const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); if (entry.url) { try { URL.revokeObjectURL(entry.url); } catch {} entry.url = null; } toast(t("toast.photoSaved")); }
       catch (e) { toast(PHOTO_ERR(e?.code || "unknown"), 6000); }
       break;
     }
