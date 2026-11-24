@@ -107,16 +107,34 @@ fieldset.ufb-group legend{font-size:13px;color:var(--muted);padding:0}
 .bar{height:8px;background:var(--sunk);border-radius:99px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
 .bar i.over{background:var(--warn)}
-.macro{display:grid;grid-template-columns:minmax(3.2em,max-content) 1fr auto;gap:8px;align-items:center;font-size:13px}
+.macro-bars{display:grid;grid-template-columns:auto minmax(40px,1fr) auto;gap:8px 10px;align-items:center;font-size:13px}
+.macro{display:contents}
+.macro-lbl{white-space:nowrap}
+.macro-val{white-space:nowrap;text-align:right}
+.macro-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px}
+.macro-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.macro-field .mf-lbl{font-size:12px;line-height:1.25;color:var(--muted);font-weight:500;white-space:nowrap}
+.mf-box{display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:0 10px;min-height:44px;min-width:0}
+.mf-box:focus-within{border-color:var(--accent)}
+.mf-box:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.mf-box input{border:0;background:transparent;padding:8px 0;flex:1 1 0;width:0;min-width:0;font-family:var(--f-num);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--ink);-moz-appearance:textfield;appearance:textfield}
+.mf-box input:focus-visible{outline:none}
+.mf-box input::-webkit-inner-spin-button,.mf-box input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.mf-unit{font-size:12px;color:var(--muted);flex:none;white-space:nowrap;user-select:none}
 .big{font-family:var(--f-num);font-size:34px;font-weight:700;line-height:1}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .kpi{display:flex;flex-direction:column;gap:2px;min-width:0}
 .kpi .v{font-family:var(--f-num);font-size:22px;font-weight:600;line-height:1.1}
 .kpi .k{font-size:12px;color:var(--muted)}
-.meal{display:grid;grid-template-columns:84px 1fr;gap:12px;border-top:1px solid var(--line);padding-top:12px}
+.meal{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:14px;min-width:0}
 .meal:first-child{border-top:none;padding-top:0}
-.meal .ph{width:84px;height:84px;border-radius:8px;background:var(--sunk);object-fit:cover;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
-.meal .body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.meal-head{display:grid;grid-template-columns:72px 1fr;gap:12px;align-items:start}
+.meal-meta{display:flex;flex-direction:column;gap:6px;min-width:0}
+.meal-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.meal-type{width:auto;min-width:0;max-width:100%;flex:0 1 auto;padding:4px 8px;font-weight:600}
+.meal-time{flex:none;white-space:nowrap}
+.meal .ph{width:72px;height:72px;border-radius:8px;background:var(--sunk);object-fit:cover;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
+.meal div.ph{text-align:center;padding:4px;line-height:1.25}
 .meal .more{display:flex;flex-wrap:wrap;gap:8px}
 .meal .more figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
 .meal .more img,.meal .more .ph2{width:56px;height:56px;border-radius:6px;object-fit:cover;background:var(--sunk)}
@@ -140,6 +158,7 @@ label.chip:has(input:focus-visible){outline:2px solid var(--accent);outline-offs
 .tabs button.on{color:var(--accent);font-weight:700}
 .banner{font-size:13px;padding:8px 12px;border-radius:8px;background:var(--warn-soft);color:var(--ink)}
 .day,.wk-row{display:flex;justify-content:space-between;gap:8px;min-height:44px;padding-block:10px;border:0;border-top:1px solid var(--line);align-items:center;width:100%;background:none;color:inherit;text-align:left}
+.day .chip{white-space:normal}
 .day:first-child,.wk-row:first-child{border-top:none}
 .chart{width:100%;height:auto;display:block}
 .ai-out{white-space:pre-wrap;font-size:14px}
@@ -153,6 +172,7 @@ details.how[open] > *:not(summary){margin-top:6px}
 .hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
 .hero .big{font-size:40px;color:var(--accent)}
 @media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
+@media (max-width:360px){.datebar .d{font-size:19px;min-width:6em}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
@@ -1926,6 +1946,18 @@ function suggest(ex, date, deload){
   return {w, text, stall};
 }
 const fmtW = w => w === 0 ? t("unit.bw") : `${w}kg`;
+function roundMacro(k, v){
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const c = Math.max(0, n);
+  const r = k === "kcal" ? Math.round(c) : Math.round(c * 10) / 10;
+  return Object.is(r, -0) ? 0 : r;
+}
+function fmtMacro(k, v){
+  const r = roundMacro(k, v);
+  return r == null ? "" : String(r);
+}
 function dayMacros(date){
   const meals = S.days[date]?.meals || [];
   const res = {kcal:0, protein:0, carbs:0, fat:0, n:meals.length, est:0};
@@ -2349,13 +2381,25 @@ async function saveRecordEdit(){
   } catch {}
 }
 function macroBars(tg, m){
-  const row = (k, l, cur, tgt, unit) => { tgt = num(tgt); cur = num(cur); const pct = tgt > 0 ? Math.max(0, Math.min(100, Number.isFinite(cur/tgt*100) ? cur/tgt*100 : 0)) : 0; return `<div class="macro"><span>${esc(l)}</span><div class="bar"><i class="${cur>tgt*1.05?"over":""}" style="width:${pct}%"></i></div><span class="num">${Math.round(cur)} / ${tgt}${unit}</span></div>`; };
-  return `${row("kcal",t("macro.kcal"),m.kcal,tg.kcal," kcal")}${row("p",t("macro.protein"),m.protein,tg.protein," g")}${row("c",t("macro.carbs"),m.carbs,tg.carbs," g")}${row("f",t("macro.fat"),m.fat,tg.fat," g")}
+  const row = (k, l, cur, tgt, unit) => {
+    tgt = num(tgt); cur = num(cur);
+    const pct = tgt > 0 ? Math.max(0, Math.min(100, Number.isFinite(cur/tgt*100) ? cur/tgt*100 : 0)) : 0;
+    const curFmt = fmtMacro(k, cur) || "0", tgtFmt = fmtMacro(k, tgt) || "0";
+    return `<div class="macro"><span class="macro-lbl">${esc(l)}</span><div class="bar"><i class="${cur>tgt*1.05?"over":""}" style="width:${pct}%"></i></div><span class="num macro-val">${curFmt} / ${tgtFmt}${unit}</span></div>`;
+  };
+  return `<div class="macro-bars">${row("kcal",t("macro.kcal"),m.kcal,tg.kcal," kcal")}${row("protein",t("macro.protein"),m.protein,tg.protein," g")}${row("carbs",t("macro.carbs"),m.carbs,tg.carbs," g")}${row("fat",t("macro.fat"),m.fat,tg.fat," g")}</div>
   <p class="small muted">${esc(m.n ? t("macro.summary", {n:m.n, est:m.est}) : t("macro.empty"))}</p>`;
 }
 
 /* ---- 饮食 ---- */
-const MF = [["kcal","macro.kcal"],["protein","macro.proteinG"],["carbs","macro.carbsG"],["fat","macro.fatG"]];
+const MF = [["kcal","macro.kcal","kcal"],["protein","macro.protein","g"],["carbs","macro.carbs","g"],["fat","macro.fat","g"]];
+function macroInputs({ idPrefix, dataAttr, values, format }){
+  return `<div class="macro-grid">${MF.map(([k, lk, unit]) => {
+    const val = format ? fmtMacro(k, values?.[k]) : (values?.[k] ?? "");
+    const attrs = dataAttr === "mf" ? `data-mf="${k}"` : `data-meal="${esc(dataAttr)}" data-k="${k}"`;
+    return `<label class="macro-field"><span class="mf-lbl">${esc(t(lk))}</span><span class="mf-box"><input id="${esc(idPrefix)}-${k}" ${attrs} type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" step="${k==="kcal"?"1":"0.1"}" min="0" autocomplete="off" value="${esc(val)}"><span class="mf-unit">${unit}</span></span></label>`;
+  }).join("")}</div>`;
+}
 const aiOK = () => !!(S.sample || (S.cloud && S.comments));
 function mealMode(){ const m = S.mealMode || lsGet("bj-mmode", "ai"); return m === "ai" && aiOK() ? "ai" : "manual"; }
 function viewFood(){
@@ -2375,8 +2419,7 @@ function viewFood(){
     <div class="row"><span class="small muted">${esc(t("food.macrosMode"))}</span>
       <button class="chip ${mode==="ai"?"on":""}" aria-pressed="${mode==="ai"}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>${esc(t("food.aiEst"))}</button>
       <button class="chip ${mode==="manual"?"on":""}" aria-pressed="${mode==="manual"}" data-act="mmode" data-v="manual">${esc(t("food.manual"))}</button></div>
-    ${mode === "manual" ? `<div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      ${MF.map(([k,lk]) => `<label>${esc(t(lk))}<input id="mf-${k}" data-mf="${k}" type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" autocomplete="off" value="${esc(S.mfill?.[k] ?? "")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}</div>` : ""}
+    ${mode === "manual" ? macroInputs({ idPrefix: "mf", dataAttr: "mf", values: S.mfill, format: false }) : ""}
     <button class="btn primary block" data-act="add-meal" data-v="${mode}" ${S.busy.addMeal?"disabled":""}>${esc(S.busy.addMeal ? t("food.saving") : mode === "ai" ? t("food.saveAndAi") : t("common.save"))}</button>
     <p class="small muted">${esc(mode === "ai" ? t("food.aiModeHint") : t("food.manualModeHint"))}</p>
     ${S.assets ? "" : `<p class="small muted">${esc(t("food.localPhotoHint"))}</p>`}
@@ -2391,16 +2434,14 @@ function mealCard(m){
   const img = safeBlobId(m.photo) ? `<img class="ph" src="/_blob/${esc(m.photo)}" data-fb="${esc(safeImage(m.thumb))}" alt="${esc(t("food.mealPhotoAlt", {type:mealTypeLabel(m.type)}))}" data-photo-fallback="primary">` : (safeImage(S.files[m.id]?.url) ? `<img class="ph" src="${esc(safeImage(S.files[m.id].url))}" alt="">` : safeImage(m.thumb) ? `<img class="ph" src="${esc(safeImage(m.thumb))}" alt="">` : `<div class="ph">${esc(t("food.noPhoto"))}</div>`);
   const confirm = S.confirmDel === m.id;
   const visionText = photoCount(m) > 1 ? t("food.visionMulti", {n:photoCount(m)}) : m.photo ? t("food.visionPhoto") : t("food.visionText");
-  return `<div class="meal" role="group" aria-label="${esc(mealTypeLabel(m.type) + (m.time ? " " + m.time : ""))}">${img}<div class="body">
-    <div class="row between"><select data-mtype-of="${esc(m.id)}" aria-label="${esc(t("food.changeMealType"))}" style="width:auto;padding:2px 6px;font-weight:600">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(mealTypeLabel(x))}</option>`).join("")}</select><span class="small muted num">${esc(m.time||"")}</span></div>
-    ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}
+  return `<div class="meal" role="group" aria-label="${esc(mealTypeLabel(m.type) + (m.time ? " " + m.time : ""))}"><div class="meal-head">${img}<div class="meal-meta">
+    <div class="meal-top"><select class="meal-type" data-mtype-of="${esc(m.id)}" aria-label="${esc(t("food.changeMealType"))}">${(MEAL_TYPES.includes(m.type) ? MEAL_TYPES : [m.type, ...MEAL_TYPES]).map(x => `<option value="${esc(x)}" ${x===m.type?"selected":""}>${esc(mealTypeLabel(x))}</option>`).join("")}</select><span class="small muted num meal-time">${esc(m.time||"")}</span></div>
+    ${m.text ? `<p class="small">${esc(m.text)}</p>` : ""}</div></div>
     ${moreOf(m).length ? `<div class="more">${(m.photo || m.thumb) && hasLeft(m) ? `<figure><span class="small muted">${esc(t("food.beforeLeft"))}</span></figure>` : ""}${(m.more || []).map((p, i) => p && (p.id || p.thumb) ? `<figure>${safeBlobId(p.id) ? `<img src="/_blob/${esc(p.id)}" data-fb="${esc(safeImage(p.thumb))}" alt="${esc(moreTagLabel(p.tag) || t("food.photoWord"))}" data-photo-fallback="extra">` : safeImage(p.thumb) ? `<img src="${esc(safeImage(p.thumb))}" alt="">` : ``}${moreTagLabel(p.tag) ? `<span>${esc(moreTagLabel(p.tag))}</span>` : ""}<button class="link small" data-act="del-more" data-v="${esc(m.id)}|${i}">${esc(S.confirmDel === m.id + "|" + i ? t("food.delMoreConfirm") : t("food.delMore"))}</button></figure>` : "").join("")}</div>` : ""}
     ${S.busy["more-"+m.id] ? `<p class="small muted">${esc(t("food.uploading"))}</p>` : ""}
     ${moreOf(m).length && e.kcal != null && (e.photos || 1) < photoCount(m) ? `<p class="tip small">${esc(t("food.reestMoreTip"))}</p>` : ""}
     ${e.items?.length ? `<p class="small muted">${joinList(e.items.map(x => esc(x.name + (x.amount?" "+x.amount:""))))}</p>` : ""}
-    <div class="grid2" style="grid-template-columns:repeat(4,1fr);gap:6px">
-      ${[["kcal","macro.kcal"],["protein","macro.protein"],["carbs","macro.carbs"],["fat","macro.fat"]].map(([k,lk]) => `<label>${esc(t(lk))}<input id="me-${esc(m.id)}-${k}" data-meal="${esc(m.id)}" data-k="${k}" type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" autocomplete="off" value="${esc(e[k]??"")}" style="padding:4px 6px;font-family:var(--f-num)"></label>`).join("")}
-    </div>
+    ${macroInputs({ idPrefix: "me-" + m.id, dataAttr: m.id, values: e, format: true })}
     ${e.calc ? `<p class="small muted">${esc(e.by==="label"?t("food.calcByLabel"):t("food.calcBasis"))}${getLang()==="en"?": ":"："}${esc(fmtLabelCalc(e.calc, e.by))}</p>` : ""}
     ${["claude", "server"].includes(e.by) && e.ocr ? `<p class="tip small">${esc(e.label ? t("food.ocrLabel") : t("food.ocrNoLabel"))}</p>` : ""}
     ${["claude", "server"].includes(e.by) && !e.ocr && e.photoUsed === false && (m.photo || e.hadPhoto) ? `<p class="tip warn small">${esc(t("food.photoNotUsed", {reason:e.imgErr ? t("food.photoNotUsedReason", {err:fmtImgErr(e.imgErr)}) : ""}))}</p>` : ""}
@@ -2412,7 +2453,7 @@ function mealCard(m){
       ${aiOK() ? `<button class="chip ${e.kcal==null?"on":""}" data-act="ai-meal" data-v="${esc(m.id)}" ${busy || pend ?"disabled":""}>${esc(busy || pend ? t("food.aiEstimating") : e.kcal!=null ? t("food.aiReest") : t("food.aiEst"))}</button>` : ""}
       ${photoCount(m) < 4 ? `<label class="chip">${esc(t("food.addPhotoBtn"))}<input type="file" accept="image/*" data-more="${esc(m.id)}" data-tag="其他"></label>` : ""}
       <button class="chip ${confirm?"bad":""}" data-act="del-meal" data-v="${esc(m.id)}">${esc(confirm?t("common.confirmDelete"):t("common.delete"))}</button>
-    </div></div></div>`;
+    </div></div>`;
 }
 function shrink(img, max, q){
   const k = Math.min(1, max / Math.max(img.width, img.height));
@@ -2555,7 +2596,7 @@ async function addMeal(mode, btn){
       if (!m.more.length) delete m.more;
     }
     if (mode === "manual") {
-      const f = S.mfill || {}, v = k => f[k] === "" || f[k] == null || isNaN(+f[k]) ? null : (k === "kcal" ? Math.round(+f[k]) : Math.round(+f[k]*10)/10);
+      const f = S.mfill || {}, v = k => roundMacro(k, f[k]);
       if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
     }
     const date = S.date;
@@ -2948,7 +2989,7 @@ function dayRow(d){
   const tags = [];
   if (w?.done) tags.push(`<span class="chip on">${esc(progLabel(w.key))}${w.feel?" · "+esc(feelLabel(w.feel)):""}</span>`);
   if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${esc(w.pain==="pain"?t("log.painHard"):t("log.painMild"))}</span>`);
-  if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:m.kcal, p:m.protein}):""}))}</span>`);
+  if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:fmtMacro("kcal", m.kcal) || "0", p:fmtMacro("protein", m.protein) || "0"}):""}))}</span>`);
   if (d.checkin?.sleep) tags.push(`<span class="chip">${esc(t("log.sleepChip", {h:d.checkin.sleep}))}</span>`);
   return `<button class="day" data-act="goto" data-v="${esc(d.date)}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
     <div class="stack" style="gap:4px;min-width:0"><b class="small">${esc(fmtDate(d.date))}</b><div class="row">${tags.join("")||`<span class="small muted">${esc(t("log.checkinOnly"))}</span>`}</div></div>
@@ -4179,7 +4220,8 @@ document.addEventListener("change", async ev => {
     const [i, f] = el.dataset.cu.split("."), val = el.value;
     updateDay(S.date, d => { const e = d.custom?.ex?.[+i]; if (e) e[f] = f === "name" ? canonExName(val) : (val === "" ? "" : +val); }).catch(()=>{});
   } else if (el.dataset.meal) {
-    const id = el.dataset.meal, k = el.dataset.k, val = el.value === "" ? null : Math.round(+el.value);
+    const id = el.dataset.meal, k = el.dataset.k, val = roundMacro(k, el.value);
+    el.value = val == null ? "" : String(val);
     updateDay(S.date, d => { const m = d.meals.find(x => x.id === id); if (m) m.est = {...(m.est||{}), [k]: val, ...(m.est?.by ? {} : {by:"manual"})}; }).catch(()=>{});
   }
 });
