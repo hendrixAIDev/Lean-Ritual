@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
-const { createMailer, renderEmail, resolveReplyTo, extractDomain, DEFAULT_REPLY_TO } = require("../lib/mail");
+const { createMailer, renderEmail, parseSingleMailbox, resolveReplyTo, validateActionUrl, extractDomain, DEFAULT_REPLY_TO } = require("../lib/mail");
 const { createAuth } = require("../lib/auth");
 
 const CJK_RE = /[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/;
@@ -315,17 +315,90 @@ test("renderEmail produces clean HTML and plain-text parts with branded header, 
     }
   }
 
-  // HTML escaping and protocol safety
-  const xssAttempt = 'https://leanritual.app/api/auth/verify-email?token=1" onclick="alert(1)&x=<script>';
-  const safeRendered = renderEmail({ kind: "verify", url: xssAttempt, lang: "en" });
+  // HTML escaping on validated same-origin URLs; whitespace and non-HTTP(S) schemes are refused before rendering
+  const querySpecials = 'https://leanritual.app/api/auth/verify-email?token=1"&x=<script>';
+  const safeRendered = renderEmail({ kind: "verify", url: querySpecials, lang: "en" });
   assert.doesNotMatch(safeRendered.html, /<script>/i);
-  assert.doesNotMatch(safeRendered.html, /" onclick="/i);
+  assert.ok(safeRendered.text.includes("https://leanritual.app/api/auth/verify-email?token=1%22&x=%3Cscript%3E"));
+  assert.ok(safeRendered.html.includes("https://leanritual.app/api/auth/verify-email?token=1%22&amp;x=%3Cscript%3E"));
 
-  const jsProto = renderEmail({ kind: "verify", url: "javascript:alert(1)", lang: "en" });
-  assert.doesNotMatch(jsProto.html, /href="javascript:/i);
+  for (const badUrl of [
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "/api/auth/verify-email?token=abc",
+    "",
+    "   ",
+    "http://leanritual.app/api/auth/verify-email?token=abc",
+    "https://evil.example/api/auth/verify-email?token=abc",
+    "https://leanritual.app.evil.example/api/auth/verify-email?token=abc",
+    "https://leanritual.app@evil.example/api/auth/verify-email?token=abc",
+    "https://user:pass@leanritual.app/api/auth/verify-email?token=abc",
+    "https://leanritual.app:8443/api/auth/verify-email?token=abc",
+    "https://leanritual.app/api/auth/verify-email?token=abc\r\nX-Inject: 1",
+    'https://leanritual.app/api/auth/verify-email?token=1" onclick="alert(1)',
+  ]) {
+    assert.throws(() => validateActionUrl(badUrl, "https://leanritual.app"), /Invalid email action URL/, `should reject ${badUrl}`);
+    assert.throws(() => renderEmail({ kind: "verify", url: badUrl, lang: "en" }), /Invalid email action URL/, `renderEmail should reject ${badUrl}`);
+  }
 });
 
-test("SMTP mailer sends multipart/alternative with Reply-To, unchanged From, domain Message-ID, and no List-Unsubscribe", async () => {
+test("send boundary enforces trusted origin in both SMTP and file modes while preserving localhost dev", async t => {
+  const smtpEnv = {
+    MAIL_MODE: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "465",
+    SMTP_USER: "resend",
+    SMTP_PASS: "re_test_key",
+    MAIL_FROM: "Lean Ritual <noreply@leanritual.app>",
+  };
+
+  // Non-HTTPS public baseURL is refused at mailer creation
+  assert.throws(() => createMailer(smtpEnv, { baseURL: "http://leanritual.app" }), /HTTPS origin/);
+
+  let sendCalled = 0;
+  const logs = [];
+  const sendProd = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    transport: { async sendMail() { sendCalled++; return { response: "250 OK" }; } },
+    log: line => logs.push(line),
+  });
+  const badUrl = "https://evil.example/api/auth/verify-email?token=tok_phish_123";
+  const recipient = "victim.secret@163.com";
+  await assert.rejects(
+    () => sendProd({ to: recipient, kind: "verify", url: badUrl, lang: "zh" }),
+    err => {
+      assert.equal(err.code, "INVALID_ACTION_URL");
+      assert.ok(!err.message.includes(badUrl));
+      assert.ok(!err.message.includes(recipient));
+      assert.equal(err.cause, undefined);
+      return true;
+    }
+  );
+  assert.equal(sendCalled, 0, "transport.sendMail must not be called for disallowed origin");
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^mail status=error type=verify recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none error_code=INVALID_ACTION_URL$/);
+  assert.ok(!logs[0].includes("evil.example"));
+  assert.ok(!logs[0].includes("victim.secret"));
+  assert.ok(!logs[0].includes("tok_phish_123"));
+
+  // Explicit localhost development origin still works, and rejects mismatched localhost ports or external hosts
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-mail-origin-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const sendFile = createMailer({ MAIL_MODE: "file" }, { dataDir, baseURL: "http://127.0.0.1:18080" });
+  await sendFile({ to: "dev@example.com", kind: "verify", url: "http://127.0.0.1:18080/api/auth/verify-email?token=dev_ok", lang: "en" });
+  assert.equal(readMailFiles(dataDir).length, 1);
+  await assert.rejects(
+    () => sendFile({ to: "dev@example.com", kind: "verify", url: "http://127.0.0.1:19999/api/auth/verify-email?token=wrong_port", lang: "en" }),
+    /Invalid email action URL/
+  );
+  await assert.rejects(
+    () => sendFile({ to: "dev@example.com", kind: "verify", url: "https://evil.example/phish", lang: "en" }),
+    /Invalid email action URL/
+  );
+  assert.equal(readMailFiles(dataDir).length, 1);
+});
+
+test("SMTP mailer sends multipart/alternative with strict single-mailbox Reply-To, unchanged From, domain Message-ID, and no List-Unsubscribe", async () => {
   const nodemailer = require("nodemailer");
   const baseEnv = {
     MAIL_MODE: "smtp",
@@ -336,18 +409,21 @@ test("SMTP mailer sends multipart/alternative with Reply-To, unchanged From, dom
     MAIL_FROM: "Lean Ritual <noreply@leanritual.app>",
   };
 
-  // Default Reply-To falls back to privacy contact email
+  // Default Reply-To falls back silently to privacy contact email
   const logsDefault = [];
+  const warnsDefault = [];
   const streamTransport1 = nodemailer.createTransport({ streamTransport: true, buffer: true });
   const sendDefault = createMailer(baseEnv, {
     baseURL: "https://leanritual.app",
     transport: streamTransport1,
     log: line => logsDefault.push(line),
+    warn: line => warnsDefault.push(line),
   });
   const verifyUrl = "https://leanritual.app/api/auth/verify-email?token=tok_secret_999&callbackURL=%2Flogin.html%3Fverified%3D1";
   const info1 = await sendDefault({ to: "tester@163.com", kind: "verify", url: verifyUrl, lang: "zh" });
   const raw1 = info1.message.toString("utf8");
 
+  assert.equal(warnsDefault.length, 0);
   assert.match(raw1, /^From: Lean Ritual <noreply@leanritual\.app>\r?$/m);
   assert.match(raw1, /^Reply-To: hendrix\.ai\.dev@gmail\.com\r?$/m);
   assert.match(raw1, /^Message-ID: <[0-9a-f-]+@leanritual\.app>\r?$/m);
@@ -367,6 +443,7 @@ test("SMTP mailer sends multipart/alternative with Reply-To, unchanged From, dom
     baseURL: "https://leanritual.app",
     transport: streamTransport2,
     log: () => {},
+    warn: () => { throw new Error("valid MAIL_REPLY_TO should not warn"); },
   });
   const resetUrl = "https://leanritual.app/api/auth/reset-password/rst_secret_888?callbackURL=%2Flogin.html";
   const info2 = await sendCustom({ to: "member@qq.com", kind: "reset", url: resetUrl, lang: "en" });
@@ -378,15 +455,66 @@ test("SMTP mailer sends multipart/alternative with Reply-To, unchanged From, dom
   assert.ok(raw2.includes("support@leanritual.app"));
   assert.doesNotMatch(raw2, /^List-Unsubscribe:/im);
 
-  // Whitespace-only MAIL_REPLY_TO uses default; invalid or CR/LF MAIL_REPLY_TO fails closed
-  assert.equal(resolveReplyTo({}), DEFAULT_REPLY_TO);
-  assert.equal(resolveReplyTo({ MAIL_REPLY_TO: "   " }), DEFAULT_REPLY_TO);
-  assert.throws(() => resolveReplyTo({ MAIL_REPLY_TO: "not-an-email" }), /MAIL_REPLY_TO/);
-  assert.throws(() => resolveReplyTo({ MAIL_REPLY_TO: "ok@leanritual.app\r\nBcc: evil@example.com" }), /MAIL_REPLY_TO/);
-  assert.throws(() => createMailer({ ...baseEnv, MAIL_REPLY_TO: "bad" }, { baseURL: "https://leanritual.app" }), /MAIL_REPLY_TO/);
+  // Clean serialization of valid single mailboxes
+  assert.deepEqual(parseSingleMailbox("hendrix.ai.dev@gmail.com"), {
+    name: "", address: "hendrix.ai.dev@gmail.com", header: "hendrix.ai.dev@gmail.com",
+  });
+  assert.deepEqual(parseSingleMailbox("<support@LEANRITUAL.APP>"), {
+    name: "", address: "support@leanritual.app", header: "support@leanritual.app",
+  });
+  assert.deepEqual(parseSingleMailbox('"Lean Ritual, Support" <support@leanritual.app>'), {
+    name: "Lean Ritual, Support",
+    address: "support@leanritual.app",
+    header: '"Lean Ritual, Support" <support@leanritual.app>',
+  });
+
+  // Unset or whitespace-only MAIL_REPLY_TO uses default without warning
+  const silentWarns = [];
+  assert.equal(resolveReplyTo({}, { warn: w => silentWarns.push(w) }), DEFAULT_REPLY_TO);
+  assert.equal(resolveReplyTo({ MAIL_REPLY_TO: "   " }, { warn: w => silentWarns.push(w) }), DEFAULT_REPLY_TO);
+  assert.equal(silentWarns.length, 0);
+
+  // Malformed, multi-address, group, comment, or CR/LF MAIL_REPLY_TO falls back to default with a redacted startup warning
+  for (const invalidReplyTo of [
+    "a@@example.com",
+    "person..name@example.com",
+    ".leading@example.com",
+    "trailing.@example.com",
+    "a@example.com, b@example.com",
+    "a@example.com,",
+    "Group: a@example.com;",
+    "a@b.com <c@d.com>",
+    "support@leanritual.app (comment)",
+    "ok@leanritual.app\r\nBcc: evil@example.com",
+    "user@localhost",
+    "not-an-email",
+  ]) {
+    assert.equal(parseSingleMailbox(invalidReplyTo), null, `should reject ${JSON.stringify(invalidReplyTo)}`);
+    const warns = [];
+    assert.equal(resolveReplyTo({ MAIL_REPLY_TO: invalidReplyTo }, { warn: w => warns.push(w) }), DEFAULT_REPLY_TO);
+    assert.equal(warns.length, 1, `should emit one startup warning for ${JSON.stringify(invalidReplyTo)}`);
+    assert.match(warns[0], /invalid MAIL_REPLY_TO.*default Reply-To/i);
+    assert.ok(!warns[0].includes(invalidReplyTo), "startup warning must not echo raw malformed MAIL_REPLY_TO");
+  }
+
+  // createMailer with malformed MAIL_REPLY_TO warns at startup and sends with default Reply-To
+  const fallbackWarns = [];
+  const streamTransport3 = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  const sendFallback = createMailer({
+    ...baseEnv,
+    MAIL_REPLY_TO: "person..name@example.com",
+  }, {
+    baseURL: "https://leanritual.app",
+    transport: streamTransport3,
+    log: () => {},
+    warn: w => fallbackWarns.push(w),
+  });
+  assert.equal(fallbackWarns.length, 1);
+  const info3 = await sendFallback({ to: "tester@163.com", kind: "verify", url: verifyUrl, lang: "zh" });
+  assert.match(info3.message.toString("utf8"), /^Reply-To: hendrix\.ai\.dev@gmail\.com\r?$/m);
 });
 
-test("SMTP logging records only metadata (type, recipient domain, messageId, SMTP code) and redacts addresses, tokens, and URLs", async () => {
+test("SMTP logging records only local Message-ID and metadata, redacts addresses/tokens/URLs, and rethrows sanitized errors without leaking into Better Auth logs", async t => {
   const smtpEnv = {
     MAIL_MODE: "smtp",
     SMTP_HOST: "smtp.resend.com",
@@ -399,14 +527,14 @@ test("SMTP logging records only metadata (type, recipient domain, messageId, SMT
   const secretToken = "tok_ultra_secret_value_777";
   const secretUrl = `https://leanritual.app/api/auth/verify-email?token=${secretToken}&callbackURL=%2Flogin.html`;
 
-  // 1. Successful send with noisy SMTP response echoing sensitive strings
+  // 1. Successful send logs locally generated Message-ID even if transport returns a poisoned/token-like messageId
   const logs = [];
   const capturedOptions = [];
   const mockTransport = {
     async sendMail(options) {
       capturedOptions.push(options);
       return {
-        messageId: "<resend-id-42@leanritual.app>",
+        messageId: `<other.person@example.com>`,
         response: `250 2.0.0 OK accepted for ${secretEmail} link ${secretUrl}`,
       };
     },
@@ -423,33 +551,15 @@ test("SMTP logging records only metadata (type, recipient domain, messageId, SMT
   assert.equal(capturedOptions[0].replyTo, DEFAULT_REPLY_TO);
   assert.match(capturedOptions[0].messageId, /^<[0-9a-f-]+@leanritual\.app>$/);
   assert.equal(logs.length, 1);
-  assert.equal(logs[0], "mail status=sent type=verify recipient_domain=163.com message_id=<resend-id-42@leanritual.app> smtp_code=250");
+  assert.equal(logs[0], `mail status=sent type=verify recipient_domain=163.com message_id=${capturedOptions[0].messageId} smtp_code=250`);
+  assert.ok(!logs[0].includes("other.person@example.com"));
   assert.ok(!logs[0].includes("alice.private"));
   assert.ok(!logs[0].includes(secretEmail));
   assert.ok(!logs[0].includes(secretToken));
   assert.ok(!logs[0].includes(secretUrl));
   assert.ok(!logs[0].includes("https://"));
 
-  // 2. Poisoned messageId containing recipient address or URL gets redacted
-  const poisonedLogs = [];
-  const sendPoisoned = createMailer(smtpEnv, {
-    baseURL: "https://leanritual.app",
-    transport: {
-      async sendMail() {
-        return {
-          messageId: `<${secretEmail}>`,
-          response: "250 OK",
-        };
-      },
-    },
-    log: line => poisonedLogs.push(line),
-  });
-  await sendPoisoned({ to: secretEmail, kind: "reset", url: secretUrl, lang: "en" });
-  assert.equal(poisonedLogs.length, 1);
-  assert.equal(poisonedLogs[0], "mail status=sent type=reset recipient_domain=163.com message_id=redacted smtp_code=250");
-  assert.ok(!poisonedLogs[0].includes(secretEmail));
-
-  // 3. Failed SMTP send logs metadata + SMTP error code only, never err.message / address / token / URL, and rethrows
+  // 2. Failed SMTP send logs metadata + SMTP error code only and throws a sanitized error (no raw message, response, or cause)
   const errLogs = [];
   const sendFailing = createMailer(smtpEnv, {
     baseURL: "https://leanritual.app",
@@ -459,6 +569,7 @@ test("SMTP logging records only metadata (type, recipient domain, messageId, SMT
         err.code = "EENVELOPE";
         err.responseCode = 550;
         err.response = `550 5.1.1 User unknown ${secretEmail} ${secretToken}`;
+        err.rejected = [secretEmail];
         throw err;
       },
     },
@@ -466,7 +577,20 @@ test("SMTP logging records only metadata (type, recipient domain, messageId, SMT
   });
   await assert.rejects(
     () => sendFailing({ to: secretEmail, kind: "reset", url: secretUrl, lang: "zh" }),
-    /Mailbox rejected/
+    err => {
+      assert.equal(err.message, "Mail delivery failed (EENVELOPE, smtp=550)");
+      assert.equal(err.code, "EENVELOPE");
+      assert.equal(err.responseCode, 550);
+      assert.equal(err.cause, undefined);
+      assert.equal(err.response, undefined);
+      assert.equal(err.rejected, undefined);
+      assert.ok(!err.message.includes("Mailbox rejected"));
+      assert.ok(!err.message.includes("alice.private"));
+      assert.ok(!err.message.includes(secretEmail));
+      assert.ok(!err.message.includes(secretToken));
+      assert.ok(!err.message.includes(secretUrl));
+      return true;
+    }
   );
   assert.equal(errLogs.length, 1);
   assert.match(errLogs[0], /^mail status=error type=reset recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=550 error_code=EENVELOPE$/);
@@ -474,6 +598,76 @@ test("SMTP logging records only metadata (type, recipient domain, messageId, SMT
   assert.ok(!errLogs[0].includes(secretEmail));
   assert.ok(!errLogs[0].includes(secretToken));
   assert.ok(!errLogs[0].includes(secretUrl));
+
+  // 3. Rejected SMTP send invoked through Better Auth never leaks recipient address, raw SMTP error, token, or URL into Better Auth's logger
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-auth-smtp-err-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const authBaseURL = "https://leanritual.app";
+  const authMailerLogs = [];
+  const authSendEmail = createMailer(smtpEnv, {
+    baseURL: authBaseURL,
+    transport: {
+      async sendMail(options) {
+        const rawErr = new Error(`550 5.1.1 <${options.to}> rejected with link ${options.text}`);
+        rawErr.code = "EENVELOPE";
+        rawErr.responseCode = 550;
+        rawErr.response = `550 5.1.1 <${options.to}>: Recipient address rejected`;
+        rawErr.rejected = [options.to];
+        throw rawErr;
+      },
+    },
+    log: line => authMailerLogs.push(line),
+  });
+  const service = await createAuth({
+    dataDir,
+    baseURL: authBaseURL,
+    secret: "auth-smtp-failure-redaction-secret-123456789",
+    cookieSecure: true,
+    sendEmail: authSendEmail,
+  });
+  t.after(() => service.close());
+
+  const inv = service.invites.issue("auth.secret.user@163.com");
+  const capturedConsoleErrors = [];
+  const origConsoleError = console.error;
+  console.error = (...args) => {
+    capturedConsoleErrors.push(args.map(a => (a instanceof Error ? `${a.message} ${JSON.stringify(a)} ${a.stack || ""}` : String(a))).join(" "));
+  };
+  let signupRes;
+  try {
+    signupRes = await service.auth.handler(new Request(`${authBaseURL}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: authBaseURL,
+        "x-ritual-client-ip": "198.51.100.42",
+      },
+      body: JSON.stringify({
+        email: inv.email,
+        name: "SecretTester",
+        password: "strong-auth-error-test-password",
+        invitation: inv.token,
+        callbackURL: "/login.html?verified=1",
+        consentTerms: true,
+        consentSensitiveCrossBorder: true,
+        agreedConsentVersion: "2026-11-24",
+      }),
+    }));
+  } finally {
+    console.error = origConsoleError;
+  }
+
+  assert.equal(signupRes.status, 200);
+  assert.equal(authMailerLogs.length, 1);
+  assert.match(authMailerLogs[0], /^mail status=error type=verify recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=550 error_code=EENVELOPE$/);
+  assert.ok(capturedConsoleErrors.length >= 1, "Better Auth should log the sanitized send failure");
+  const combinedLogs = [...authMailerLogs, ...capturedConsoleErrors].join("\n");
+  assert.ok(combinedLogs.includes("Mail delivery failed (EENVELOPE, smtp=550)"));
+  assert.ok(!combinedLogs.includes("auth.secret.user"));
+  assert.ok(!combinedLogs.includes(inv.email));
+  assert.ok(!combinedLogs.includes("Recipient address rejected"));
+  assert.ok(!combinedLogs.includes("verify-email?token="));
+  assert.ok(!combinedLogs.includes("https://leanritual.app"));
 
   // 4. Domain extraction handles CFWS, IDN, quoted display names, and malformed inputs safely
   assert.equal(extractDomain("user@sub.(comment)example.com"), "sub.example.com");
