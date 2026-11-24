@@ -159,7 +159,7 @@ if (process.argv.length === 2) {
   try {
     scriptHashes = JSON.parse(fs.readFileSync(path.join(CFG.publicDir, "csp-hashes.json"), "utf8"));
     const actual = new Set();
-    for (const name of ["index.html", "login.html", "privacy.html", "guide.html"]) {
+    for (const name of ["index.html", "login.html", "privacy.html", "terms.html", "guide.html"]) {
       const html = fs.readFileSync(path.join(CFG.publicDir, name), "utf8");
       for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi))
         if (!/\bsrc\s*=/i.test(m[1])) actual.add("'sha256-" + crypto.createHash("sha256").update(m[2].replace(/\r\n?/g, "\n")).digest("base64") + "'");
@@ -206,6 +206,8 @@ async function handle(req, res){
   if (p.startsWith("/api/")) {
     if (!user) throw httpErr(401, "session_expired", "请先登录");
     accountData.ensureActive(user.id);
+    const { CONSENT_VERSION } = require("./lib/auth");
+    const consentRequired = user.consentVersion !== CONSENT_VERSION;
     if (p === "/api/account/export" && m === "GET") {
       if (exportingUsers.has(user.id)) throw httpErr(429, "export_busy", "已有导出正在进行");
       exportingUsers.add(user.id);
@@ -219,7 +221,30 @@ async function handle(req, res){
       } finally { exportingUsers.delete(user.id); feedback.sweep(); }
       return;
     }
-    if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: aiProxy.enabled, aiModel: aiProxy.model });
+    if (p === "/api/me" && m === "GET") return send(res, 200, {
+      id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange,
+      ai: aiProxy.enabled, aiModel: aiProxy.model,
+      consentVersion: user.consentVersion || null, consentedAt: user.consentedAt || null,
+      requiredConsentVersion: CONSENT_VERSION, consentRequired
+    });
+    if (p === "/api/account/consent" && m === "POST") {
+      const b = await readJSON(req, 16384);
+      accountData.ensureActive(user.id);
+      if (b?.consentTerms !== true || b?.consentSensitiveCrossBorder !== true) {
+        throw httpErr(400, "consent_required", "请先勾选同意使用条款、隐私说明及敏感个人信息处理与跨境传输授权");
+      }
+      const submittedVersion = typeof b?.consentVersion === "string" ? b.consentVersion.trim() : "";
+      if (submittedVersion !== CONSENT_VERSION) {
+        return send(res, 409, {
+          error: "consent_version_mismatch",
+          message: "使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
+          requiredConsentVersion: CONSENT_VERSION
+        });
+      }
+      const recorded = authentication.recordConsent(user.id, submittedVersion);
+      return send(res, 200, { ok: true, ...recorded });
+    }
+    if (consentRequired) throw httpErr(403, "consent_required", "请先同意使用条款、隐私说明及数据处理授权");
     if (p === "/api/doc-commit" && m === "POST") {
       docQuota.throttle(user.id, res);
       const body = await readJSON(req, 12e6);
@@ -294,7 +319,11 @@ async function handle(req, res){
 
   const bm = p.match(/^\/_blob\/([0-9a-f]{32})$/);
   if (bm) {
-    if (user) accountData.ensureActive(user.id);
+    if (user) {
+      accountData.ensureActive(user.id);
+      const { CONSENT_VERSION } = require("./lib/auth");
+      if (user.consentVersion !== CONSENT_VERSION) throw httpErr(403, "consent_required", "请先同意使用条款、隐私说明及数据处理授权");
+    }
     const b = user && db.prepare("SELECT uid, type, size FROM blobs WHERE id = ?").get(bm[1]);
     if (!b || b.uid !== user.id) { res.writeHead(404); return res.end(); }
     return streamFile(path.join(CFG.dataDir, "blobs", bm[1]), res, { "Content-Type": b.type, "Content-Length": b.size, "Cache-Control": "private, no-store" });

@@ -1147,6 +1147,7 @@ test('privacy.html and guide.html language selection, faithful parity, deploymen
 
   for (const [name, html, enTitle] of [
     ['privacy.html', privacyHtml, 'Privacy Notice · Lean Ritual'],
+    ['terms.html', fs.readFileSync(path.join(__dirname, '../public/terms.html'), 'utf8'), 'Terms of Use · Lean Ritual'],
     ['guide.html', guideHtml, 'Lean Ritual Training & Nutrition Guide']
   ]) {
     // Fallback to zh when navigator.languages is empty

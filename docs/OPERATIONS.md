@@ -435,6 +435,49 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js show <feedback-id>
 ```
 
+### Daily trial activity summary
+
+`scripts/daily-summary.js` prints a read-only activity summary covering both the **last 24 hours** and **trial to date** (all records by default, or filtered with `--since <YYYY-MM-DD|ISO>` / `TRIAL_START`):
+
+- **Metrics included:** new sign-ups and verified sign-up cohorts (`auth.sqlite`), active users (deduplicated across sessions, docs, photos, AI usage, and feedback), check-ins / workouts / meals logged (`bojin.db`), AI calls split by provider (`gemini` vs `openrouter`, distinguishing `provider_fallback=true` fallbacks and attributing pre-fallback retries back to Gemini) with observed models, prompt/completion/reasoning token totals, and estimated USD cost (labeled as final-attempt journal tokens at flat provider rates; unknown providers are left unpriced), feedback counts by type (`bug`, `idea`, `other`) plus metadata for the 3 newest entries, client error counts (`client-error` journal entries), filesystem disk usage and photo bytes, and the last completed backup/snapshot time.
+- **Snapshot-only DB reads (zero live coordination):** `scripts/daily-summary.js` **never opens live SQLite databases in `DATA_DIR`** (`bojin.db` / `auth.sqlite`) and takes **no** `lib/data-access.js` lease, so it cannot block backups, delay WAL checkpoints, or mutate live `-shm`/`-wal` files. `DATA_DIR` is inspected with stat-only filesystem/directory size checks. Database counts are read strictly from a completed published backup snapshot: the script rejects any path inside `DATA_DIR` or any snapshot containing WAL sidecars, requires `manifest.json` version 1 with explicit `bojin.db` (and `auth.sqlite`, when present) size and SHA-256 entries, copies the snapshot DBs to a private `0700` temp directory, and verifies exact byte size, SHA-256 checksum, SQLite `PRAGMA quick_check = ok`, and expected core tables on the private copies before querying. During automatic discovery, an incomplete/corrupt newest snapshot is skipped in favor of the previous complete snapshot (noting the fallback); if only invalid snapshots exist or an explicit `--snapshot` fails verification, the script exits non-zero with an error instead of silently reporting zeros. When backup directories are root-only (`0710`) or empty, the script reports that no readable snapshot was found instead of falling back to live `DATA_DIR`.
+- **Freshness (`data as of`):** database metrics reflect the snapshot's creation timestamp (`data as of`, up to ~24 hours behind live writes under the daily 04:00 UTC backup schedule), with database "last 24h" counts measured over the 24 hours ending at `data as of`. Journal-based AI and client error counts stay live as of run time, fetching from the earlier of `--since` and `now - 24h` so short trial windows never truncate the 24h rolling window.
+- **Host permissions & staging a read-only snapshot:** on the production host, `/var/backups/bojin` is `0710 root:bojin` with `0700 root:root` snapshots. Running `daily-summary.js` directly as `bojin` without `--snapshot` reports live journal AI/error counts, live disk/photo disk bytes, and systemd backup status (`systemctl show` on `bojin-backup.service` requiring a completed, non-running `Result=success` with `ExecMainStatus=0`; `bojin-backup.timer`'s `LastTriggerUSec` is shown separately and never treated as a completed backup), and notes that no readable snapshot was found. To include database counts while keeping Node unprivileged as `bojin`, stage a temporary read-only `root:bojin` (`0750`/`0640`) copy of the newest snapshot (same non-disruptive pattern as the restore drill) and pass `--snapshot <staged-copy>`. If `bojin` cannot read the system journal directly, pipe `journalctl -u bojin.service -o short-iso --no-pager` via `--journal-file -`.
+- **Privacy defaults:** never queries or outputs emails, usernames, raw user IDs, raw feedback primary keys, secrets, or meal/workout contents. Within a single report, `ref` and `user` IDs use an ephemeral per-report 256-bit HMAC key (unmatchable offline and unlinkable across reports). Feedback free text is **omitted by default** (showing only type, timestamp, character length, screenshot flag, and report-scoped pseudonyms); use `scripts/feedback-admin.js` on the host to read full messages. An explicit `--include-feedback-excerpts` opt-in adds best-effort redacted 80-char previews (redacting URLs, emails, tokens, phone numbers, long digit runs, and terminal escapes), which can still contain identifying free text such as names or addresses.
+- **Configurable AI pricing (USD per 1M tokens):** defaults to `gemini-3.8-flash` rates (`$0.75` prompt / `$3.75` completion, where completion includes reasoning tokens). Override with `AI_INPUT_PRICE_PER_1M`, `AI_OUTPUT_PRICE_PER_1M`, or per-provider `AI_GEMINI_INPUT_PRICE_PER_1M`, `AI_GEMINI_OUTPUT_PRICE_PER_1M`, `AI_OPENROUTER_INPUT_PRICE_PER_1M`, `AI_OPENROUTER_OUTPUT_PRICE_PER_1M`.
+
+```sh
+# 1. Stage a read-only copy of the newest daily snapshot (same pattern as the restore drill)
+SNAPSHOT=$(sudo python3 -c '
+import glob, os, sys
+snaps = sorted(p for p in glob.glob("/var/backups/bojin/snapshot-*")
+               if not os.path.islink(p) and os.path.isdir(p) and os.path.isfile(os.path.join(p, "manifest.json")))
+if not snaps: sys.exit("No valid snapshot found")
+print(snaps[-1])
+')
+STAGE="/var/tmp/summary-stage-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -o root -g bojin -m 0750 "$STAGE"
+sudo cp -rP -- "$SNAPSHOT" "$STAGE/snapshot"
+sudo chown -RP root:bojin -- "$STAGE/snapshot"
+sudo find "$STAGE/snapshot" -type d -exec chmod 0750 -- {} +
+sudo find "$STAGE/snapshot" -type f -exec chmod 0640 -- {} +
+
+# 2. Run the summary as the unprivileged service user (plain text or --json; pipe journalctl if needed)
+journalctl -u bojin.service -o short-iso --no-pager \
+  | sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/daily-summary.js \
+      --snapshot "$STAGE/snapshot" --journal-file -
+
+# JSON output + optional trial start filter and price overrides
+journalctl -u bojin.service -o short-iso --no-pager \
+  | sudo -u bojin env DATA_DIR=/var/lib/bojin TRIAL_START=2026-11-18 \
+      AI_INPUT_PRICE_PER_1M=0.75 AI_OUTPUT_PRICE_PER_1M=3.75 \
+      /usr/bin/node /opt/bojin/scripts/daily-summary.js \
+      --snapshot "$STAGE/snapshot" --journal-file - --json
+
+# 3. Clean up the exact staging directory path
+sudo rm -rf -- "$STAGE"
+```
+
 ## Local evidence
 
 Tests cover writer exclusion, checksums, refusing overwrites, snapshots with both databases/photos, pre-auth migration and rollback, and replaying a newer deletion ledger onto an older snapshot. These tests do not replace a restore drill and offsite access verification on the purchased host.

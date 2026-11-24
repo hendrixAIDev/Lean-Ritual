@@ -372,6 +372,8 @@ test('headless Chromium: meal macro inputs and daily totals are untruncated and 
     await page.goto(`${srv.base}/login.html?invite=${encodeURIComponent(invite.token)}&email=${encodeURIComponent(invite.email)}`);
     await page.locator('#n').fill('Macros Tester');
     await page.locator('#p').fill(pwStr);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
     const mail = fs.readdirSync(path.join(srv.dir, 'mail'))

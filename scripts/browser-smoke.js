@@ -40,7 +40,7 @@ function readMails(dir) {
     .map(f => JSON.parse(fs.readFileSync(path.join(mailDir, f), 'utf8')));
 }
 
-async function startLocalServer(extraEnv = {}, { mockOpenRouterPort = null } = {}) {
+async function startLocalServer(extraEnv = {}, { nodeArgs = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-browser-'));
   const port = await getFreePort();
   const base = `http://127.0.0.1:${port}`;
@@ -54,30 +54,11 @@ async function startLocalServer(extraEnv = {}, { mockOpenRouterPort = null } = {
     COOKIE_SECURE: '0',
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
-    AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: '',
     GEMINI_API_KEY: '',
     ...extraEnv
   };
-  delete env.OPENROUTER_BASE;
-  delete env.GEMINI_BASE;
-  const nodeArgs = ['server.js'];
-  if (mockOpenRouterPort) {
-    const preloadPath = path.join(dir, '.mock-openrouter-fetch.cjs');
-    fs.writeFileSync(preloadPath, `'use strict';
-const origFetch = globalThis.fetch;
-const mockBase = 'http://127.0.0.1:' + ${JSON.stringify(String(mockOpenRouterPort))} + '/v1/';
-globalThis.fetch = function(input, init) {
-  const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-  if (url.startsWith('https://openrouter.ai/api/v1/')) {
-    return origFetch.call(this, mockBase + url.slice('https://openrouter.ai/api/v1/'.length), init);
-  }
-  return origFetch.call(this, input, init);
-};
-`, { mode: 0o600 });
-    nodeArgs.unshift('--require', preloadPath);
-  }
-  const server = spawn(process.execPath, nodeArgs, { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [...nodeArgs, 'server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   server.stderr.on('data', d => { stderr += d.toString(); });
   await new Promise((resolve, reject) => {
@@ -155,6 +136,8 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     assert.equal(await page.locator('#e').inputValue(), email);
     await page.locator('#n').fill('小李 & "测试"');
     await page.locator('#p').fill(pw1);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
 
@@ -533,9 +516,21 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     }));
   });
   await new Promise(r => provider.listen(providerPort, '127.0.0.1', r));
+  const preloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-smoke-preload-'));
+  const preloadPath = path.join(preloadDir, 'mock-openrouter.cjs');
+  fs.writeFileSync(preloadPath, `'use strict';
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url;
+      if (url === 'https://openrouter.ai/api/v1/chat/completions') return origFetch('http://127.0.0.1:${providerPort}/v1/chat/completions', init);
+      return origFetch(input, init);
+    };
+  `);
   const srv = await startLocalServer({
     OPENROUTER_API_KEY: 'local-test-provider-key'
-  }, { mockOpenRouterPort: providerPort });
+  }, { nodeArgs: ['--require', preloadPath] });
+  const origStop = srv.stop;
+  srv.stop = async () => { try { await origStop(); } finally { fs.rmSync(preloadDir, { recursive: true, force: true }); } };
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
@@ -546,6 +541,8 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await page.goto(invite.url);
     await page.locator('#n').fill('Browser tester');
     await page.locator('#p').fill('browser strong password');
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
     const mail = readMails(srv.dir).find(m => m.kind === 'verify');
@@ -702,6 +699,11 @@ async function runEnglishJourney(browser, jpegFixture) {
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     await assertZeroChineseVisible(page, 'privacy.html (switched back to en)');
 
+    await page.goto(srv.base + '/terms.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.match(await page.locator('h1').textContent(), /Terms of Use/);
+    await assertZeroChineseVisible(page, 'terms.html (en)');
+
     await page.goto(srv.base + '/guide.html');
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     assert.match(await page.locator('h1').textContent(), /Lean Ritual Training & Nutrition Guide/);
@@ -712,6 +714,8 @@ async function runEnglishJourney(browser, jpegFixture) {
     await page.goto(inv.url);
     await page.locator('#n').fill('Alex Mercer');
     await page.locator('#p').fill(pw);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('Check your email and verify your address before signing in.', { exact: true }).waitFor();
 
