@@ -179,6 +179,10 @@ class RetentionTests(unittest.TestCase):
             for name in names:
                 complete(daily / name)
                 os.utime(daily / name, (1, 1))
+                if name in names[:4] or name == ("snapshot-" + recent):
+                    paired = daily / ("deletions-" + name[9:] + ".json")
+                    paired.write_text("[]")
+                    os.utime(paired, (1, 1))
             ledger = daily / "deletions-19990101T000000Z.json"
             ledger.touch()
             os.utime(ledger, (1, 1))
@@ -254,6 +258,9 @@ class RetentionTests(unittest.TestCase):
                 ds.mkdir()
                 if n < 3:
                     complete(snap)
+                    paired = daily / ("deletions-2000010%dT000000Z.json" % n)
+                    paired.write_text("[]")
+                    os.utime(paired, (1, 1))
                     complete(ds / "snapshot")
                     (ds / "deletions.json").write_text("[]")
                 elif n == 3:
@@ -272,5 +279,86 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             for n in (1, 2):
                 self.assertTrue((deploy / ("2000010%dT000000Z-abcdefgh" % n)).exists())
+            self.assertTrue((daily / "snapshot-20000102T000000Z").exists())
+            self.assertTrue((daily / "deletions-20000102T000000Z.json").exists())
             self.assertFalse((daily / "snapshot-20000104T000000Z").exists())
             self.assertIn("incomplete", result.stderr)
+
+    def test_interrupted_daily_publication_does_not_displace_complete_recovery_points(self):
+        import datetime
+        script = pathlib.Path("ops/backup-service.sh").read_text()
+        code = script.split("<<'PYRET'\n", 1)[1].split("\nPYRET", 1)[0]
+        code = code.split('rel_base =', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            daily = root / "daily"
+            deploy = root / "deploy"
+            daily.mkdir()
+            deploy.mkdir()
+
+            # 1. Two older complete daily recovery points (snapshot + paired ledger).
+            for day in (1, 2):
+                stamp = f"2000010{day}T000000Z"
+                snap = daily / f"snapshot-{stamp}"
+                ldg = daily / f"deletions-{stamp}.json"
+                complete(snap)
+                ldg.write_text('{"version":1,"users":[]}')
+                os.utime(snap, (1, 1))
+                os.utime(ldg, (1, 1))
+
+            # 2. Snapshot-only entry (crash between snapshot rename and ledger rename).
+            snap_only = daily / "snapshot-20000103T000000Z"
+            complete(snap_only)
+            os.utime(snap_only, (1, 1))
+
+            # 3. Uncommitted entry with .publishing- marker (crash before commit barrier,
+            #    even though both snapshot and ledger exist on disk).
+            uncommitted_stamp = "20000104T000000Z"
+            uncommitted_snap = daily / f"snapshot-{uncommitted_stamp}"
+            uncommitted_ldg = daily / f"deletions-{uncommitted_stamp}.json"
+            uncommitted_marker = daily / f".publishing-{uncommitted_stamp}"
+            complete(uncommitted_snap)
+            uncommitted_ldg.write_text('{"version":1,"users":[]}')
+            uncommitted_marker.write_text("publishing\n")
+            for p in (uncommitted_snap, uncommitted_ldg, uncommitted_marker):
+                os.utime(p, (1, 1))
+
+            # 4. Recent interrupted snapshot-only entry (newer than retention cutoff):
+            #    must NOT take one of the 2 complete keep slots either!
+            recent_stamp = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y%m%dT%H%M%SZ")
+            recent_incomplete = daily / f"snapshot-{recent_stamp}"
+            complete(recent_incomplete)
+
+            # 5. Newly committed complete recovery point.
+            new_stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            if new_stamp == recent_stamp:
+                new_stamp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2)).strftime("%Y%m%dT%H%M%SZ")
+            new_snap = daily / f"snapshot-{new_stamp}"
+            new_ldg = daily / f"deletions-{new_stamp}.json"
+            complete(new_snap)
+            new_ldg.write_text('{"version":1,"users":[]}')
+
+            run_code = code.replace('"/var/backups/bojin-deploy"', repr(str(deploy)))
+            result = subprocess.run(
+                ["python3", "-c", run_code, str(daily), "7", str(new_snap), str(new_ldg), str(int(time.time()))],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            # Both newest complete recovery points (new_snap + 20000102) and their paired ledgers MUST survive!
+            self.assertTrue(new_snap.is_dir())
+            self.assertTrue(new_ldg.is_file())
+            self.assertTrue((daily / "snapshot-20000102T000000Z").is_dir())
+            self.assertTrue((daily / "deletions-20000102T000000Z.json").is_file())
+
+            # Old incomplete entries, uncommitted marker, and 3rd oldest complete backup are pruned.
+            self.assertFalse(snap_only.exists())
+            self.assertFalse(uncommitted_snap.exists())
+            self.assertFalse(uncommitted_ldg.exists())
+            self.assertFalse(uncommitted_marker.exists())
+            self.assertFalse((daily / "snapshot-20000101T000000Z").exists())
+            self.assertFalse((daily / "deletions-20000101T000000Z.json").exists())
+            # Recent incomplete entry is still within retention window, yet did not displace 20000102.
+            self.assertTrue(recent_incomplete.is_dir())
+            self.assertIn("incomplete backup snapshot-20000103T000000Z", result.stderr)
+            self.assertIn("incomplete backup snapshot-20000104T000000Z", result.stderr)

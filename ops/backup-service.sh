@@ -125,6 +125,7 @@ cd /opt/bojin
 read -r start_epoch stamp < <(python3 -c 'import time; t = int(time.time()); print(t, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t)))')
 snapshot="$BACKUP_ROOT/snapshot-$stamp"
 ledger="$BACKUP_ROOT/deletions-$stamp.json"
+pub_marker="$BACKUP_ROOT/.publishing-$stamp"
 work=""
 custody=""
 publishing=0
@@ -138,7 +139,11 @@ finish() {
     rm -rf -- "$custody"
   fi
   if [[ "$publishing" == 1 ]]; then
-    rm -rf -- "$snapshot" "$ledger"
+    rm -f -- "$ledger"
+    rm -rf -- "$snapshot"
+    if [[ -n "$pub_marker" && ! -e "$snapshot" && ! -e "$ledger" ]]; then
+      rm -f -- "$pub_marker"
+    fi
   fi
   if [[ "$restart" == 1 ]]; then
     if systemctl start bojin.service; then
@@ -155,7 +160,7 @@ trap finish EXIT
 mkdir -p -- "$BACKUP_ROOT"
 chown -- root:bojin "$BACKUP_ROOT"
 chmod -- 710 "$BACKUP_ROOT"
-[[ ! -e "$snapshot" && ! -L "$snapshot" && ! -e "$ledger" && ! -L "$ledger" ]] || {
+[[ ! -e "$snapshot" && ! -L "$snapshot" && ! -e "$ledger" && ! -L "$ledger" && ! -e "$pub_marker" && ! -L "$pub_marker" ]] || {
   echo "Backup target already exists for $stamp" >&2
   exit 1
 }
@@ -210,6 +215,10 @@ if dedup_enabled:
         for entry in entries:
             if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
                 continue
+            if entry.name.startswith("snapshot-"):
+                marker = entry.parent / (".publishing-" + entry.name[9:])
+                if marker.exists() or marker.is_symlink():
+                    continue
             for snap in (entry, entry / "snapshot"):
                 try:
                     if snap.is_symlink() or not snap.is_dir():
@@ -311,6 +320,7 @@ prelink_manifest.chmod(0o600)
 
 db_bytes = 0
 new_blob_bytes = 0
+max_staged_file_bytes = 0
 for root, _, files in os.walk(data_dir):
     root_path = pathlib.Path(root)
     in_blobs = (root_path == blobs_dir)
@@ -327,17 +337,27 @@ for root, _, files in os.walk(data_dir):
                 if item is not None and item[0] == st.st_size:
                     continue
             new_blob_bytes += st.st_size
+            if st.st_size > max_staged_file_bytes:
+                max_staged_file_bytes = st.st_size
         else:
             db_bytes += st.st_size
+            if st.st_size > max_staged_file_bytes:
+                max_staged_file_bytes = st.st_size
 
-# Account for peak space per filesystem: snapshot DBs + new blobs on backup_root,
-# plus private DB verification copies in system tmpdir (summed when same filesystem).
+# Account for peak space per filesystem:
+# - staging + root custody copy-to-fresh-inode peak on backup_root (db + new_blobs + max single staged file)
+# - private DB verification copies in system tmpdir (folded into max when tmp_dev == target_dev).
 tmp_dir = pathlib.Path(tempfile.gettempdir())
 tmp_dev = tmp_dir.stat().st_dev
-peak_by_dev = {target_dev: db_bytes + new_blob_bytes}
-path_by_dev = {target_dev: backup_root}
-peak_by_dev[tmp_dev] = peak_by_dev.get(tmp_dev, 0) + db_bytes
-path_by_dev.setdefault(tmp_dev, tmp_dir)
+if tmp_dev == target_dev:
+    peak_by_dev = {target_dev: db_bytes + new_blob_bytes + max(db_bytes, max_staged_file_bytes)}
+    path_by_dev = {target_dev: backup_root}
+else:
+    peak_by_dev = {
+        target_dev: db_bytes + new_blob_bytes + max_staged_file_bytes,
+        tmp_dev: db_bytes,
+    }
+    path_by_dev = {target_dev: backup_root, tmp_dev: tmp_dir}
 
 headroom = (3 * 1024 ** 3) // 2
 for dev, peak_bytes in peak_by_dev.items():
@@ -358,23 +378,39 @@ systemctl stop bojin.service
 work=$(mktemp -d "$BACKUP_ROOT/.run-XXXXXXXX")
 chown -- bojin:bojin "$work"
 chmod -- 700 "$work"
-dedup_index="$work/dedup-index.json"
 use_defer=0
+dedup_index=""
 if [[ "$supports_defer" == 1 ]]; then
+  # Create the root-generated dedup index under a root-controlled parent
+  # before granting read-only traversal to the app user.
+  mkdir -m 700 -- "$custody/index"
+  chown -- root:root "$custody/index"
+  dedup_index="$custody/index/dedup-index.json"
   if python3 - "$prelink_manifest" "$dedup_index" <<'PYIDX'
-import json, pathlib, sys
+import json, os, pathlib, sys
 info = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 sha_sizes = {h: v[0] for h, v in info.get("by_sha256", {}).items()}
 if not sha_sizes:
     sys.exit(2)
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": 1, "sha256": sha_sizes}), encoding="utf-8")
+payload = json.dumps({"version": 1, "sha256": sha_sizes}).encode("utf-8")
+fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+try:
+    view = memoryview(payload)
+    while view:
+        n = os.write(fd, view)
+        view = view[n:]
+    os.fsync(fd)
+finally:
+    os.close(fd)
 PYIDX
   then
-    chown -- root:bojin "$dedup_index"
+    chown -- root:bojin "$dedup_index" "$custody/index" "$custody"
     chmod -- 640 "$dedup_index"
+    chmod -- 710 "$custody/index" "$custody"
     use_defer=1
   else
     rc=$?
+    rm -rf -- "$custody/index"
     if (( rc != 2 )); then
       exit "$rc"
     fi
@@ -391,46 +427,70 @@ else
   run_backup backup "$work/snapshot"
 fi
 run_backup ledger "$work/deletions.json"
-# Move untrusted staging output under root-only custody before validation and ownership transfer.
+if [[ "$use_defer" == 1 ]]; then
+  chmod -- 700 "$custody"
+  chown -- root:root "$custody"
+  rm -rf -- "$custody/index"
+fi
+# Move untrusted staging output under root-only custody and copy every app-produced
+# file into fresh root-owned inodes before final validation.
 mv -- "$work" "$custody/drop"
 work=""
-python3 - "$custody/drop" <<'PYCUST'
-import os, pathlib, pwd, stat, sys
+python3 - "$custody/drop" "$custody/pub" <<'PYCUST'
+import json, os, pathlib, pwd, shutil, stat, sys
 drop = pathlib.Path(sys.argv[1])
+pub = pathlib.Path(sys.argv[2])
 nofollow = getattr(os, "O_NOFOLLOW", 0)
 odir = getattr(os, "O_DIRECTORY", 0)
 enforce_uid = (os.getuid() == 0)
 expected_uid = pwd.getpwnam("bojin").pw_uid if enforce_uid else os.getuid()
-idx = drop / "dedup-index.json"
-if idx.is_symlink():
-    raise ValueError("Refusing symlink dedup index inside staged backup")
-idx.unlink(missing_ok=True)
+headroom = (3 * 1024 ** 3) // 2
+allowed_top = {"snapshot", "deletions.json"}
 
-def claim_dir(dir_path):
-    dfd = os.open(dir_path, os.O_RDONLY | odir | nofollow)
+def ensure_free_space(target_dir, copy_bytes):
+    free = shutil.disk_usage(target_dir).free
+    required = copy_bytes + headroom
+    if free <= required:
+        raise ValueError(
+            f"Insufficient free space in {target_dir} during custody copy: "
+            f"need > {required} bytes (copy={copy_bytes} bytes), have {free} bytes"
+        )
+
+def copy_dir(src_dir, dst_dir, is_root=False):
+    sfd = os.open(src_dir, os.O_RDONLY | odir | nofollow)
     try:
-        fst = os.fstat(dfd)
+        fst = os.fstat(sfd)
         if not stat.S_ISDIR(fst.st_mode):
             raise ValueError("Refusing non-directory inside staged backup")
         if enforce_uid and fst.st_uid != expected_uid:
             raise ValueError("Refusing unexpected owner on staged backup directory")
-        if enforce_uid:
-            os.fchown(dfd, 0, 0)
-        os.fchmod(dfd, 0o700)
-        lst = os.lstat(dir_path)
+        lst = os.lstat(src_dir)
         if (lst.st_dev, lst.st_ino) != (fst.st_dev, fst.st_ino):
             raise ValueError("Staged backup directory changed during custody handoff")
     finally:
-        os.close(dfd)
-    for name in sorted(os.listdir(dir_path)):
-        child = dir_path / name
-        lst = os.lstat(child)
+        os.close(sfd)
+
+    if is_root:
+        dst_dir.mkdir(mode=0o700, exist_ok=True)
+    else:
+        os.mkdir(dst_dir, 0o700)
+    if enforce_uid:
+        os.chown(dst_dir, 0, 0, follow_symlinks=False)
+    dst_dir.chmod(0o700)
+
+    for name in sorted(os.listdir(src_dir)):
+        if is_root and name not in allowed_top:
+            raise ValueError("Unexpected entry in untrusted staged backup: " + name)
+        src_child = src_dir / name
+        dst_child = dst_dir / name
+        lst = os.lstat(src_child)
         if stat.S_ISLNK(lst.st_mode):
             raise ValueError("Refusing symlink inside staged backup")
         if stat.S_ISDIR(lst.st_mode):
-            claim_dir(child)
+            copy_dir(src_child, dst_child, is_root=False)
         elif stat.S_ISREG(lst.st_mode):
-            cfd = os.open(child, os.O_RDONLY | nofollow)
+            cfd = os.open(src_child, os.O_RDONLY | nofollow)
+            dfd = None
             try:
                 cfst = os.fstat(cfd)
                 if not stat.S_ISREG(cfst.st_mode):
@@ -439,26 +499,52 @@ def claim_dir(dir_path):
                     raise ValueError("Refusing multi-linked file in untrusted staged backup")
                 if enforce_uid and cfst.st_uid != expected_uid:
                     raise ValueError("Refusing unexpected owner on staged backup file")
+                ensure_free_space(dst_dir, cfst.st_size)
+                dfd = os.open(dst_child, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+                total = 0
+                while True:
+                    chunk = os.read(cfd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > cfst.st_size:
+                        raise ValueError("Staged backup file grew during custody copy")
+                    view = memoryview(chunk)
+                    while view:
+                        n = os.write(dfd, view)
+                        view = view[n:]
+                if total != cfst.st_size or os.fstat(cfd).st_size != cfst.st_size:
+                    raise ValueError("Staged backup file changed during custody copy")
                 if enforce_uid:
-                    os.fchown(cfd, 0, 0)
-                os.fchmod(cfd, 0o600)
-                clst = os.lstat(child)
-                if (clst.st_dev, clst.st_ino) != (cfst.st_dev, cfst.st_ino):
-                    raise ValueError("Staged backup file changed during custody handoff")
+                    os.fchown(dfd, 0, 0)
+                os.fchmod(dfd, 0o600)
+                os.fsync(dfd)
+            except BaseException:
+                if dfd is not None:
+                    os.close(dfd)
+                    dfd = None
+                dst_child.unlink(missing_ok=True)
+                raise
             finally:
                 os.close(cfd)
+                if dfd is not None:
+                    os.close(dfd)
+            src_child.unlink()
         else:
             raise ValueError("Refusing special file inside staged backup")
 
-claim_dir(drop)
+copy_dir(drop, pub, is_root=True)
+if not (pub / "snapshot").is_dir() or not (pub / "deletions.json").is_file():
+    raise ValueError("Incomplete staged backup")
+ledger_doc = json.loads((pub / "deletions.json").read_text(encoding="utf-8"))
+if not isinstance(ledger_doc, dict) or ledger_doc.get("version") != 1:
+    raise ValueError("Unsupported deletion ledger")
 PYCUST
-chown -RP -- root:root "$custody/drop"
-mv -- "$custody/drop/snapshot" "$custody/pub/snapshot"
-mv -- "$custody/drop/deletions.json" "$custody/pub/deletions.json"
 rm -rf -- "$custody/drop"
+chown -RP -- root:root "$custody/pub"
 chmod -- 700 "$custody/pub/snapshot"
 chmod -- 600 "$custody/pub/deletions.json"
-python3 - "$custody/pub" "$DATA_DIR" "$BACKUP_ROOT" "$use_defer" "$custody/prelinked" "$prelink_manifest" <<'PYMAT'
+python3 - "$custody/pub" "$DATA_DIR" "$BACKUP_ROOT" "$supports_defer" "$custody/prelinked" "$prelink_manifest" <<'PYMAT'
 import errno, hashlib, json, os, pathlib, re, shutil, sqlite3, stat, sys, tempfile
 pub_dir = pathlib.Path(sys.argv[1])
 snapshot_dir = pub_dir / "snapshot"
@@ -491,11 +577,7 @@ def fsync_dir(dir_path):
     try:
         if not stat.S_ISDIR(os.fstat(fd).st_mode):
             raise ValueError("Refusing to fsync non-directory")
-        try:
-            os.fsync(fd)
-        except OSError as exc:
-            if exc.errno not in (errno.EINVAL, errno.EBADF, errno.EROFS):
-                raise
+        os.fsync(fd)
     finally:
         os.close(fd)
 
@@ -527,13 +609,28 @@ def sha256_file(path):
     finally:
         os.close(fd)
 
+headroom = (3 * 1024 ** 3) // 2
+
+def ensure_free_space_for_copy(target_dir, copy_bytes):
+    free = shutil.disk_usage(target_dir).free
+    required = copy_bytes + headroom
+    if free <= required:
+        raise ValueError(
+            f"Insufficient free space in {target_dir} for fallback copy: "
+            f"need > {required} bytes (copy={copy_bytes} bytes, reserve={headroom} bytes), have {free} bytes"
+        )
+
 def copy_verified(src, dst, exp_size, exp_sha):
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     sfd = os.open(src, os.O_RDONLY | nofollow)
     dfd = None
     try:
-        if not stat.S_ISREG(os.fstat(sfd).st_mode):
+        sst = os.fstat(sfd)
+        if not stat.S_ISREG(sst.st_mode):
             raise ValueError("Source blob must be a regular file")
+        if sst.st_size != exp_size:
+            raise ValueError("Source blob size mismatch")
+        ensure_free_space_for_copy(pathlib.Path(dst).parent, exp_size)
         dfd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
         h = hashlib.sha256()
         total = 0
@@ -541,12 +638,14 @@ def copy_verified(src, dst, exp_size, exp_sha):
             chunk = os.read(sfd, 1024 * 1024)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > exp_size:
+                raise ValueError("Source blob grew during fallback copy")
             view = memoryview(chunk)
             while view:
                 n = os.write(dfd, view)
                 view = view[n:]
             h.update(chunk)
-            total += len(chunk)
         os.fchmod(dfd, 0o600)
         os.fsync(dfd)
     except BaseException:
@@ -575,6 +674,10 @@ for raw_root in (backup_root, pathlib.Path("/var/backups/bojin-deploy")):
     for entry in entries:
         if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
             continue
+        if entry.name.startswith("snapshot-"):
+            marker = entry.parent / (".publishing-" + entry.name[9:])
+            if marker.exists() or marker.is_symlink():
+                continue
         for snap in (entry, entry / "snapshot"):
             try:
                 if snap.is_symlink() or not snap.is_dir():
@@ -776,23 +879,46 @@ with tempfile.TemporaryDirectory(prefix="bojin-verify-") as tmpdir:
 sync_tree_durable(pub_dir)
 PYMAT
 publishing=1
-mv -- "$custody/pub/snapshot" "$snapshot"
-mv -- "$custody/pub/deletions.json" "$ledger"
-python3 - "$BACKUP_ROOT" <<'PYSYNC'
-import errno, os, stat, sys
-flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-fd = os.open(sys.argv[1], flags)
-try:
-    if not stat.S_ISDIR(os.fstat(fd).st_mode):
-        raise ValueError("BACKUP_ROOT is not a directory")
+python3 - "$BACKUP_ROOT" "$pub_marker" "$custody/pub/deletions.json" "$ledger" "$custody/pub/snapshot" "$snapshot" <<'PYPUB'
+import os, pathlib, stat, sys
+
+backup_root = pathlib.Path(sys.argv[1])
+pub_marker = pathlib.Path(sys.argv[2])
+src_ledger = pathlib.Path(sys.argv[3])
+dst_ledger = pathlib.Path(sys.argv[4])
+src_snapshot = pathlib.Path(sys.argv[5])
+dst_snapshot = pathlib.Path(sys.argv[6])
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+odir = getattr(os, "O_DIRECTORY", 0)
+
+def fsync_dir_strict(dir_path):
+    fd = os.open(dir_path, os.O_RDONLY | odir | nofollow)
     try:
+        if not stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise ValueError("BACKUP_ROOT is not a directory")
         os.fsync(fd)
-    except OSError as exc:
-        if exc.errno not in (errno.EINVAL, errno.EBADF, errno.EROFS):
-            raise
+    finally:
+        os.close(fd)
+
+# 1. Durably persist an uncommitted marker before exposing either daily entry.
+mfd = os.open(pub_marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+try:
+    os.write(mfd, b"publishing\n")
+    os.fsync(mfd)
 finally:
-    os.close(fd)
-PYSYNC
+    os.close(mfd)
+fsync_dir_strict(backup_root)
+
+# 2. Publish ledger first, then snapshot, with strict directory fsync barriers.
+os.rename(src_ledger, dst_ledger)
+fsync_dir_strict(backup_root)
+os.rename(src_snapshot, dst_snapshot)
+fsync_dir_strict(backup_root)
+
+# 3. Durable commit barrier: clear the uncommitted marker and fsync BACKUP_ROOT.
+os.unlink(pub_marker)
+fsync_dir_strict(backup_root)
+PYPUB
 publishing=0
 rmdir -- "$custody/pub"
 rm -rf -- "$custody"
@@ -855,6 +981,25 @@ def complete_snapshot(p):
     return (not p.is_symlink() and sized_file(p / "manifest.json", 2)
             and sized_file(p / "bojin.db", 100))
 
+def has_publishing_marker(root_dir, stamp):
+    marker = root_dir / (".publishing-" + stamp)
+    return marker.exists() or marker.is_symlink()
+
+def complete_daily_snapshot(p):
+    stamp = p.name[9:]
+    if has_publishing_marker(p.parent, stamp):
+        return False
+    if not complete_snapshot(p):
+        return False
+    paired_ledger = p.parent / ("deletions-" + stamp + ".json")
+    return sized_file(paired_ledger, 2)
+
+def complete_daily_ledger(p):
+    stamp = p.name[10:-5]
+    if has_publishing_marker(p.parent, stamp):
+        return False
+    return sized_file(p, 2)
+
 def newest_keep(dated_list, count, usable):
     complete = []
     for _, _, p in dated_list:
@@ -879,13 +1024,22 @@ def prune_dated(dated_list, keep):
 root = pathlib.Path(sys.argv[1])
 snapshots = dated_entries(root, r"snapshot-[0-9]{8}T[0-9]{6}Z", True)
 ledgers = dated_entries(root, r"deletions-[0-9]{8}T[0-9]{6}Z\.json", False)
-keep = newest_keep(snapshots, 2, complete_snapshot) | {pathlib.Path(sys.argv[3]).resolve(strict=True)}
-ledger_keep = newest_keep(ledgers, 1, lambda p: sized_file(p, 2)) | {pathlib.Path(sys.argv[4]).resolve(strict=True)}
+keep = newest_keep(snapshots, 2, complete_daily_snapshot) | {pathlib.Path(sys.argv[3]).resolve(strict=True)}
+ledger_keep = newest_keep(ledgers, 1, complete_daily_ledger) | {pathlib.Path(sys.argv[4]).resolve(strict=True)}
 if snapshots:
     resolved_root = root.resolve(strict=True)
     ledger_keep.update(resolved_root / ("deletions-" + p.name[9:] + ".json") for p in keep)
 prune_dated(snapshots, keep)
 prune_dated(ledgers, ledger_keep)
+for ts, name, marker in dated_entries(root, r"\.publishing-[0-9]{8}T[0-9]{6}Z", False):
+    stamp = name[12:]
+    if ((marker.parent / ("snapshot-" + stamp)).exists()
+            or (marker.parent / ("deletions-" + stamp + ".json")).exists()):
+        continue
+    st = marker.lstat()
+    if ts < cutoff and st.st_mtime < cutoff:
+        marker.unlink()
+        print("pruned " + marker.name, flush=True)
 
 deploy = dated_entries(pathlib.Path("/var/backups/bojin-deploy"),
                        r"[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9_]{8}", True)

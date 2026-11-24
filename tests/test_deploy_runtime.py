@@ -93,7 +93,7 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 class BackupServiceRuntimeTest(unittest.TestCase):
     def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False,
-                          non_root_paths=None, disk_usage=None, extra_env=None, py_prelude=None):
+                          non_root_paths=None, disk_usage=None, extra_env=None, py_prelude=None, runuser_post_cmd=None):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
@@ -198,9 +198,11 @@ class BackupServiceRuntimeTest(unittest.TestCase):
         write_stub("chown", f"""
             echo "chown:$*" >> "{events}"
         """)
+        post_hook = f'\n            "{runuser_post_cmd}" "$@"' if runuser_post_cmd else ""
         write_stub("runuser", f"""
+            echo "runuser:$*" >> "{events}"
             shift 3 # -u bojin --
-            exec "$@"
+            "$@"{post_hook}
         """)
         write_stub("rsync", f"""
             if ( : >&9 ) 2>/dev/null; then
@@ -709,6 +711,189 @@ os.close(fd)
             sync_indices = [i for i, line in enumerate(trace_lines) if line == backup_root_sync]
             self.assertTrue(sync_indices, f"Expected BACKUP_ROOT fsync in {trace_lines}")
             self.assertLess(sync_indices[0], first_prune, "BACKUP_ROOT must be fsynced BEFORE retention prunes old snapshots")
+
+    def test_daily_custody_fresh_inodes_root_index_strict_fsync_and_late_fallback_reserve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a = "a" * 32
+            id_b = "b" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            blob_b_bytes = b"B" * (64 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # Seed initial backup with blob A.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            snap1 = backup_root / "snapshot-20000101T000000Z"
+            ldg1 = backup_root / "deletions-20000101T000000Z.json"
+            next(backup_root.glob("snapshot-*")).rename(snap1)
+            next(backup_root.glob("deletions-*.json")).rename(ldg1)
+            os.utime(snap1, (1, 1))
+            os.utime(ldg1, (1, 1))
+
+            # Add new blob B so run 2 stages a fresh blob alongside deferred blob A.
+            (data_dir / "blobs" / id_b).write_bytes(blob_b_bytes)
+            (data_dir / "blobs" / id_b).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("UPDATE docs SET data='{\"day\":2}' WHERE path='p1'")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", len(blob_b_bytes), "2026-11-21"))
+
+            # 1. Custody fresh-inode isolation + root-controlled dedup index:
+            #    Spawn a lingering writer (simulating compromised bojin) holding O_RDWR fds to
+            #    staged bojin.db, blobs/id_b, and deletions.json across backup publication, then
+            #    overwrite via those fds after publication!
+            staged_meta = root / "staged-inodes.json"
+            corrupt_trigger = root / "trigger-corrupt"
+            corrupt_done = root / "corrupt-done"
+            holder_pid_file = root / "holder.pid"
+            hook_script = root / "runuser-hook.py"
+            real_py = shutil.which("python3")
+            hook_script.write_text(
+                f"#!{real_py}\n"
+                "import json, os, pathlib, subprocess, sys\n"
+                "args = sys.argv[1:]\n"
+                "if 'backup' in args:\n"
+                "    i = args.index('backup')\n"
+                "    snap = pathlib.Path(args[i + 1])\n"
+                f"    meta_p = pathlib.Path({str(staged_meta)!r})\n"
+                f"    trig_p = pathlib.Path({str(corrupt_trigger)!r})\n"
+                f"    done_p = pathlib.Path({str(corrupt_done)!r})\n"
+                f"    pid_p = pathlib.Path({str(holder_pid_file)!r})\n"
+                f"    targets = [str(snap / 'bojin.db'), str(snap / 'manifest.json'), str(snap / 'blobs' / {id_b!r})]\n"
+                "    info = {'work_dir': str(snap.parent), 'inodes': {}}\n"
+                "    if '--defer-blobs' in args:\n"
+                "        info['defer_index'] = args[args.index('--defer-blobs') + 1]\n"
+                "    for t in targets:\n"
+                "        st = os.lstat(t)\n"
+                "        info['inodes'][os.path.relpath(t, snap)] = [st.st_dev, st.st_ino]\n"
+                "    meta_p.write_text(json.dumps(info))\n"
+                "    worker = (\n"
+                "        'import os, pathlib, sys, time\\n'\n"
+                "        'fds = [os.open(p, os.O_RDWR) for p in sys.argv[3:]]\\n'\n"
+                "        'trig, done = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])\\n'\n"
+                "        'deadline = time.time() + 15\\n'\n"
+                "        'while not trig.exists() and time.time() < deadline: time.sleep(0.05)\\n'\n"
+                "        'for fd in fds:\\n'\n"
+                "        '    os.lseek(fd, 0, os.SEEK_SET)\\n'\n"
+                "        '    os.write(fd, b\"CORRUPTED-BY-APP-FD\")\\n'\n"
+                "        '    os.close(fd)\\n'\n"
+                "        'done.write_text(\"done\")\\n'\n"
+                "    )\n"
+                f"    p = subprocess.Popen([{real_py!r}, '-c', worker, str(trig_p), str(done_p), *targets], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                "    pid_p.write_text(str(p.pid))\n"
+                "    # Wait briefly until worker opens the fds.\n"
+                "    import time; time.sleep(0.15)\n",
+                encoding="utf-8",
+            )
+            hook_script.chmod(0o755)
+            (root / "events.log").unlink(missing_ok=True)
+            res2, _, _ = self.run_backup_script(root, runuser_post_cmd=str(hook_script))
+            try:
+                self.assertEqual(res2.returncode, 0, res2.stderr)
+                corrupt_trigger.write_text("go")
+                deadline = time.time() + 10
+                while not corrupt_done.exists() and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(corrupt_done.exists(), "Lingering app writer did not finish")
+            finally:
+                if holder_pid_file.exists():
+                    try:
+                        os.kill(int(holder_pid_file.read_text().strip()), 9)
+                    except OSError:
+                        pass
+
+            info = json.loads(staged_meta.read_text(encoding="utf-8"))
+            work_dir = Path(info["work_dir"]).resolve()
+            defer_idx = Path(info["defer_index"]).resolve()
+            # Dedup index MUST live under a root-controlled parent OUTSIDE app-owned work_dir!
+            self.assertFalse(defer_idx.is_relative_to(work_dir), f"dedup index {defer_idx} must not live inside {work_dir}")
+            self.assertIn(".stage-", str(defer_idx))
+
+            snap2 = next(p for p in backup_root.glob("snapshot-*") if p != snap1)
+            # Every app-produced file MUST have a brand-new inode (different from staged work inode) and remain uncorrupted!
+            for rel, old_inode in info["inodes"].items():
+                new_st = (snap2 / rel).lstat()
+                self.assertNotEqual([new_st.st_dev, new_st.st_ino], old_inode, f"{rel} reused app-writable inode")
+            self.assertEqual((snap2 / "blobs" / id_b).read_bytes(), blob_b_bytes)
+            subprocess.run([NODE_BIN, str(ROOT / "scripts/data-backup.js"), "verify", str(snap2)], check=True)
+            # Prelinked blob A still shares immutable root-owned inode with snap1!
+            self.assertEqual((snap2 / "blobs" / id_a).lstat().st_ino, (snap1 / "blobs" / id_a).lstat().st_ino)
+
+            # Rename snap2 to an old date so we can verify retention is NOT triggered on publication fsync error.
+            snap2_aged = backup_root / "snapshot-20000102T000000Z"
+            ldg2_aged = backup_root / "deletions-20000102T000000Z.json"
+            snap2.rename(snap2_aged)
+            next(p for p in backup_root.glob("deletions-*.json") if p != ldg1).rename(ldg2_aged)
+            os.utime(snap2_aged, (1, 1))
+            os.utime(ldg2_aged, (1, 1))
+
+            # 2. Directory fsync failure (EINVAL) at BACKUP_ROOT publication barrier MUST fail closed,
+            #    leave existing snapshots intact, leave no .publishing-/.stage- leftovers, and restart bojin!
+            (root / "events.log").unlink(missing_ok=True)
+            bst = backup_root.lstat()
+            dir_fsync_fail_prelude = (
+                "import errno, os, stat\n"
+                "_orig_fsync = os.fsync\n"
+                f"_target = ({bst.st_dev}, {bst.st_ino})\n"
+                "def _fail_backup_root_fsync(fd):\n"
+                "    st = os.fstat(fd)\n"
+                "    if stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == _target:\n"
+                "        raise OSError(errno.EINVAL, 'simulated dir fsync EINVAL')\n"
+                "    return _orig_fsync(fd)\n"
+                "os.fsync = _fail_backup_root_fsync\n"
+            )
+            res_fsync, log_fsync, _ = self.run_backup_script(root, py_prelude=dir_fsync_fail_prelude)
+            self.assertNotEqual(res_fsync.returncode, 0)
+            self.assertIn("simulated dir fsync EINVAL", res_fsync.stderr)
+            self.assertIn("systemctl:start bojin.service", log_fsync)
+            self.assertTrue(snap1.is_dir(), "Existing snapshot must not be pruned when publication fsync fails")
+            self.assertTrue(snap2_aged.is_dir())
+            self.assertEqual(sorted(p.name for p in backup_root.iterdir()), sorted([
+                snap1.name, ldg1.name, snap2_aged.name, ldg2_aged.name
+            ]))
+
+            # 3. Late fallback copy AFTER prelink succeeds must re-check free space against 1.5 GiB reserve!
+            #    Let prelink (PY) succeed so preflight passes with tight space (1.5 GiB + 1 MiB),
+            #    then fail os.replace & os.link inside PYMAT so it falls back to copying 4 MiB blob A!
+            (root / "events.log").unlink(missing_ok=True)
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            post_prelink_fault_prelude = (
+                "import errno, os, sys\n"
+                "_orig_replace = os.replace\n"
+                "_orig_link = os.link\n"
+                f"_blob_a = {id_a!r}\n"
+                "def _is_pymat():\n"
+                "    return len(sys.argv) >= 2 and sys.argv[1].endswith('/pub')\n"
+                "def _fault_replace(src, dst):\n"
+                "    if _is_pymat() and str(dst).endswith('/' + _blob_a):\n"
+                "        raise OSError(errno.EIO, 'injected post-prelink replace failure')\n"
+                "    return _orig_replace(src, dst)\n"
+                "def _fault_link(src, dst):\n"
+                "    if _is_pymat() and str(dst).endswith('/' + _blob_a):\n"
+                "        raise OSError(errno.EMLINK, 'injected post-prelink link failure')\n"
+                "    return _orig_link(src, dst)\n"
+                "os.replace = _fault_replace\n"
+                "os.link = _fault_link\n"
+            )
+            res_late, log_late, _ = self.run_backup_script(
+                root, free_bytes=tight_free, py_prelude=post_prelink_fault_prelude
+            )
+            self.assertNotEqual(res_late.returncode, 0)
+            self.assertIn("Insufficient free space", res_late.stderr)
+            self.assertIn("systemctl:start bojin.service", log_late)
+            # Existing snapshots untouched and all staging dirs cleaned up!
+            self.assertEqual(sorted(p.name for p in backup_root.iterdir()), sorted([
+                snap1.name, ldg1.name, snap2_aged.name, ldg2_aged.name
+            ]))
 
 
 if __name__ == "__main__":

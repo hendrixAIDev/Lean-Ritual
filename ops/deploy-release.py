@@ -126,11 +126,7 @@ def fsync_dir(dir_path):
         st = os.fstat(fd)
         if not stat.S_ISDIR(st.st_mode):
             raise ValueError("Refusing to fsync non-directory")
-        try:
-            os.fsync(fd)
-        except OSError as error:
-            if error.errno not in (errno.EINVAL, errno.EBADF, errno.EROFS):
-                raise
+        os.fsync(fd)
     finally:
         os.close(fd)
 
@@ -195,6 +191,10 @@ def iter_existing_snapshots(backup_roots):
         for entry in entries:
             if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
                 continue
+            if entry.name.startswith("snapshot-"):
+                marker = entry.parent / (".publishing-" + entry.name[9:])
+                if marker.exists() or marker.is_symlink():
+                    continue
             for candidate in (entry, entry / "snapshot"):
                 try:
                     if candidate.is_symlink() or not candidate.is_dir():
@@ -360,6 +360,7 @@ def estimate_snapshot_bytes(data_dir, backup_roots=None, target_dev=None, dedup_
 
     db_bytes = 0
     new_blob_bytes = 0
+    max_staged_file_bytes = 0
     for root, _, files in os.walk(data_path):
         root_path = Path(root)
         in_blobs = (root_path == blobs_dir)
@@ -376,9 +377,13 @@ def estimate_snapshot_bytes(data_dir, backup_roots=None, target_dev=None, dedup_
                     if item is not None and item[0] == st.st_size:
                         continue
                 new_blob_bytes += st.st_size
+                if st.st_size > max_staged_file_bytes:
+                    max_staged_file_bytes = st.st_size
             else:
                 db_bytes += st.st_size
-    return db_bytes, new_blob_bytes
+                if st.st_size > max_staged_file_bytes:
+                    max_staged_file_bytes = st.st_size
+    return db_bytes, new_blob_bytes, max_staged_file_bytes
 
 
 def existing_parent(path):
@@ -525,13 +530,14 @@ def check_free_space(data_dir, *targets, backup_roots=None, dedup_enabled=True, 
     backup_dev = backup_parent.stat().st_dev
     tmp_parent = existing_parent(tempfile.gettempdir())
     tmp_dev = tmp_parent.stat().st_dev
-    db_bytes, new_blob_bytes = estimate_snapshot_bytes(
+    db_bytes, new_blob_bytes, max_staged_file_bytes = estimate_snapshot_bytes(
         data_dir, roots, backup_dev, dedup_enabled=dedup_enabled,
         prelinked_by_id=prelinked_by_id, probe_parent=backup_parent,
     )
 
-    # Account for peak space per filesystem: snapshot DBs + new blobs on backup_dev,
-    # plus private DB verification copies on tmp_dev (summed when same filesystem).
+    # Account for peak space per filesystem:
+    # - staging + root custody copy-to-fresh-inode peak on backup_dev (db + new_blobs + max single staged file)
+    # - private DB verification copies on tmp_dev (db_bytes; folded into max when tmp_dev == backup_dev).
     peak_by_dev = {}
     path_by_dev = {}
     for target in targets:
@@ -539,10 +545,16 @@ def check_free_space(data_dir, *targets, backup_roots=None, dedup_enabled=True, 
         dev = parent.stat().st_dev
         peak_by_dev.setdefault(dev, 0)
         path_by_dev.setdefault(dev, parent)
-    peak_by_dev[backup_dev] = peak_by_dev.get(backup_dev, 0) + db_bytes + new_blob_bytes
-    path_by_dev.setdefault(backup_dev, backup_parent)
-    peak_by_dev[tmp_dev] = peak_by_dev.get(tmp_dev, 0) + db_bytes
-    path_by_dev.setdefault(tmp_dev, tmp_parent)
+    if tmp_dev == backup_dev:
+        backup_peak = db_bytes + new_blob_bytes + max(db_bytes, max_staged_file_bytes)
+        peak_by_dev[backup_dev] = peak_by_dev.get(backup_dev, 0) + backup_peak
+        path_by_dev.setdefault(backup_dev, backup_parent)
+    else:
+        backup_peak = db_bytes + new_blob_bytes + max_staged_file_bytes
+        peak_by_dev[backup_dev] = peak_by_dev.get(backup_dev, 0) + backup_peak
+        path_by_dev.setdefault(backup_dev, backup_parent)
+        peak_by_dev[tmp_dev] = peak_by_dev.get(tmp_dev, 0) + db_bytes
+        path_by_dev.setdefault(tmp_dev, tmp_parent)
 
     for dev, peak_bytes in peak_by_dev.items():
         check_path = path_by_dev[dev]
@@ -661,39 +673,66 @@ def command(*args):
     subprocess.run(args, check=True, stdin=subprocess.DEVNULL)
 
 
-def take_custody_tree(root, expected_uid=None):
-    """Validate untrusted staged tree top-down without following symlinks and take root custody."""
-    root = Path(root)
+def ensure_free_space_for_copy(target_dir, copy_bytes, min_free_bytes=MIN_FREE_HEADROOM):
+    if min_free_bytes is None:
+        return
+    free = shutil.disk_usage(target_dir).free
+    required = copy_bytes + min_free_bytes
+    if free <= required:
+        raise ValueError(
+            f"Need more than copy bytes ({copy_bytes}) + 1.5 GiB free on {target_dir} "
+            f"(need > {required} bytes, have {free} bytes)"
+        )
+
+
+def copy_custody_tree(src_root, dst_root, expected_uid=None, min_free_bytes=MIN_FREE_HEADROOM, allowed_top_level=None):
+    """Validate untrusted staged tree top-down and copy into fresh root-owned inodes.
+
+    Copying into root-created O_CREAT|O_EXCL inodes ensures no process under the
+    application UID can retain an open writable file descriptor to any published
+    snapshot or deletion ledger file.
+    """
+    src_root = Path(src_root)
+    dst_root = Path(dst_root)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     odir = getattr(os, "O_DIRECTORY", 0)
     enforce_uid = (os.getuid() == 0 and expected_uid is not None)
 
-    def claim_dir(dir_path):
-        dfd = os.open(dir_path, os.O_RDONLY | odir | nofollow)
+    def copy_dir(src_dir, dst_dir, is_root=False):
+        sfd = os.open(src_dir, os.O_RDONLY | odir | nofollow)
         try:
-            fst = os.fstat(dfd)
+            fst = os.fstat(sfd)
             if not stat.S_ISDIR(fst.st_mode):
                 raise ValueError("Refusing non-directory in backup staging")
             if enforce_uid and fst.st_uid != expected_uid:
                 raise ValueError("Refusing unexpected owner on staged backup directory")
-            os.chown(dir_path, 0, 0, follow_symlinks=False)
-            os.fchmod(dfd, 0o700)
-            lst = os.lstat(dir_path)
+            lst = os.lstat(src_dir)
             if (lst.st_dev, lst.st_ino) != (fst.st_dev, fst.st_ino):
                 raise ValueError("Staged backup directory changed during custody handoff")
         finally:
-            os.close(dfd)
+            os.close(sfd)
 
-        entries = sorted(os.listdir(dir_path))
+        if is_root:
+            dst_dir.mkdir(mode=0o700, exist_ok=True)
+        else:
+            os.mkdir(dst_dir, 0o700)
+        os.chown(dst_dir, 0, 0, follow_symlinks=False)
+        dst_dir.chmod(0o700)
+
+        entries = sorted(os.listdir(src_dir))
         for name in entries:
-            child = dir_path / name
-            lst = os.lstat(child)
+            if is_root and allowed_top_level is not None and name not in allowed_top_level:
+                raise ValueError("Unexpected entry in untrusted backup staging: " + name)
+            src_child = src_dir / name
+            dst_child = dst_dir / name
+            lst = os.lstat(src_child)
             if stat.S_ISLNK(lst.st_mode):
                 raise ValueError("Refusing symlink inside backup")
             if stat.S_ISDIR(lst.st_mode):
-                claim_dir(child)
+                copy_dir(src_child, dst_child, is_root=False)
             elif stat.S_ISREG(lst.st_mode):
-                cfd = os.open(child, os.O_RDONLY | nofollow)
+                cfd = os.open(src_child, os.O_RDONLY | nofollow)
+                dfd = None
                 try:
                     cfst = os.fstat(cfd)
                     if not stat.S_ISREG(cfst.st_mode):
@@ -702,24 +741,43 @@ def take_custody_tree(root, expected_uid=None):
                         raise ValueError("Refusing multi-linked file in untrusted backup staging")
                     if enforce_uid and cfst.st_uid != expected_uid:
                         raise ValueError("Refusing unexpected owner on staged backup file")
-                    os.chown(child, 0, 0, follow_symlinks=False)
-                    os.fchmod(cfd, 0o600)
-                    clst = os.lstat(child)
-                    if (clst.st_dev, clst.st_ino) != (cfst.st_dev, cfst.st_ino):
-                        raise ValueError("Staged backup file changed during custody handoff")
+                    ensure_free_space_for_copy(dst_dir, cfst.st_size, min_free_bytes)
+                    dfd = os.open(dst_child, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+                    total = 0
+                    while True:
+                        chunk = os.read(cfd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > cfst.st_size:
+                            raise ValueError("Staged backup file grew during custody copy")
+                        view = memoryview(chunk)
+                        while view:
+                            written = os.write(dfd, view)
+                            view = view[written:]
+                    if total != cfst.st_size or os.fstat(cfd).st_size != cfst.st_size:
+                        raise ValueError("Staged backup file changed during custody copy")
+                    os.chown(dst_child, 0, 0, follow_symlinks=False)
+                    os.fchmod(dfd, 0o600)
+                    os.fsync(dfd)
+                except BaseException:
+                    if dfd is not None:
+                        os.close(dfd)
+                        dfd = None
+                    dst_child.unlink(missing_ok=True)
+                    raise
                 finally:
                     os.close(cfd)
+                    if dfd is not None:
+                        os.close(dfd)
+                src_child.unlink()
             else:
                 raise ValueError("Refusing special file inside backup")
 
-    claim_dir(root)
+    copy_dir(src_root, dst_root, is_root=True)
 
 
-def chown_root_tree(root):
-    take_custody_tree(root)
-
-
-def copy_regular_file_verified(src_path, dst_path, expected_size, expected_sha):
+def copy_regular_file_verified(src_path, dst_path, expected_size, expected_sha, min_free_bytes=MIN_FREE_HEADROOM):
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     src_fd = os.open(src_path, os.O_RDONLY | nofollow)
     dst_fd = None
@@ -727,6 +785,9 @@ def copy_regular_file_verified(src_path, dst_path, expected_size, expected_sha):
         src_st = os.fstat(src_fd)
         if not stat.S_ISREG(src_st.st_mode):
             raise ValueError("Source blob must be a regular file")
+        if src_st.st_size != expected_size:
+            raise ValueError("Source blob size mismatch")
+        ensure_free_space_for_copy(Path(dst_path).parent, expected_size, min_free_bytes)
         dst_fd = os.open(dst_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
         digest = hashlib.sha256()
         total = 0
@@ -734,12 +795,14 @@ def copy_regular_file_verified(src_path, dst_path, expected_size, expected_sha):
             chunk = os.read(src_fd, 1024 * 1024)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > expected_size:
+                raise ValueError("Source blob grew during fallback copy")
             view = memoryview(chunk)
             while view:
                 written = os.write(dst_fd, view)
                 view = view[written:]
             digest.update(chunk)
-            total += len(chunk)
         os.fchmod(dst_fd, 0o600)
         os.fsync(dst_fd)
     except BaseException:
@@ -959,14 +1022,32 @@ def snapshot(previous, prelink_stage=None):
             _, by_sha256 = index_existing_blobs((BACKUPS, DAILY_BACKUPS), target_dev)
 
         use_defer = supports_defer and bool(prelinked_by_sha)
-        dedup_index = work / "dedup-index.json"
         if use_defer:
-            dedup_index.write_text(
-                json.dumps({"version": 1, "sha256": {h: sz for h, (sz, _) in prelinked_by_sha.items()}}),
-                encoding="utf-8",
-            )
+            # Create the root-generated dedup index under a root-controlled parent
+            # before granting read-only traversal to the app user.
+            index_dir = custody / "index"
+            index_dir.mkdir(mode=0o700)
+            os.chown(index_dir, 0, 0, follow_symlinks=False)
+            dedup_index = index_dir / "dedup-index.json"
+            payload = json.dumps(
+                {"version": 1, "sha256": {h: sz for h, (sz, _) in prelinked_by_sha.items()}}
+            ).encode("utf-8")
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            ifd = os.open(dedup_index, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+            try:
+                view = memoryview(payload)
+                while view:
+                    written = os.write(ifd, view)
+                    view = view[written:]
+                os.fsync(ifd)
+            finally:
+                os.close(ifd)
             os.chown(dedup_index, 0, app.pw_gid, follow_symlinks=False)
             dedup_index.chmod(0o640)
+            os.chown(index_dir, 0, app.pw_gid, follow_symlinks=False)
+            index_dir.chmod(0o710)
+            os.chown(custody, 0, app.pw_gid, follow_symlinks=False)
+            custody.chmod(0o710)
             backup_args = ("backup", str(work / "snapshot"), "--defer-blobs", str(dedup_index))
         else:
             backup_args = ("backup", str(work / "snapshot"))
@@ -975,25 +1056,36 @@ def snapshot(previous, prelink_stage=None):
                     "PATH=/usr/bin:/bin", "DATA_DIR=" + str(DATA), "/usr/bin/node",
                     str(previous / "scripts/data-backup.js"), *arguments)
 
-        # Move untrusted bojin output under root-only custody before validation and ownership transfer.
+        if use_defer:
+            custody.chmod(0o700)
+            os.chown(custody, 0, 0, follow_symlinks=False)
+            shutil.rmtree(custody / "index")
+
+        # Move untrusted bojin output under root-only custody and copy every
+        # app-produced file into fresh root-owned inodes before validation.
         drop = custody / "drop"
         work.rename(drop)
         work = None
-        staged_index = drop / "dedup-index.json"
-        if staged_index.is_symlink():
-            raise ValueError("Refusing symlink dedup index in staged backup")
-        staged_index.unlink(missing_ok=True)
-        take_custody_tree(drop, expected_uid=app.pw_uid)
-
         pub_stage = custody / "pub"
         pub_stage.mkdir(mode=0o700)
         os.chown(pub_stage, 0, 0, follow_symlinks=False)
-        (drop / "snapshot").rename(pub_stage / "snapshot")
-        (drop / "deletions.json").rename(pub_stage / "deletions.json")
+        copy_custody_tree(
+            drop,
+            pub_stage,
+            expected_uid=app.pw_uid,
+            min_free_bytes=MIN_FREE_HEADROOM,
+            allowed_top_level={"snapshot", "deletions.json"},
+        )
+        shutil.rmtree(drop)
+        if not (pub_stage / "snapshot").is_dir() or not (pub_stage / "deletions.json").is_file():
+            raise ValueError("Incomplete staged deploy backup")
+        ledger_doc = json.loads((pub_stage / "deletions.json").read_text(encoding="utf-8"))
+        if not isinstance(ledger_doc, dict) or ledger_doc.get("version") != 1:
+            raise ValueError("Unsupported deletion ledger")
         (pub_stage / "snapshot").chmod(0o700)
         (pub_stage / "deletions.json").chmod(0o600)
 
-        if use_defer:
+        if supports_defer:
             materialize_and_verify_snapshot(
                 pub_stage / "snapshot", DATA, by_sha256, target_dev, verify_full=True,
                 prelinked_by_id=prelinked_by_id, prelinked_by_sha=prelinked_by_sha,
