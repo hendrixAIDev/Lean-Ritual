@@ -105,7 +105,7 @@ When starting a non-public throwaway or staging instance against a restored dire
 - `HOST=127.0.0.1` and an unused `PORT` (for example `18099`)
 - `MAIL_MODE=file` and `AUTH_BASE_URL=http://127.0.0.1:<port>`
 - `COOKIE_SECURE=0` and `TRUST_PROXY=0`
-- `OPENROUTER_API_KEY=` (empty so verification cannot spend live AI quota)
+- `OPENROUTER_API_KEY=` and `GEMINI_API_KEY=` (empty so verification cannot spend live AI quota under either provider)
 
 ```sh
 sudo systemd-run --unit=bojin-restore-check --uid=bojin --gid=bojin \
@@ -121,6 +121,7 @@ sudo systemd-run --unit=bojin-restore-check --uid=bojin --gid=bojin \
     COOKIE_SECURE=0 \
     TRUST_PROXY=0 \
     OPENROUTER_API_KEY= \
+    GEMINI_API_KEY= \
     /usr/bin/node --disable-warning=ExperimentalWarning /opt/bojin/server.js
 ```
 
@@ -252,6 +253,7 @@ sudo systemd-run --unit=bojin-restore-drill --uid=bojin --gid=bojin \
     COOKIE_SECURE=0 \
     TRUST_PROXY=0 \
     OPENROUTER_API_KEY= \
+    GEMINI_API_KEY= \
     /usr/bin/node --disable-warning=ExperimentalWarning /opt/bojin/server.js
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -281,7 +283,7 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 ## Monitoring and account operations
 
 - Configure external HTTPS uptime checks for `/api/health`, plus alerts for service restarts, disk capacity, backup age/offsite-copy failure and provider spending. Docker has an internal healthcheck; it does not prove mainland reachability.
-- Authentication failures and provider outages must not include passwords, keys, email links or record contents in logs. Do not turn on request-body logging. Backup/data paths are private. Each `/api/ai` call logs one metadata-only diagnostic line (`kind`, `images`, configured `model`, allowlisted `finish_reason` in `stop|length|content_filter|tool_calls|error|other`, numeric `prompt`/`completion`/`reasoning` token counts, `empty`, numeric `ms`) and never logs provider-returned free text, prompts, responses, or user IDs.
+- Authentication failures and provider outages must not include passwords, keys, email links or record contents in logs. Do not turn on request-body logging. Backup/data paths are private. Each `/api/ai` call logs one metadata-only diagnostic line (`provider` in `gemini|openrouter`, optional `provider_fallback=true`, optional `retries=<n>` for transient Gemini backoff retries, `kind`, `images`, configured `model`, allowlisted `finish_reason` in `stop|length|content_filter|tool_calls|error|other`, numeric `prompt`/`completion`/`reasoning` token counts, `empty`, optional `fallback=true` for JSON-mode retry, numeric `ms`) and never logs provider-returned free text, prompts, responses, keys, or user IDs.
 - Client runtime error reports (`POST /api/client-error`): accepts JSON bodies up to 2 KiB from authenticated sessions or `/login.html` (with `X-Bojin: 1` and same-origin `Origin`/`Sec-Fetch-Site`/`Referer` checks), validates allowlisted fields and uses fixed messages (ignoring extras), enforces per-user (20/hour) and per-IP (40/hour authenticated; 5/hour anonymous login-page) rate limits, plus a 300/hour process-wide cap (dropping over-limit reports silently with `204`), writes nothing to SQLite, and logs one sanitized single-line entry prefixed `client-error` to journald. View recent client errors on the host:
 
 ```sh
@@ -294,9 +296,55 @@ journalctl -u bojin.service -f -o cat | grep --line-buffered '^client-error '
 # Group by error name and source location (last 24h)
 journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error ' | sed -n 's/.*source=\([^ ]*\) name=\([^ ]*\).*/\2 \1/p' | sort | uniq -c | sort -rn
 ```
-- Optional reasoning effort (`AI_REASONING_EFFORT`): unset or empty by default (no `reasoning` parameter sent). When set to `low`, `medium`, or `high`, `/api/ai` sends `reasoning: {"effort": "<value>"}` to OpenRouter; any other value fails startup naming `AI_REASONING_EFFORT`.
+- Optional reasoning effort (`AI_REASONING_EFFORT`): unset or empty by default (no reasoning effort parameter sent). When set to `low`, `medium`, or `high`, `/api/ai` sends `reasoning_effort: "<value>"` to the direct Gemini API (`AI_PROVIDER=gemini`) and `reasoning: {"effort": "<value>"}` to OpenRouter (`AI_PROVIDER=openrouter` or fallback); any other value fails startup naming `AI_REASONING_EFFORT`.
 - Issue/revoke invitations using scripts/auth-admin.js. Preserve legacy IDs with --legacy-user; verify the mapping with the owner first. After migrating, repeat the import only if needed; it fills missing records rather than overwriting.
 - Account deletion queues cleanup durably before deleting credentials. Files/records are removed after auth deletion, and interrupted cleanup retries at startup/every minute. If auth deletion itself failed, access stays blocked; the user can retry the authenticated /api/auth/delete-user endpoint with their password. Investigate repeated cleanup errors before launch.
+
+### AI provider switching and rollback
+
+`/api/ai` supports two providers selected via `AI_PROVIDER` in `/etc/bojin/environment` (any other non-empty value fails startup naming `AI_PROVIDER`):
+
+- `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE`).
+- `AI_PROVIDER=gemini`: calls Google Gemini API directly via its OpenAI-compatible endpoint (`GEMINI_API_KEY`, `GEMINI_MODEL` defaulting to `gemini-3.8-flash`, optional `GEMINI_BASE` defaulting to `https://generativelanguage.googleapis.com/v1beta/openai`). Transient Gemini `5xx`/`UNAVAILABLE` and `429` responses do up to two short backoff retries (`400 ms`, `1000 ms`, skipped if > 15 s have already elapsed) before falling back. When `OPENROUTER_API_KEY` is also set, any remaining Gemini quota, billing, auth, 5xx, or network/timeout error automatically retries once via OpenRouter (user-input 4xx errors do not retry or fall back), counting as a single request against per-user and global daily caps.
+
+Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc/bojin/environment` owned by `root:bojin` (`0640`).
+
+**Switch host from OpenRouter to direct Gemini API (keep OpenRouter as backup):**
+
+1. Edit `/etc/bojin/environment` (e.g. `sudo editor /etc/bojin/environment`) to add `GEMINI_API_KEY=<AI Studio key>`, set `AI_PROVIDER=gemini`, and optionally pin `GEMINI_MODEL=gemini-3.8-flash` (the default). Leave `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `AI_REASONING_EFFORT=low`, `AI_MAX_OUTPUT_TOKENS=2000`, and daily caps in place so OpenRouter stays active as automatic backup.
+2. Restart the service under the maintenance lock:
+   ```sh
+   sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
+   ```
+3. Verify health and startup confirmation:
+   ```sh
+   curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/api/health
+   journalctl -u bojin.service -n 20 --no-pager -o cat | grep '薄肌日课已启动'
+   ```
+   Expected startup line includes `已配置 gemini/gemini-3.8-flash，备用 openrouter/...`.
+
+**Roll back to OpenRouter (one env edit + restart):**
+
+1. In `/etc/bojin/environment`, change `AI_PROVIDER=gemini` to `AI_PROVIDER=openrouter` (or delete the `AI_PROVIDER` line; `GEMINI_API_KEY` may remain or be removed).
+2. Restart the service under the maintenance lock:
+   ```sh
+   sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
+   ```
+3. Verify `/api/health` and the startup line (`已配置 openrouter/...`).
+
+**Check which provider is serving:**
+
+```sh
+# 1. Configured primary (and backup) at last service start
+journalctl -u bojin.service -n 50 --no-pager -o cat | grep '薄肌日课已启动' | tail -n 1
+
+# 2. Recent /api/ai calls (metadata only: provider=gemini|openrouter, optional provider_fallback=true)
+journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^ai '
+
+# 3. Count calls served by each provider and fallback activations over the last 24h
+journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^ai ' | sed -n 's/.*provider=\([^ ]*\).*/\1/p' | sort | uniq -c
+journalctl -u bojin.service --since -24h --no-pager -o cat | grep -c '^ai .*provider_fallback=true' || true
+```
 
 ### External uptime monitoring
 
