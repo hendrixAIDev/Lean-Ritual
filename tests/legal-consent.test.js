@@ -124,14 +124,19 @@ test("privacy.html has no draft wording, covers all current disclosures, and lin
   assert.ok(html.includes(`版本：${CONSENT_VERSION}`) && html.includes(`Version: ${CONSENT_VERSION}`));
   assert.ok(termsHtml.includes(`版本：${CONSENT_VERSION}`) && termsHtml.includes(`Version: ${CONSENT_VERSION}`));
 
-  // Sign-up and returning-user consent checkboxes distinguish Resend (email-only) from host and optional AI providers
-  assert.match(loginHtml, /Resend 仅接收你的邮箱地址与验证\/重置邮件内容/);
-  assert.match(loginHtml, /Resend, which receives only your email address and verification\/reset email content/);
-  assert.match(loginHtml, /阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录/);
-  assert.match(loginHtml, /Google Gemini API（启用且你主动使用 AI 时）/);
-  assert.match(loginHtml, /OpenRouter（仅在启用且 Gemini 主通道临时故障、限流或超时时作为备用 AI 通道）/);
-  assert.match(appHtml, /Resend 仅接收你的邮箱地址与验证\/重置邮件内容/);
-  assert.match(appHtml, /Resend, which receives only your email address and verification\/reset email content/);
+  // Sign-up and returning-user consent checkboxes accurately describe Resend (email + content + delivery metadata) and BOTH primary + backup OpenRouter routing + pseudonymous identifier
+  for (const [label, src] of [["login.html", loginHtml], ["app/index.html", appHtml]]) {
+    assert.match(src, /Resend 接收你的邮箱地址、验证\/重置邮件内容及必要投递信息/, `${label} zh Resend scope`);
+    assert.match(src, /Resend, which receives your email address, verification\/reset email content, and necessary delivery metadata/, `${label} en Resend scope`);
+    assert.match(src, /阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录/, `${label} zh host scope`);
+    assert.match(src, /Alibaba Cloud US West \(Silicon Valley\) host — all account and app records/, `${label} en host scope`);
+    assert.match(src, /Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商/, `${label} zh AI primary+backup scope`);
+    assert.match(src, /directly by the Google Gemini API or via OpenRouter \(as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits\)/, `${label} en AI primary+backup scope`);
+    assert.match(src, /经 HMAC 派生的假名化用户标识/, `${label} zh OpenRouter pseudonymous id`);
+    assert.match(src, /HMAC-derived pseudonymous user identifier/, `${label} en OpenRouter pseudonymous id`);
+    assert.ok(!src.includes("backup AI path only"), `${label} must not describe OpenRouter as backup-only`);
+    assert.ok(!src.includes("仅在启用且 Gemini 主通道"), `${label} must not describe OpenRouter as backup-only in zh`);
+  }
 });
 
 test("terms.html covers all required trial terms, health disclaimer, zh/en parity, language toggle, and links from login, Me, and privacy", () => {
