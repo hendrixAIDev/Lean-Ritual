@@ -186,7 +186,7 @@ test('roundMacro / fmtMacro format kcal as integers and macros to max 1 decimal 
   });
 });
 
-test('mealCard, manual entry, editing decimals, and dayMacros/macroBars render units and preserve precision', async () => {
+test('mealCard, manual entry, editing decimals, and display-only rounding on dayMacros/macroBars/dayRow', async () => {
   const profile = {
     sex: 'm', age: 29, height: 176, weight: 72, bf: 15, steps: 9500,
     exp: 'mid', stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
@@ -196,11 +196,12 @@ test('mealCard, manual entry, editing decimals, and dayMacros/macroBars render u
   await app.waitReady();
   const td = vm.runInContext('todayStr()', app.ctx);
 
-  // Seed two meals whose decimal macros would cause JS floating-point drift (0.1 + 0.2)
+  // Seed two meals with stored precision (including 52.52 + 52.52 = 105.04 > 105% of 100g target,
+  // and 14.1 + 42.2 = 56.300000000000004 in IEEE 754)
   await vm.runInContext(`updateDay(${JSON.stringify(td)}, day => {
     day.meals = [
-      { id: "m1", type: "午餐", time: "12:30", text: "Chicken bowl", est: { kcal: 540.4, protein: 46.5, carbs: 54.0, fat: 14.1, by: "server" } },
-      { id: "m2", type: "晚餐", time: "19:00", text: "Beef bowl", est: { kcal: 1480.6, protein: 112.5, carbs: 158.0, fat: 42.2, by: "manual" } }
+      { id: "m1", type: "午餐", time: "12:30", text: "Chicken bowl", est: { kcal: 540.4, protein: 52.52, carbs: 54.0, fat: 14.1, by: "server" } },
+      { id: "m2", type: "晚餐", time: "19:00", text: "Beef bowl", est: { kcal: 1480.4, protein: 52.52, carbs: 158.0, fat: 42.2, by: "manual" } }
     ];
   }, { quiet: true })`, app.ctx);
   vm.runInContext('S.tab = "food"; S.mealMode = "manual"; render();', app.ctx);
@@ -209,24 +210,39 @@ test('mealCard, manual entry, editing decimals, and dayMacros/macroBars render u
   // Both manual entry and meal cards use .macro-grid with explicit kcal / g units
   assert.ok((html.match(/class="macro-grid"/g) || []).length === 3, 'expected 3 macro grids (manual + 2 logged meals)');
   assert.match(html, /id="me-m1-kcal"[^>]*step="1"[^>]*value="540"/);
-  assert.match(html, /id="me-m1-protein"[^>]*step="0\.1"[^>]*value="46\.5"/);
+  assert.match(html, /id="me-m1-protein"[^>]*step="0\.1"[^>]*value="52\.5"/);
   assert.match(html, /id="me-m1-carbs"[^>]*step="0\.1"[^>]*value="54"/);
   assert.match(html, /id="me-m1-fat"[^>]*step="0\.1"[^>]*value="14\.1"/);
-  assert.match(html, /id="me-m2-kcal"[^>]*value="1481"/);
+  assert.match(html, /id="me-m2-kcal"[^>]*value="1480"/);
   assert.match(html, /id="mf-kcal"[^>]*data-mf="kcal"[^>]*step="1"/);
   assert.match(html, /id="mf-protein"[^>]*data-mf="protein"[^>]*step="0\.1"/);
   assert.match(html, /<span class="mf-unit">kcal<\/span>/);
   assert.match(html, /<span class="mf-unit">g<\/span>/);
 
-  // dayMacros sums cleanly without floating-point noise (14.1 + 42.2 === 56.3, 46.5 + 112.5 === 159)
+  // Stored meal values retain original precision until edited
+  assert.equal(vm.runInContext(`S.days[${JSON.stringify(td)}].meals[0].est.kcal`, app.ctx), 540.4);
+  assert.equal(vm.runInContext(`S.days[${JSON.stringify(td)}].meals[0].est.protein`, app.ctx), 52.52);
+
+  // dayMacros keeps unrounded sums for calculations, insights, warnings, and AI digest
   const totals = vm.runInContext(`dayMacros(${JSON.stringify(td)})`, app.ctx);
-  assert.equal(totals.kcal, 2021);
-  assert.equal(totals.protein, 159);
+  assert.ok(Math.abs(totals.kcal - 2020.8) < 1e-9, `expected unrounded kcal 2020.8, got ${totals.kcal}`);
+  assert.ok(Math.abs(totals.protein - 105.04) < 1e-9, `expected unrounded protein 105.04, got ${totals.protein}`);
   assert.equal(totals.carbs, 212);
-  assert.equal(totals.fat, 56.3);
-  assert.match(html, /class="num macro-val">2021 \/ \d+ kcal<\/span>/);
-  assert.match(html, /class="num macro-val">159 \/ \d+ g<\/span>/);
-  assert.match(html, /class="num macro-val">56\.3 \/ \d+ g<\/span>/);
+  assert.ok(Math.abs(totals.fat - 56.3) < 1e-9, `expected unrounded fat ~56.3, got ${totals.fat}`);
+
+  // macroBars evaluates the 105% over-target warning on unrounded 105.04 > 105 while displaying 105 / 100 g
+  const barsHtml = vm.runInContext(`macroBars({ kcal: 2000, protein: 100, carbs: 200, fat: 50 }, dayMacros(${JSON.stringify(td)}))`, app.ctx);
+  assert.match(barsHtml, /<span class="macro-lbl">Protein<\/span><div class="bar"><i class="over"/);
+  assert.match(barsHtml, /class="num macro-val">2021 \/ 2000 kcal<\/span>/);
+  assert.match(barsHtml, /class="num macro-val">105 \/ 100 g<\/span>/);
+  assert.match(barsHtml, /class="num macro-val">56\.3 \/ 50 g<\/span>/);
+  assert.doesNotMatch(barsHtml, /56\.3000/);
+
+  // dayRow also formats at the display boundary without floating-point noise
+  const rowHtml = vm.runInContext(`dayRow(S.days[${JSON.stringify(td)}])`, app.ctx);
+  assert.match(rowHtml, /2021 kcal/);
+  assert.match(rowHtml, /P 105 g/);
+  assert.doesNotMatch(rowHtml, /105\.04|2020\.8/);
 
   // Editing logged meal macros preserves 1 decimal for protein/carbs/fat and rounds kcal to integer
   const pInput = { dataset: { meal: 'm1', k: 'protein' }, value: '48.74' };
@@ -384,7 +400,7 @@ test('headless Chromium: meal macro inputs and daily totals are untruncated and 
             type: '午餐',
             time: '21:26',
             text: 'Grilled chicken breast bowl with brown rice, broccoli, and soft-boiled egg',
-            est: { kcal: 540, protein: 46.5, carbs: 54.0, fat: 14.23, by: 'server', tip: 'Strong protein hit.', confidence: 'High' }
+            est: { kcal: 540.4, protein: 44.54, carbs: 54.0, fat: 14.23, by: 'server', tip: 'Strong protein hit.', confidence: 'High' }
           },
           {
             id: 'm-4digit',
@@ -477,20 +493,78 @@ test('headless Chromium: meal macro inputs and daily totals are untruncated and 
     }
   }
 
-  // Verify live inline editing in the browser preserves 1 decimal place and updates daily totals
+  // Verify stored vs displayed values and sequential keystroke decimal entry ('46.' then '5') + real blur
   const editCtx = await browser.newContext({ storageState, viewport: { width: 375, height: 844 }, locale: 'en-US' });
   const editPage = await editCtx.newPage();
   try {
     await editPage.goto(`${srv.base}/?lang=en`);
     await editPage.locator('nav#tabs').waitFor({ state: 'visible' });
     await editPage.locator('nav#tabs [data-act="tab"][data-v="food"]').click();
+
+    // Unrounded stored meal values vs rounded displayed inputs & daily totals
+    const initial = await editPage.evaluate(() => {
+      const m = S.days[todayStr()].meals.find(x => x.id === 'm-bowl');
+      const totals = dayMacros(todayStr());
+      return {
+        stored: { kcal: m.est.kcal, protein: m.est.protein, carbs: m.est.carbs, fat: m.est.fat },
+        displayed: {
+          kcal: document.getElementById('me-m-bowl-kcal').value,
+          protein: document.getElementById('me-m-bowl-protein').value,
+          carbs: document.getElementById('me-m-bowl-carbs').value,
+          fat: document.getElementById('me-m-bowl-fat').value
+        },
+        rawTotals: { kcal: totals.kcal, protein: totals.protein, fat: totals.fat },
+        barsText: document.querySelector('.macro-bars').textContent
+      };
+    });
+    assert.deepEqual(initial.stored, { kcal: 540.4, protein: 44.54, carbs: 54, fat: 14.23 });
+    assert.deepEqual(initial.displayed, { kcal: '540', protein: '44.5', carbs: '54', fat: '14.2' });
+    assert.ok(Math.abs(initial.rawTotals.kcal - 2020.8) < 1e-9);
+    assert.ok(Math.abs(initial.rawTotals.protein - 157.04) < 1e-9);
+    assert.ok(Math.abs(initial.rawTotals.fat - 56.23) < 1e-9);
+    assert.match(initial.barsText, /2021 \/ \d+ kcal/);
+    assert.match(initial.barsText, /157 \/ \d+ g/);
+    assert.match(initial.barsText, /56\.2 \/ \d+ g/);
+
+    // Sequential real keystrokes: clear, type '46.' -> focus stays, storage untouched until blur
     const pField = editPage.locator('#me-m-bowl-protein');
-    await pField.fill('47.5');
-    await pField.dispatchEvent('change');
-    await editPage.waitForFunction(() => S.days[todayStr()]?.meals?.find(m => m.id === 'm-bowl')?.est?.protein === 47.5);
-    assert.equal(await pField.inputValue(), '47.5');
-    const dailyText = await editPage.locator('.macro-bars').textContent();
-    assert.match(dailyText, /160 \/ \d+ g/);
+    await pField.click();
+    for (let i = 0; i < 6; i++) await editPage.keyboard.press('ArrowRight');
+    for (let i = 0; i < 6; i++) await editPage.keyboard.press('Backspace');
+    await editPage.keyboard.type('46.');
+
+    const midEdit = await editPage.evaluate(() => ({
+      activeId: document.activeElement?.id,
+      storedProtein: S.days[todayStr()].meals.find(x => x.id === 'm-bowl').est.protein
+    }));
+    assert.equal(midEdit.activeId, 'me-m-bowl-protein', 'typing trailing decimal must keep focus on input');
+    assert.equal(midEdit.storedProtein, 44.54, 'typing "46." must leave stored value untouched before blur');
+
+    // Finish typing '5' and blur by clicking outside the input
+    await editPage.keyboard.type('5');
+    await editPage.locator('h2').first().click();
+
+    await editPage.waitForFunction(() => S.days[todayStr()]?.meals?.find(m => m.id === 'm-bowl')?.est?.protein === 46.5);
+    assert.equal(await pField.inputValue(), '46.5');
+    const afterDecimal = await editPage.evaluate(() => ({
+      storedProtein: S.days[todayStr()].meals.find(x => x.id === 'm-bowl').est.protein,
+      rawTotalProtein: dayMacros(todayStr()).protein,
+      barsText: document.querySelector('.macro-bars').textContent
+    }));
+    assert.equal(afterDecimal.storedProtein, 46.5);
+    assert.equal(afterDecimal.rawTotalProtein, 159);
+    assert.match(afterDecimal.barsText, /159 \/ \d+ g/);
+
+    // Type '50.0' with real keystrokes and blur -> drops trailing .0 in both stored and displayed value
+    await pField.click();
+    for (let i = 0; i < 6; i++) await editPage.keyboard.press('ArrowRight');
+    for (let i = 0; i < 6; i++) await editPage.keyboard.press('Backspace');
+    await editPage.keyboard.type('50.0');
+    await editPage.locator('h2').first().click();
+    await editPage.waitForFunction(() => S.days[todayStr()]?.meals?.find(m => m.id === 'm-bowl')?.est?.protein === 50);
+    assert.equal(await pField.inputValue(), '50');
+    const afterTrailingZero = await editPage.evaluate(() => document.querySelector('.macro-bars').textContent);
+    assert.match(afterTrailingZero, /162\.5 \/ \d+ g/);
   } finally {
     await editCtx.close();
   }

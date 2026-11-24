@@ -1962,10 +1962,6 @@ function dayMacros(date){
   const meals = S.days[date]?.meals || [];
   const res = {kcal:0, protein:0, carbs:0, fat:0, n:meals.length, est:0};
   meals.forEach(m => { const e = m.est; if (e && numOr(e.kcal) != null) { res.est++; res.kcal += +e.kcal||0; res.protein += +e.protein||0; res.carbs += +e.carbs||0; res.fat += +e.fat||0; } });
-  res.kcal = roundMacro("kcal", res.kcal) || 0;
-  res.protein = roundMacro("protein", res.protein) || 0;
-  res.carbs = roundMacro("carbs", res.carbs) || 0;
-  res.fat = roundMacro("fat", res.fat) || 0;
   return res;
 }
 
@@ -2993,7 +2989,7 @@ function dayRow(d){
   const tags = [];
   if (w?.done) tags.push(`<span class="chip on">${esc(progLabel(w.key))}${w.feel?" · "+esc(feelLabel(w.feel)):""}</span>`);
   if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${esc(w.pain==="pain"?t("log.painHard"):t("log.painMild"))}</span>`);
-  if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:m.kcal, p:m.protein}):""}))}</span>`);
+  if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:fmtMacro("kcal", m.kcal) || "0", p:fmtMacro("protein", m.protein) || "0"}):""}))}</span>`);
   if (d.checkin?.sleep) tags.push(`<span class="chip">${esc(t("log.sleepChip", {h:d.checkin.sleep}))}</span>`);
   return `<button class="day" data-act="goto" data-v="${esc(d.date)}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
     <div class="stack" style="gap:4px;min-width:0"><b class="small">${esc(fmtDate(d.date))}</b><div class="row">${tags.join("")||`<span class="small muted">${esc(t("log.checkinOnly"))}</span>`}</div></div>
