@@ -32,6 +32,19 @@ function sha256File(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function writeSnapshotManifest(snapshotDir, createdIso, dbNames = ["bojin.db", "auth.sqlite"]) {
+  const files = dbNames
+    .filter((name) => fs.existsSync(path.join(snapshotDir, name)))
+    .map((name) => {
+      const full = path.join(snapshotDir, name);
+      return { name, size: fs.statSync(full).size, sha256: sha256File(full) };
+    });
+  fs.writeFileSync(
+    path.join(snapshotDir, "manifest.json"),
+    JSON.stringify({ version: 1, created: createdIso, files }, null, 2)
+  );
+}
+
 function createFixture(t, {
   nowIso = "2026-11-24T10:00:00.000Z",
   snapshotIso = "2026-11-24T04:01:15.000Z"
@@ -192,26 +205,21 @@ function createFixture(t, {
   insertFb.run("fb_rawpk000001", "u_gamma_secret", "bug", "很早的反馈不应出现在最新三条", null, snapHoursAgo(90));
   bojinDb.close();
 
-  fs.writeFileSync(
-    path.join(snapshotDir, "manifest.json"),
-    JSON.stringify({ version: 1, created: snapshotIso, files: [{ name: "bojin.db" }, { name: "auth.sqlite" }] })
-  );
+  writeSnapshotManifest(snapshotDir, snapshotIso, ["bojin.db", "auth.sqlite"]);
 
-  // Older daily snapshot + deploy snapshot + bogus future snapshot (must be ignored)
+  // Older complete daily snapshot + deploy snapshot + bogus future snapshot (must be ignored)
   const olderDailySnap = path.join(backupRoot, "snapshot-20261123T040000Z");
   fs.mkdirSync(olderDailySnap, { recursive: true });
-  fs.writeFileSync(
-    path.join(olderDailySnap, "manifest.json"),
-    JSON.stringify({ version: 1, created: "2026-11-23T04:01:00.000Z", files: [] })
-  );
+  fs.copyFileSync(path.join(snapshotDir, "bojin.db"), path.join(olderDailySnap, "bojin.db"));
+  fs.copyFileSync(path.join(snapshotDir, "auth.sqlite"), path.join(olderDailySnap, "auth.sqlite"));
+  writeSnapshotManifest(olderDailySnap, "2026-11-23T04:01:00.000Z", ["bojin.db", "auth.sqlite"]);
   fs.mkdirSync(path.join(backupRoot, "snapshot-20990101T000000Z"), { recursive: true });
 
   const deploySnap = path.join(deployBackupRoot, "20261123T180000Z-abcd1234");
   fs.mkdirSync(path.join(deploySnap, "snapshot"), { recursive: true });
-  fs.writeFileSync(
-    path.join(deploySnap, "snapshot", "manifest.json"),
-    JSON.stringify({ version: 1, created: "2026-11-23T18:00:30.000Z", files: [] })
-  );
+  fs.copyFileSync(path.join(snapshotDir, "bojin.db"), path.join(deploySnap, "snapshot", "bojin.db"));
+  fs.copyFileSync(path.join(snapshotDir, "auth.sqlite"), path.join(deploySnap, "snapshot", "auth.sqlite"));
+  writeSnapshotManifest(path.join(deploySnap, "snapshot"), "2026-11-23T18:00:30.000Z", ["bojin.db", "auth.sqlite"]);
 
   // 2. Separate live DATA_DIR databases with sentinel live-only rows (must NEVER be opened!)
   const liveAuth = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
@@ -557,6 +565,118 @@ test("--snapshot refuses live DATA_DIR and incomplete WAL snapshots", (t) => {
     () => collectDailySummary({ dataDir: fx.dataDir, snapshotDir: dirtySnap, noJournal: true, noSystemd: true }),
     /WAL sidecars/
   );
+});
+
+test("rejects empty-DB, half-written, checksum-mismatch, and missing-table snapshots; falls back to previous complete snapshot or errors", (t) => {
+  const fx = createFixture(t);
+
+  // 1. Empty manifest (files: []) + 0-byte bojin.db (Codex reproduction) -> fails explicitly!
+  const emptySnap = path.join(fx.root, "empty-staged");
+  fs.mkdirSync(emptySnap, { recursive: true });
+  fs.writeFileSync(path.join(emptySnap, "bojin.db"), Buffer.alloc(0));
+  fs.writeFileSync(
+    path.join(emptySnap, "manifest.json"),
+    JSON.stringify({ version: 1, created: fx.snapshotIso, files: [] })
+  );
+  assert.throws(
+    () => collectDailySummary({ dataDir: fx.dataDir, snapshotDir: emptySnap, noJournal: true, noSystemd: true }),
+    /manifest missing bojin\.db entry/
+  );
+  // Also verify CLI exits non-zero (never silently reports zeros)
+  const emptyCli = spawnSync(
+    process.execPath,
+    [SCRIPT, "--snapshot", emptySnap, "--no-journal", "--no-systemd"],
+    { cwd: ROOT, env: { ...process.env, DATA_DIR: fx.dataDir }, encoding: "utf8", timeout: 10000 }
+  );
+  assert.equal(emptyCli.status, 1);
+  assert.match(emptyCli.stderr, /manifest missing bojin\.db entry/);
+
+  // 2. Half-written / truncated bojin.db (manifest records full size/sha256, disk file truncated)
+  const halfSnap = path.join(fx.root, "half-written");
+  fs.cpSync(fx.snapshotDir, halfSnap, { recursive: true });
+  const origBytes = fs.readFileSync(path.join(halfSnap, "bojin.db"));
+  fs.writeFileSync(path.join(halfSnap, "bojin.db"), origBytes.subarray(0, Math.floor(origBytes.length / 2)));
+  assert.throws(
+    () => collectDailySummary({ dataDir: fx.dataDir, snapshotDir: halfSnap, noJournal: true, noSystemd: true }),
+    /size mismatch/
+  );
+
+  // 3. Checksum mismatch (exact same length, 1 flipped byte in bojin.db)
+  const badShaSnap = path.join(fx.root, "checksum-mismatch");
+  fs.cpSync(fx.snapshotDir, badShaSnap, { recursive: true });
+  const mutated = Buffer.from(fs.readFileSync(path.join(badShaSnap, "bojin.db")));
+  mutated[mutated.length - 1] ^= 0xff;
+  fs.writeFileSync(path.join(badShaSnap, "bojin.db"), mutated);
+  assert.throws(
+    () => collectDailySummary({ dataDir: fx.dataDir, snapshotDir: badShaSnap, noJournal: true, noSystemd: true }),
+    /sha256 checksum mismatch/
+  );
+
+  // 4. Valid SQLite file + matching manifest checksum, but empty schema (no docs/blobs tables)
+  const noTablesSnap = path.join(fx.root, "empty-schema");
+  fs.mkdirSync(noTablesSnap, { recursive: true });
+  const emptySqlite = new DatabaseSync(path.join(noTablesSnap, "bojin.db"));
+  emptySqlite.exec("PRAGMA journal_mode = DELETE; CREATE TABLE unrelated (x INT);");
+  emptySqlite.close();
+  writeSnapshotManifest(noTablesSnap, fx.snapshotIso, ["bojin.db"]);
+  assert.throws(
+    () => collectDailySummary({ dataDir: fx.dataDir, snapshotDir: noTablesSnap, noJournal: true, noSystemd: true }),
+    /missing expected table/
+  );
+
+  // 5. Auto-discovery fallback: newest snapshot is corrupted/checksum-mismatched -> falls back to previous complete one and says so!
+  const fallbackRoot = path.join(fx.root, "fallback-backups");
+  fs.mkdirSync(fallbackRoot, { recursive: true });
+  // Previous complete snapshot (2026-11-23T04:01:00Z)
+  const goodPrev = path.join(fallbackRoot, "snapshot-20261123T040000Z");
+  fs.cpSync(fx.snapshotDir, goodPrev, { recursive: true });
+  writeSnapshotManifest(goodPrev, "2026-11-23T04:01:00.000Z", ["bojin.db", "auth.sqlite"]);
+  // Newer corrupted snapshot (2026-11-24T04:00:00Z)
+  const badNewest = path.join(fallbackRoot, "snapshot-20261124T040000Z");
+  fs.cpSync(badShaSnap, badNewest, { recursive: true });
+
+  const fallbackSummary = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    backupRoot: fallbackRoot,
+    deployBackupRoot: path.join(fx.root, "none"),
+    noJournal: true,
+    noSystemd: true
+  });
+  assert.equal(fallbackSummary.dbSource.status, "snapshot");
+  assert.equal(fallbackSummary.dbSource.snapshotName, "snapshot-20261123T040000Z");
+  assert.equal(fallbackSummary.dataAsOf, "2026-11-23T04:01:00.000Z");
+  assert.equal(fallbackSummary.dbSource.skippedInvalidSnapshots.length, 1);
+  assert.equal(fallbackSummary.dbSource.skippedInvalidSnapshots[0].name, "snapshot-20261124T040000Z");
+  assert.match(fallbackSummary.dbSource.skippedInvalidSnapshots[0].reason, /sha256 checksum mismatch/);
+  assert.match(fallbackSummary.dbSource.note, /fell back to snapshot-20261123T040000Z/);
+  assert.equal(fallbackSummary.backup.latestSnapshotName, "snapshot-20261123T040000Z");
+  assert.equal(fallbackSummary.accounts.trialToDate.signups, 2); // u_alpha & u_beta existed by 2026-11-23T04:01Z
+  const fallbackText = formatSummaryText(fallbackSummary);
+  assert.match(fallbackText, /快照回退说明:.*snapshot-20261124T040000Z.*fell back to snapshot-20261123T040000Z/);
+
+  // 6. Auto-discovery with ONLY invalid snapshots -> reports an error (exit 1) instead of zeros!
+  const allBadRoot = path.join(fx.root, "all-bad-backups");
+  fs.mkdirSync(allBadRoot, { recursive: true });
+  fs.cpSync(halfSnap, path.join(allBadRoot, "snapshot-20261124T040000Z"), { recursive: true });
+  assert.throws(
+    () => collectDailySummary({
+      dataDir: fx.dataDir,
+      nowMs: fx.nowMs,
+      backupRoot: allBadRoot,
+      deployBackupRoot: path.join(fx.root, "none"),
+      noJournal: true,
+      noSystemd: true
+    }),
+    /No valid completed backup snapshot found/
+  );
+  const allBadCli = spawnSync(
+    process.execPath,
+    [SCRIPT, "--backup-root", allBadRoot, "--deploy-backup-root", path.join(fx.root, "none"), "--no-journal", "--no-systemd"],
+    { cwd: ROOT, env: { ...process.env, DATA_DIR: fx.dataDir }, encoding: "utf8", timeout: 10000 }
+  );
+  assert.equal(allBadCli.status, 1);
+  assert.match(allBadCli.stderr, /No valid completed backup snapshot found/);
 });
 
 test("pseudonyms use an ephemeral per-report HMAC key and are unlinkable across reports", (t) => {
@@ -960,10 +1080,7 @@ test("handles legacy snapshot without feedback table or auth.sqlite and ignores 
     CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
   `);
   db.close();
-  fs.writeFileSync(
-    path.join(snapDir, "manifest.json"),
-    JSON.stringify({ version: 1, created: "2026-11-24T04:00:00.000Z", files: [{ name: "bojin.db" }] })
-  );
+  writeSnapshotManifest(snapDir, "2026-11-24T04:00:00.000Z", ["bojin.db"]);
 
   const summary = collectDailySummary({
     dataDir,
