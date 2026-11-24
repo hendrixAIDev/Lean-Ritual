@@ -114,16 +114,7 @@ function putDoc(p, uid, data, write = docQuota.write){
 function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] of Object.entries(patch || {})) { if (v && typeof v === "object" && v.__delete__ === true) delete o[k]; else o[k] = v; } return o; }
 
 /* ---------- AI 代理 ---------- */
-const isLoopbackOrigin = value => {
-  try {
-    const u = new URL(value);
-    return (u.protocol === "http:" || u.protocol === "https:") && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
-  } catch { return false; }
-};
-const aiProxy = require("./lib/ai").createAIProxy(db, {
-  ...CFG,
-  allowLoopbackBase: !CFG.cookieSecure && !CFG.trustProxy && process.env.MAIL_MODE === "file" && isLoopbackOrigin(CFG.authBaseURL)
-});
+const aiProxy = require("./lib/ai").createAIProxy(db, CFG);
 const clientErrors = require("./lib/client-errors").createClientErrors({
   expectedOrigin: new URL(CFG.authBaseURL).origin,
   releaseRevision

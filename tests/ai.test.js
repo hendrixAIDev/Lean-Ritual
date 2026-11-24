@@ -468,22 +468,37 @@ test('provider base URLs enforce exact official HTTPS origins, reject misrouted 
   try{assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,aiProvider:'gemini',geminiKey:'k',geminiBase:bad}),/GEMINI_BASE/,bad);}
   finally{db.close();}
  }
- // Server refuses loopback/foreign overrides whenever not in explicit localhost file-mail dev mode
+ // Even passing allowLoopbackBase:true is ignored; loopback is never accepted by createAIProxy
+ {
+  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE ai_usage(uid TEXT,day TEXT,n INTEGER,PRIMARY KEY(uid,day))');
+  try{
+   assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,orKey:'k',orBase:'http://127.0.0.1:18080/v1',allowLoopbackBase:true}),/OPENROUTER_BASE/);
+   assert.throws(()=>createAIProxy(db,{aiDaily:2,aiGlobalDaily:3,aiMaxTokens:100,aiProvider:'gemini',geminiKey:'k',geminiBase:'http://127.0.0.1:18080/gemini',allowLoopbackBase:true}),/GEMINI_BASE/);
+  }finally{db.close();}
+ }
+ // Server refuses loopback and foreign overrides unconditionally, even in localhost file-mail dev mode
  const {spawnSync}=require('node:child_process'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-ai-base-'));
  try{
+  const devEnv={...process.env,DATA_DIR:dir,AUTH_BASE_URL:'http://127.0.0.1:18080',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file'};
   const r1=spawnSync(process.execPath,['server.js'],{
-   env:{...process.env,DATA_DIR:dir,AUTH_BASE_URL:'https://leanritual.app',COOKIE_SECURE:'1',MAIL_MODE:'smtp',GEMINI_BASE:'http://127.0.0.1:18080/gemini'},
+   env:{...devEnv,GEMINI_BASE:'http://127.0.0.1:18080/gemini'},
    encoding:'utf8',timeout:5000
   });
   assert.notEqual(r1.status,0);
   assert.match(r1.stderr,/GEMINI_BASE/);
   const r2=spawnSync(process.execPath,['server.js'],{
-   env:{...process.env,DATA_DIR:dir,AUTH_BASE_URL:'http://127.0.0.1:18080',COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',OPENROUTER_BASE:'https://generativelanguage.googleapis.com/v1beta/openai'},
+   env:{...devEnv,OPENROUTER_BASE:'http://127.0.0.1:18080/v1'},
    encoding:'utf8',timeout:5000
   });
   assert.notEqual(r2.status,0);
   assert.match(r2.stderr,/OPENROUTER_BASE/);
+  const r3=spawnSync(process.execPath,['server.js'],{
+   env:{...devEnv,OPENROUTER_BASE:'https://generativelanguage.googleapis.com/v1beta/openai'},
+   encoding:'utf8',timeout:5000
+  });
+  assert.notEqual(r3.status,0);
+  assert.match(r3.stderr,/OPENROUTER_BASE/);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 
  // Every fetch sets redirect: 'manual' and 3xx redirects fail closed without falling back
@@ -880,9 +895,58 @@ test('hard 120s deadline, 30s fallback reserve, retry budget, and aborted body r
   }finally{db.close();}
  }
 
- // 5. Non-JSON body SyntaxError on HTTP 200 before deadline fails without spurious fallback
- {
+ // 5. Stalled/aborted body read after permanent or redirect HTTP statuses (302/400/401/403) preserves status and NEVER falls back
+ for(const permStatus of [302,400,401,403]){
   let clock=5000000;
+  const seen=[],logs=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{clock+=ms;},log:l=>logs.push(l)
+  },async url=>{
+   seen.push(url);
+   return {
+    ok:false,status:permStatus,
+    json:async()=>{
+     clock+=90000;
+     const err=new Error('body read timed out');err.name='TimeoutError';throw err;
+    }
+   };
+  });
+  try{
+   await assert.rejects(proxy({id:'a'},body),e=>e.status===502&&e.code==='ai_failed');
+   assert.equal(seen.length,1,`body timeout after HTTP ${permStatus} must not fall back`);
+   assert.equal(db.prepare('SELECT n FROM ai_usage WHERE uid=?').get('a').n,1);
+   assert.match(logs[0],/\bprovider=gemini\b/);
+   assert.doesNotMatch(logs[0],/\bprovider_fallback=true\b/);
+  }finally{db.close();}
+ }
+
+ // 6. Stalled body read after HTTP 429 preserves 429 status (no backup -> 429 rate_limited; with backup -> falls back)
+ {
+  let clock=5500000;
+  const seen=[];
+  const {db,proxy}=fixture({
+   aiProvider:'gemini',geminiKey:'g-key',orKey:'',
+   aiDaily:10,aiGlobalDaily:10,now:()=>clock,sleep:async ms=>{clock+=ms;},log:()=>{}
+  },async url=>{
+   seen.push(url);
+   return {
+    ok:false,status:429,
+    json:async()=>{
+     clock+=20000;
+     const err=new Error('body read timed out');err.name='TimeoutError';throw err;
+    }
+   };
+  });
+  try{
+   await assert.rejects(proxy({id:'a'},body),e=>e.status===429&&e.code==='rate_limited');
+   assert.equal(seen.length,1);
+  }finally{db.close();}
+ }
+
+ // 7. Non-JSON body SyntaxError on HTTP 200 before deadline fails without spurious fallback
+ {
+  let clock=6000000;
   const seen=[],logs=[];
   const {db,proxy}=fixture({
    aiProvider:'gemini',geminiKey:'g-key',orKey:'or-key',
@@ -901,7 +965,7 @@ test('hard 120s deadline, 30s fallback reserve, retry budget, and aborted body r
  }
 });
 
-test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter fallback, /api/config, /api/me, and secret-free logs', {timeout:30000}, async t=>{
+test('HTTP integration with test-injected fetch routing official HTTPS origins: Gemini direct, OpenRouter fallback, /api/config, /api/me, and secret-free logs', {timeout:30000}, async t=>{
  const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
  const {spawn,spawnSync}=require('node:child_process');
  const geminiKey='TEST_GEMINI_SECRET_KEY_ABC';
@@ -911,7 +975,14 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  const mockUpstream=http.createServer(async(req,res)=>{
   const chunks=[];for await(const c of req)chunks.push(c);
   const bodyObj=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  upstreamSeen.push({url:req.url,auth:req.headers.authorization,title:req.headers['x-title'],body:bodyObj});
+  upstreamSeen.push({
+   url:req.url,
+   intendedUrl:req.headers['x-test-intended-url'],
+   redirect:req.headers['x-test-redirect'],
+   auth:req.headers.authorization,
+   title:req.headers['x-title'],
+   body:bodyObj
+  });
   res.setHeader('Content-Type','application/json');
   if(req.url==='/gemini/chat/completions'){
    if(geminiMode==='unavailable'){
@@ -933,6 +1004,25 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  await new Promise(r=>mockUpstream.listen(0,'127.0.0.1',r));
  const mockPort=mockUpstream.address().port;
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ritual-ai-http-'));
+ // Test-only fetch preload: server.js uses the real official HTTPS URLs (no base env overrides),
+ // and the preload diverts only those two official URLs to our local mock server.
+ const preloadPath=path.join(dir,'mock-fetch-preload.cjs');
+ fs.writeFileSync(preloadPath,`
+  'use strict';
+  const origFetch = globalThis.fetch;
+  const routes = {
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions': 'http://127.0.0.1:${mockPort}/gemini/chat/completions',
+    'https://openrouter.ai/api/v1/chat/completions': 'http://127.0.0.1:${mockPort}/openrouter/chat/completions'
+  };
+  globalThis.fetch = (input, init) => {
+    const url = typeof input === 'string' ? input : input?.url;
+    if (url && Object.hasOwn(routes, url)) {
+      const headers = {...(init?.headers || {}), 'x-test-intended-url': url, 'x-test-redirect': String(init?.redirect || '')};
+      return origFetch(routes[url], {...init, headers});
+    }
+    return origFetch(input, init);
+  };
+ `);
  const port=18096,base=`http://127.0.0.1:${port}`;
  const env={
   ...process.env,
@@ -941,18 +1031,18 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
   COOKIE_SECURE:'0',TRUST_PROXY:'0',MAIL_MODE:'file',
   AI_PROVIDER:'gemini',
   GEMINI_API_KEY:geminiKey,
-  GEMINI_BASE:`http://127.0.0.1:${mockPort}/gemini`,
   GEMINI_MODEL:'gemini-3.8-flash',
   OPENROUTER_API_KEY:orKey,
-  OPENROUTER_BASE:`http://127.0.0.1:${mockPort}/openrouter`,
   OPENROUTER_MODEL:'google/gemini-3.8-flash',
   AI_REASONING_EFFORT:'low',
   AI_MAX_OUTPUT_TOKENS:'2000'
  };
+ delete env.GEMINI_BASE;
+ delete env.OPENROUTER_BASE;
  const inv=spawnSync(process.execPath,['scripts/auth-admin.js','invite','gemini-tester@example.com'],{env,encoding:'utf8',timeout:5000});
  assert.equal(inv.status,0,inv.stderr);
  const invitation=JSON.parse(inv.stdout);
- const child=spawn(process.execPath,['server.js'],{env,stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['--require',preloadPath,'server.js'],{env,stdio:['ignore','pipe','pipe']});
  let stdout='',stderr='';
  child.stdout.on('data',d=>stdout+=d);
  child.stderr.on('data',d=>stderr+=d);
@@ -988,12 +1078,13 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  assert.equal(me.ai,true);
  assert.equal(me.aiModel,'gemini-3.8-flash');
 
- // 1. Direct Gemini call succeeds
+ // 1. Direct Gemini call succeeds against the official HTTPS endpoint
  const r1=await req('/api/ai',{messages:[{content:'meal estimate'}],json:true},cookie);
  assert.equal(r1.status,200);
  assert.deepEqual(await r1.json(),{text:'{"provider":"gemini"}',truncated:false});
  assert.equal(upstreamSeen.length,1);
- assert.equal(upstreamSeen[0].url,'/gemini/chat/completions');
+ assert.equal(upstreamSeen[0].intendedUrl,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+ assert.equal(upstreamSeen[0].redirect,'manual');
  assert.equal(upstreamSeen[0].auth,'Bearer '+geminiKey);
  assert.equal(upstreamSeen[0].body.reasoning_effort,'low');
 
@@ -1003,10 +1094,11 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  assert.equal(r2.status,200);
  assert.deepEqual(await r2.json(),{text:'{"provider":"openrouter"}',truncated:false});
  assert.equal(upstreamSeen.length,5);
- assert.equal(upstreamSeen[1].url,'/gemini/chat/completions');
- assert.equal(upstreamSeen[2].url,'/gemini/chat/completions');
- assert.equal(upstreamSeen[3].url,'/gemini/chat/completions');
- assert.equal(upstreamSeen[4].url,'/openrouter/chat/completions');
+ assert.equal(upstreamSeen[1].intendedUrl,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+ assert.equal(upstreamSeen[2].intendedUrl,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+ assert.equal(upstreamSeen[3].intendedUrl,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+ assert.equal(upstreamSeen[4].intendedUrl,'https://openrouter.ai/api/v1/chat/completions');
+ assert.equal(upstreamSeen[4].redirect,'manual');
  assert.equal(upstreamSeen[4].auth,'Bearer '+orKey);
  assert.equal(upstreamSeen[4].title,'Bojin Rike');
  assert.deepEqual(upstreamSeen[4].body.reasoning,{effort:'low'});
@@ -1020,8 +1112,8 @@ test('HTTP integration with mocked upstream servers: Gemini direct, OpenRouter f
  }
 });
 
-test('privacy.html, .env.example, and docs/OPERATIONS.md accurately document Gemini direct provider, OpenRouter backup, pre-cutover smoke test, switching, and rollback',()=>{
- const fs=require('node:fs'),path=require('node:path');
+test('privacy.html, .env.example, and docs/OPERATIONS.md accurately document Gemini direct provider, OpenRouter backup, verified pre-cutover smoke test, switching, and rollback',async()=>{
+ const fs=require('node:fs'),path=require('node:path'),zlib=require('node:zlib'),sharp=require('sharp');
  const root=path.join(__dirname,'..');
  const privacy=fs.readFileSync(path.join(root,'public/privacy.html'),'utf8');
  const zh=privacy.match(/<article id="doc-zh">([\s\S]*?)<\/article>/)[1];
@@ -1052,6 +1144,7 @@ test('privacy.html, .env.example, and docs/OPERATIONS.md accurately document Gem
   'Pre-cutover direct Gemini smoke test',
   'response_format: { type: "json_object" }',
   'image_url',
+  'image_verified',
   'reasoning_effort',
   'redirect: "manual"',
   'provider_fallback=true',
@@ -1059,4 +1152,28 @@ test('privacy.html, .env.example, and docs/OPERATIONS.md accurately document Gem
  ]){
   assert.ok(ops.includes(snippet),`docs/OPERATIONS.md missing ${snippet}`);
  }
+ // Verify the documented smoke-test script parses cleanly and its embedded PNG has valid CRCs and decodes as solid red 16x16
+ const scriptMatch=ops.match(/sudo -u bojin \/usr\/bin\/node --env-file=\/etc\/bojin\/environment -e '([\s\S]*?)'\n   ```/);
+ assert.ok(scriptMatch,'smoke-test script block missing from docs/OPERATIONS.md');
+ new Function(scriptMatch[1]);
+ const b64Match=scriptMatch[1].match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+ assert.ok(b64Match,'embedded PNG missing from smoke-test script');
+ const pngBuf=Buffer.from(b64Match[1],'base64');
+ assert.ok(pngBuf.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])),'invalid PNG signature');
+ let off=8,chunks=0;
+ while(off<pngBuf.length){
+  const len=pngBuf.readUInt32BE(off);
+  const type=pngBuf.subarray(off+4,off+8).toString('ascii');
+  const stored=pngBuf.readUInt32BE(off+8+len);
+  const calc=zlib.crc32(pngBuf.subarray(off+4,off+8+len))>>>0;
+  assert.equal(stored,calc,`PNG CRC mismatch on ${type}`);
+  off+=12+len;chunks++;
+ }
+ assert.ok(chunks>=3,'expected valid PNG chunks');
+ const meta=await sharp(pngBuf).metadata();
+ const stats=await sharp(pngBuf).stats();
+ assert.equal(meta.format,'png');
+ assert.equal(meta.width,16);
+ assert.equal(meta.height,16);
+ assert.deepEqual(stats.channels.map(c=>Math.round(c.mean)),[255,0,0]);
 });

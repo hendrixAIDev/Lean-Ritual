@@ -306,7 +306,7 @@ journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error
 
 - `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL` defaulting to `google/gemini-2.5-flash` in code — keep `OPENROUTER_MODEL=google/gemini-3.8-flash` pinned in `/etc/bojin/environment` so backup behavior and thinking limits match direct Gemini, and `OPENROUTER_BASE` locked to `https://openrouter.ai`).
 - `AI_PROVIDER=gemini`: calls Google Gemini API directly via its OpenAI-compatible endpoint (`GEMINI_API_KEY`, `GEMINI_MODEL` defaulting to `gemini-3.8-flash`, `GEMINI_BASE` locked to `https://generativelanguage.googleapis.com`).
-- **Origin & redirect pinning:** In production, `GEMINI_BASE` only accepts exact HTTPS origin `https://generativelanguage.googleapis.com` and `OPENROUTER_BASE` only accepts `https://openrouter.ai` (non-matching hosts, non-HTTPS URLs, credentials, or query/fragment strings fail startup), and upstream requests set `redirect: "manual"` so credentials and payloads are never forwarded across origins.
+- **Origin & redirect pinning:** `GEMINI_BASE` only accepts exact HTTPS origin `https://generativelanguage.googleapis.com` and `OPENROUTER_BASE` only accepts `https://openrouter.ai` (non-matching hosts, loopback URLs, non-HTTPS URLs, credentials, or query/fragment strings always fail startup), and upstream requests set `redirect: "manual"` so credentials and payloads are never forwarded across origins.
 - **Bounded retries & fallback:** Transient Gemini `5xx`/`UNAVAILABLE` and `429` responses run up to two short backoff retries (`400 ms`, `1000 ms`, skipped once 15 s have elapsed). When `OPENROUTER_API_KEY` is also set, remaining Gemini transient/quota/timeout failures (`5xx`/`UNAVAILABLE`, `429`, or network/read timeouts — never user-input `400`, permanent `401`/`402`/`403`, redirects, safety blocks, or truncation) retry once via OpenRouter within a hard 120 s total deadline (reserving 30 s for fallback; Gemini attempts cap at 90 s), counting as a single request against per-user and global daily caps.
 
 Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc/bojin/environment` owned by `root:bojin` (`0640`).
@@ -314,7 +314,7 @@ Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc
 **Switch host from OpenRouter to direct Gemini API (keep OpenRouter as backup):**
 
 1. Edit `/etc/bojin/environment` (e.g. `sudo editor /etc/bojin/environment`) to add `GEMINI_API_KEY=<AI Studio key>` and optionally pin `GEMINI_MODEL=gemini-3.8-flash` (the default), while leaving `AI_PROVIDER=openrouter` (or unset) for now. Confirm `OPENROUTER_API_KEY`, `OPENROUTER_MODEL=google/gemini-3.8-flash`, `AI_REASONING_EFFORT=low`, `AI_MAX_OUTPUT_TOKENS=2000`, and daily caps remain set.
-2. **Pre-cutover direct Gemini smoke test (before flipping `AI_PROVIDER`):** Run one scripted synthetic call on the host directly against `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` exercising structured JSON (`response_format`), a tiny synthetic PNG `image_url`, `reasoning_effort` (`AI_REASONING_EFFORT`), and `max_tokens` (`AI_MAX_OUTPUT_TOKENS`) without printing keys or response text:
+2. **Pre-cutover direct Gemini smoke test (before flipping `AI_PROVIDER`):** Run one scripted synthetic call on the host directly against `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` exercising structured JSON (`response_format`), a verified 16×16 solid-red PNG `image_url` (checking an image-derived answer rather than a dictated literal), `reasoning_effort` (`AI_REASONING_EFFORT`), and `max_tokens` (`AI_MAX_OUTPUT_TOKENS`) without printing keys or response text:
    ```sh
    sudo -u bojin /usr/bin/node --env-file=/etc/bojin/environment -e '
    (async () => {
@@ -323,15 +323,15 @@ Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc
      const maxTokens = Number(process.env.AI_MAX_OUTPUT_TOKENS || 2000);
      const effort = (process.env.AI_REASONING_EFFORT || "").trim();
      if (!key) throw new Error("GEMINI_API_KEY is empty");
-     const png1x1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2dIAAAAASUVORK5CYII=";
+     const red16x16 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFklEQVQoz2P4z8BAEmIY1TCqYfhqAACQ+f8BV5AUGAAAAABJRU5ErkJggg==";
      const payload = {
        model,
        max_tokens: maxTokens,
        response_format: { type: "json_object" },
        ...(effort ? { reasoning_effort: effort } : {}),
        messages: [{ role: "user", content: [
-         { type: "text", text: "Reply ONLY with JSON: {\"ok\":true,\"hasImage\":true}" },
-         { type: "image_url", image_url: { url: png1x1 } }
+         { type: "text", text: "Identify the single dominant color of the attached image from red, blue, or green. Reply ONLY with a JSON object: {\"color\":\"red|blue|green\"}" },
+         { type: "image_url", image_url: { url: red16x16 } }
        ] }]
      };
      const t0 = Date.now();
@@ -345,24 +345,27 @@ Never print, log, or commit `GEMINI_API_KEY` or `OPENROUTER_API_KEY`. Keep `/etc
      const data = await res.json().catch(() => null);
      const choice = data?.choices?.[0];
      const text = choice?.message?.content;
-     let validJson = false;
-     try { JSON.parse(String(text || "")); validJson = true; } catch {}
+     let parsed = null, validJson = false;
+     try { parsed = JSON.parse(String(text || "")); validJson = !!parsed && typeof parsed === "object" && !Array.isArray(parsed); } catch {}
+     const imageVerified = validJson && String(parsed.color || "").trim().toLowerCase() === "red";
      const u = data?.usage || {};
+     const completionTokens = u.completion_tokens || 0;
      console.log(JSON.stringify({
        status: res.status,
        model,
        finish_reason: choice?.finish_reason || "error",
        valid_json: validJson,
+       image_verified: imageVerified,
        prompt_tokens: u.prompt_tokens || 0,
-       completion_tokens: u.completion_tokens || 0,
+       completion_tokens: completionTokens,
        reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? u.reasoning_tokens ?? 0,
        ms: Date.now() - t0
      }));
-     if (!res.ok || !validJson || choice?.finish_reason !== "stop") process.exit(1);
+     if (!res.ok || !validJson || !imageVerified || choice?.finish_reason !== "stop" || completionTokens >= maxTokens) process.exit(1);
    })().catch(e => { console.error(e.message); process.exit(1); });
    '
    ```
-   Proceed only when this exits `0` with `status: 200`, `valid_json: true`, `finish_reason: "stop"`, and `completion_tokens` well below `AI_MAX_OUTPUT_TOKENS`.
+   Proceed only when this exits `0` with `status: 200`, `valid_json: true`, `image_verified: true`, `finish_reason: "stop"`, and `completion_tokens` well below `AI_MAX_OUTPUT_TOKENS`.
 3. Set `AI_PROVIDER=gemini` in `/etc/bojin/environment` and restart the service under the maintenance lock:
    ```sh
    sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
