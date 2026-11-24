@@ -5,13 +5,23 @@ const STORYBOARDS = {
     lang: 'zh',
     locale: 'zh-CN',
     userName: '小林',
-    voice: { name: 'Tingting', rate: 192 },
+    voice: {
+      engine: 'kokoro',
+      model: 'kokoro-multi-lang-v1_1',
+      speaker: 'zf_001',
+      sid: 3,
+      speed: 1.08,
+      sayFallback: {
+        preferred: ['Tingting (Enhanced)', 'Tingting (Premium)', 'Lilian (Premium)', 'Meijia (Premium)', 'Tingting'],
+        rate: 192
+      }
+    },
     titleCard: {
       eyebrow: 'LEAN RITUAL · 手机训练饮食本',
       title: '薄肌日课',
       tagline: '每天 5 分钟，科学练出薄肌',
       pills: ['每日课表', '拍照估热量', 'AI 教练复盘'],
-      duration: 4.5,
+      duration: 4.8,
       narration: '薄肌日课，每天五分钟，把训练、饮食和体重装进一本随身计划。'
     },
     outroCard: {
@@ -20,20 +30,24 @@ const STORYBOARDS = {
       url: 'https://leanritual.app',
       badge: '邀请制内测',
       footnote: '浏览器打开即用 · 可添加到主屏幕',
-      duration: 6.0,
-      narration: '薄肌日课目前为邀请制内测，欢迎访问 leanritual.app 了解详情。'
+      duration: 6.2,
+      narration: '薄肌日课目前采用邀请制内测，欢迎访问 leanritual.app 了解详情。',
+      spoken: '薄肌日课目前采用邀请制内测，欢迎访问 lean ritual dot app 了解详情。'
     },
     poster: {
       eyebrow: '薄肌日课 · LEAN RITUAL',
       headline: '每天 5 分钟，科学练出薄肌',
-      subline: '训练计划 · 拍照估餐 · AI 教练 · 数据随你导出'
+      subline: '训练计划 · 拍照估餐 · AI 教练 · 数据随你导出',
+      badge: '邀请制内测 · leanritual.app'
     },
     scenes: [
       {
         id: 'hook',
         label: '今日概览',
         chapter: '薄肌日课 · 今天',
-        minDuration: 4.8,
+        transition: 'circleopen',
+        minDuration: 5.2,
+        camera: { maxZoom: 1.09, fx: 0.50, fy: 0.28, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: '打开即看今日课表，练什么、吃多少一目了然',
@@ -45,7 +59,9 @@ const STORYBOARDS = {
         id: 'checkin',
         label: '今天 · 每日打卡',
         chapter: '01 · 每日打卡',
-        minDuration: 15.5,
+        transition: 'smoothleft',
+        minDuration: 15.0,
+        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.44, holdStart: 0.12, holdEnd: 0.88 },
         beats: [
           {
             caption: '每天 10 秒记下体重、步数与睡眠',
@@ -53,6 +69,7 @@ const STORYBOARDS = {
           },
           {
             caption: '7 日均重自动平滑波动，看清真实趋势',
+            callout: '7 日均重平滑波动 · 看清真实减脂节奏',
             narration: '点击保存打卡，系统用七日均重帮你过滤波动，看清真实变化。'
           }
         ]
@@ -61,14 +78,18 @@ const STORYBOARDS = {
         id: 'workout_log',
         label: '记训练与记录趋势',
         chapter: '02 · 记训练 & 记录',
-        minDuration: 27.5,
+        transition: 'smoothleft',
+        minDuration: 26.5,
+        camera: { maxZoom: 1.11, fx: 0.50, fy: 0.42, holdStart: 0.10, holdEnd: 0.90 },
         beats: [
           {
             caption: '根据历史自动推荐重量，填完组数一键保存',
+            callout: '智能渐进超负荷 · 自动推荐今日重量',
             narration: '训练时每个动作都会按上次记录推荐重量，填好每组重量和次数，点击完成训练保存。'
           },
           {
             caption: '体重曲线、热量收支与力量进步全自动生成',
+            callout: '体重曲线 · 热量收支 · 力量进步',
             narration: '切到记录页，体重趋势、热量缺口和力量进步曲线一目了然，每一点进步都看得见。'
           }
         ]
@@ -77,7 +98,9 @@ const STORYBOARDS = {
         id: 'meals',
         label: '饮食 · 拍照 AI 估算',
         chapter: '03 · 饮食拍照估算',
-        minDuration: 20.5,
+        transition: 'smoothup',
+        minDuration: 19.5,
+        camera: { maxZoom: 1.13, fx: 0.50, fy: 0.48, holdStart: 0.14, holdEnd: 0.88 },
         beats: [
           {
             caption: '拍张餐食照，AI 自动估算热量与三大营养素',
@@ -85,6 +108,7 @@ const STORYBOARDS = {
           },
           {
             caption: '热量与蛋白质秒出结果，今日进度条实时更新',
+            callout: '540 kcal · 46.5g 蛋白质 · 进度条实时更新',
             narration: '几秒内自动算出热量和蛋白质，上方的营养进度条也会实时更新。'
           }
         ]
@@ -93,7 +117,9 @@ const STORYBOARDS = {
         id: 'coach',
         label: '反馈 · AI 教练与一键撤销',
         chapter: '04 · AI 教练反馈',
-        minDuration: 23.0,
+        transition: 'smoothleft',
+        minDuration: 22.0,
+        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.54, holdStart: 0.12, holdEnd: 0.90 },
         beats: [
           {
             caption: 'AI 教练结合近 14 天记录，给出针对性调整建议',
@@ -101,6 +127,7 @@ const STORYBOARDS = {
           },
           {
             caption: '只改今天、长期调整或不采纳 — 随时一键撤销',
+            callout: '只改今天 · 长期调整 · 随时一键撤销',
             narration: '每条建议都能选只改今天、长期调整或不采纳；改完不满意，还能随时一键撤销。'
           }
         ]
@@ -109,15 +136,18 @@ const STORYBOARDS = {
         id: 'me',
         label: '我的 · 主屏幕、双语与导出',
         chapter: '05 · 我的 & 数据主权',
-        minDuration: 16.5,
+        transition: 'smoothleft',
+        minDuration: 16.0,
+        camera: { maxZoom: 1.10, fx: 0.50, fy: 0.46, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: '支持中英双语；Safari 分享即可「添加到主屏幕」',
-            tipBadge: 'iPhone 分享 → 添加到主屏幕，像 App 一样打开',
+            callout: 'iPhone 分享 → 添加到主屏幕，像 App 一样打开',
             narration: '在我的页面可以随时切换中英文，也能通过浏览器添加到主屏幕，像原生应用一样打开。'
           },
           {
             caption: '一键导出全部记录与照片，你的数据完全属于你',
+            callout: '一键导出完整记录与餐食照片',
             narration: '所有训练记录和餐食照片都能随时一键导出，你的数据永远属于你。'
           }
         ]
@@ -176,13 +206,23 @@ const STORYBOARDS = {
     lang: 'en',
     locale: 'en-US',
     userName: 'Alex',
-    voice: { name: 'Samantha', rate: 178 },
+    voice: {
+      engine: 'kokoro',
+      model: 'kokoro-multi-lang-v1_0',
+      speaker: 'af_heart',
+      sid: 3,
+      speed: 1.0,
+      sayFallback: {
+        preferred: ['Ava (Premium)', 'Zoe (Premium)', 'Samantha (Enhanced)', 'Samantha'],
+        rate: 178
+      }
+    },
     titleCard: {
       eyebrow: 'LEAN RITUAL · MOBILE TRAINING LOG',
       title: 'Lean Ritual',
       tagline: '5 minutes a day to a lean, strong physique',
       pills: ['Daily Plan', 'Photo Macro AI', 'AI Coach'],
-      duration: 4.5,
+      duration: 4.8,
       narration: 'Lean Ritual. Five minutes a day to keep your workouts, meals, and progress on track.'
     },
     outroCard: {
@@ -191,20 +231,24 @@ const STORYBOARDS = {
       url: 'https://leanritual.app',
       badge: 'Invitation-only beta',
       footnote: 'Works right in your browser · Add to Home Screen',
-      duration: 6.0,
-      narration: 'Lean Ritual is currently in invitation-only beta. Visit leanritual.app to learn more.'
+      duration: 6.2,
+      narration: 'Lean Ritual is currently in invitation-only beta. Visit leanritual.app to learn more.',
+      spoken: 'Lean Ritual is currently in invitation-only beta. Visit lean ritual dot app to learn more.'
     },
     poster: {
       eyebrow: 'LEAN RITUAL',
       headline: '5 minutes a day to a lean, strong physique',
-      subline: 'Smart workouts · Photo macro AI · Reversible AI coaching'
+      subline: 'Smart workouts · Photo macro AI · Reversible AI coaching',
+      badge: 'Invitation-only · leanritual.app'
     },
     scenes: [
       {
         id: 'hook',
         label: 'Today Overview',
         chapter: 'Lean Ritual · Today',
-        minDuration: 4.8,
+        transition: 'circleopen',
+        minDuration: 5.2,
+        camera: { maxZoom: 1.09, fx: 0.50, fy: 0.28, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: 'Open the app to see today’s workout and macro targets at a glance',
@@ -216,7 +260,9 @@ const STORYBOARDS = {
         id: 'checkin',
         label: 'Today · Daily Check-in',
         chapter: '01 · Daily Check-in',
-        minDuration: 15.5,
+        transition: 'smoothleft',
+        minDuration: 15.0,
+        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.44, holdStart: 0.12, holdEnd: 0.88 },
         beats: [
           {
             caption: 'Log morning weight, steps, and sleep in 10 seconds',
@@ -224,6 +270,7 @@ const STORYBOARDS = {
           },
           {
             caption: '7-day rolling averages smooth out daily fluctuations',
+            callout: '7-day rolling average · Noise-free trend',
             narration: 'Tap save, and seven-day rolling averages filter out daily noise so you see real progress.'
           }
         ]
@@ -232,14 +279,18 @@ const STORYBOARDS = {
         id: 'workout_log',
         label: 'Log Workout & Progress Charts',
         chapter: '02 · Workouts & Log',
-        minDuration: 27.5,
+        transition: 'smoothleft',
+        minDuration: 26.5,
+        camera: { maxZoom: 1.11, fx: 0.50, fy: 0.42, holdStart: 0.10, holdEnd: 0.90 },
         beats: [
           {
             caption: 'Progressive load suggestions — log sets and reps in seconds',
+            callout: 'Smart progressive overload · Auto weight targets',
             narration: 'During your workout, every lift suggests your next weight. Log your sets and tap finish and save.'
           },
           {
             caption: 'Weight trend, calorie balance, and strength charts update automatically',
+            callout: 'Weight trend · Calorie balance · Strength gains',
             narration: 'Switch to the Log tab to see your weight trend, calorie balance, and strength progress update automatically.'
           }
         ]
@@ -248,7 +299,9 @@ const STORYBOARDS = {
         id: 'meals',
         label: 'Meals · Photo AI Estimate',
         chapter: '03 · Photo Macro AI',
-        minDuration: 20.5,
+        transition: 'smoothup',
+        minDuration: 19.5,
+        camera: { maxZoom: 1.13, fx: 0.50, fy: 0.48, holdStart: 0.14, holdEnd: 0.88 },
         beats: [
           {
             caption: 'Snap a meal photo — AI estimates calories and protein for you',
@@ -256,6 +309,7 @@ const STORYBOARDS = {
           },
           {
             caption: 'Instant macro breakdown keeps your daily targets on track',
+            callout: '540 kcal · 46.5g protein · Live daily bars',
             narration: 'Calories, protein, carbs, and fat fill in within seconds, updating your daily bars right away.'
           }
         ]
@@ -264,7 +318,9 @@ const STORYBOARDS = {
         id: 'coach',
         label: 'Feedback · AI Coach & One-Tap Undo',
         chapter: '04 · AI Coach Review',
-        minDuration: 23.0,
+        transition: 'smoothleft',
+        minDuration: 22.0,
+        camera: { maxZoom: 1.12, fx: 0.50, fy: 0.54, holdStart: 0.12, holdEnd: 0.90 },
         beats: [
           {
             caption: 'AI coach reviews your last 14 days and proposes concrete tweaks',
@@ -272,6 +328,7 @@ const STORYBOARDS = {
           },
           {
             caption: 'Apply for today only, long-term, or decline — undo anytime',
+            callout: 'Today only · Long-term · 1-tap undo',
             narration: 'Choose today only, long-term, or decline on any suggestion — and undo with one tap anytime.'
           }
         ]
@@ -280,15 +337,18 @@ const STORYBOARDS = {
         id: 'me',
         label: 'Me · Home Screen, Language & Export',
         chapter: '05 · Me & Your Data',
-        minDuration: 16.5,
+        transition: 'smoothleft',
+        minDuration: 16.0,
+        camera: { maxZoom: 1.10, fx: 0.50, fy: 0.46, holdStart: 0.14, holdEnd: 0.86 },
         beats: [
           {
             caption: 'Switch languages anytime · Add to Home Screen for app-like access',
-            tipBadge: 'Safari Share → Add to Home Screen for instant access',
+            callout: 'Safari Share → Add to Home Screen for instant access',
             narration: 'In the Me tab, switch between English and Chinese anytime, or add Lean Ritual to your home screen like a native app.'
           },
           {
             caption: 'Export all your logs and photos in one tap — your data stays yours',
+            callout: 'One-tap full data & photo export',
             narration: 'Export all your logs and meal photos whenever you like — your data always belongs to you.'
           }
         ]
@@ -344,15 +404,22 @@ const STORYBOARDS = {
   }
 };
 
-function formatScriptMarkdown(sb, timeline = []) {
+function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const isZh = sb.lang === 'zh';
+  const voiceDesc =
+    meta.voiceLabel ||
+    `Kokoro-82M (${sb.voice.model} · ${sb.voice.speaker}, speed ${sb.voice.speed}, Apache-2.0)`;
   const lines = [];
-  lines.push(isZh ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本（中文版）` : `# Lean Ritual Product Walkthrough Script (English)`);
+  lines.push(
+    isZh
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v2（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v2 (English)`
+  );
   lines.push('');
   lines.push(
     isZh
-      ? `- 目标受众：真实健身用户（非测试说明）\n- 规格：1080×1920 竖屏 · 30fps · H.264 + AAC · 约 2 分钟\n- 配音音色：macOS \`say -v ${sb.voice.name} -r ${sb.voice.rate}\``
-      : `- Audience: Everyday lifters & beta invitees\n- Format: 1080×1920 vertical · 30fps · H.264 + AAC · ~2 minutes\n- Voiceover: macOS \`say -v ${sb.voice.name} -r ${sb.voice.rate}\``
+      ? `- 目标受众：真实健身用户（非测试说明）\n- 规格：1080×1920 竖屏 & 1920×1080 横屏 · 30fps · H.264 + AAC · 约 2 分钟\n- 配音引擎：${voiceDesc}\n- 音频设计：原创环境电钢背景乐（人声自动闪避）+ 交互点击、转场微风与成功提示音效`
+      : `- Audience: Everyday lifters & beta invitees\n- Formats: 1080×1920 vertical & 1920×1080 widescreen · 30fps · H.264 + AAC · ~2 minutes\n- Voiceover: ${voiceDesc}\n- Sound design: Original Rhodes/ambient BGM (sidechain-ducked under voice) + synced UI tap, transition swoosh & chime SFX`
   );
   lines.push('');
   lines.push(isZh ? `## 分镜与文案` : `## Storyboard & Script`);
@@ -371,7 +438,7 @@ function formatScriptMarkdown(sb, timeline = []) {
     return ` (${mmss(t.start)}–${mmss(t.end)}, ${t.duration.toFixed(1)}s)`;
   };
 
-  lines.push(`### 0. ${isZh ? '片头标题卡' : 'Title Card'}${fmtRange('title')}`);
+  lines.push(`### 0. ${isZh ? '片头动画标题卡' : 'Animated Title Card'}${fmtRange('title')}`);
   lines.push(`- ${isZh ? '画面文案' : 'On-screen'}: **${sb.titleCard.title}** — ${sb.titleCard.tagline}`);
   lines.push(`- ${isZh ? '旁白' : 'Voiceover'}: ${sb.titleCard.narration}`);
   lines.push('');
@@ -381,13 +448,13 @@ function formatScriptMarkdown(sb, timeline = []) {
     sc.beats.forEach((b, bi) => {
       const prefix = sc.beats.length > 1 ? ` [${bi + 1}/${sc.beats.length}]` : '';
       lines.push(`- ${isZh ? '字幕' : 'Caption'}${prefix}: ${b.caption}`);
-      if (b.tipBadge) lines.push(`- ${isZh ? '提示条' : 'Callout'}${prefix}: ${b.tipBadge}`);
+      if (b.callout) lines.push(`- ${isZh ? '动态提示条' : 'Callout'}${prefix}: ${b.callout}`);
       lines.push(`- ${isZh ? '旁白' : 'Voiceover'}${prefix}: ${b.narration}`);
     });
     lines.push('');
   });
 
-  lines.push(`### ${sb.scenes.length + 1}. ${isZh ? '片尾卡' : 'Outro Card'}${fmtRange('outro')}`);
+  lines.push(`### ${sb.scenes.length + 1}. ${isZh ? '片尾动画品牌卡' : 'Animated Outro Card'}${fmtRange('outro')}`);
   lines.push(`- ${isZh ? '画面文案' : 'On-screen'}: ${sb.outroCard.title} · \`${sb.outroCard.url}\` · ${sb.outroCard.badge}`);
   lines.push(`- ${isZh ? '旁白' : 'Voiceover'}: ${sb.outroCard.narration}`);
   lines.push('');

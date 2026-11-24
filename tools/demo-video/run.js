@@ -10,13 +10,15 @@ const { STORYBOARDS, formatScriptMarkdown } = require('./storyboard');
 const { generateSharedAssets, generateLangAssets, renderPoster } = require('./assets');
 const { seedDemoAccount } = require('./seed');
 const { recordAllScenes } = require('./record');
-const { composeLanguageVideo, probeMedia } = require('./compose');
+const { synthesizeAllVoices, composeLanguageVideo, probeMedia } = require('./compose');
 
 const ROOT = path.resolve(__dirname, '../..');
 
 function parseArgs(argv) {
   const opts = {
     langs: ['zh', 'en'],
+    formats: ['9x16', '16x9'],
+    tts: 'kokoro',
     outDir: path.join(os.tmpdir(), 'lean-ritual-demo-video'),
     keepWork: false,
     skipBuild: false,
@@ -27,6 +29,11 @@ function parseArgs(argv) {
     if (a === '--lang' && argv[i + 1]) {
       const v = argv[++i];
       opts.langs = v === 'all' ? ['zh', 'en'] : v.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (a === '--formats' && argv[i + 1]) {
+      const v = argv[++i];
+      opts.formats = v === 'all' ? ['9x16', '16x9'] : v.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (a === '--tts' && argv[i + 1]) {
+      opts.tts = argv[++i].trim();
     } else if (a === '--out' && argv[i + 1]) {
       opts.outDir = path.resolve(argv[++i]);
     } else if (a === '--keep-work') {
@@ -36,12 +43,20 @@ function parseArgs(argv) {
     } else if (a === '--dry-run') {
       opts.dryRun = true;
     } else if (a === '-h' || a === '--help') {
-      console.log(`Usage: node tools/demo-video/run.js [--lang zh|en|all] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`);
+      console.log(
+        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts kokoro|say] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
+      );
       process.exit(0);
     }
   }
   for (const l of opts.langs) {
     if (!STORYBOARDS[l]) throw new Error(`Unsupported language: ${l} (use zh, en, or all)`);
+  }
+  for (const f of opts.formats) {
+    if (!['9x16', '16x9'].includes(f)) throw new Error(`Unsupported format: ${f} (use 9x16, 16x9, or all)`);
+  }
+  if (!['kokoro', 'say'].includes(opts.tts)) {
+    throw new Error(`Unsupported TTS engine: ${opts.tts} (use kokoro or say)`);
   }
   return opts;
 }
@@ -59,6 +74,7 @@ async function main() {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lean-ritual-video-work-'));
   console.log(`Output dir: ${opts.outDir}`);
   console.log(`Work dir:   ${workDir}`);
+  console.log(`Formats:    ${opts.formats.join(', ')} | TTS: ${opts.tts}`);
 
   const { chromium, executablePath, modulePath } = resolvePlaywright();
   console.log(`Playwright: ${modulePath}`);
@@ -78,12 +94,29 @@ async function main() {
 
   const summary = [];
   try {
-    const shared = await generateSharedAssets(assetBrowser, workDir);
+    const shared = await generateSharedAssets(assetBrowser, workDir, opts.formats);
 
     for (const lang of opts.langs) {
       const sb = STORYBOARDS[lang];
-      console.log(`\n=== [${lang}] Generating assets & seeding synthetic account ===`);
-      const langAssets = await generateLangAssets(assetBrowser, sb, workDir);
+      const compDir = path.join(workDir, `compose-${lang}`);
+      fs.mkdirSync(compDir, { recursive: true });
+
+      let preSynth = null;
+      let titleDur = sb.titleCard.duration;
+      let outroDur = sb.outroCard.duration;
+
+      if (!opts.dryRun) {
+        console.log(`\n=== [${lang}] Synthesizing neural narration (${opts.tts}) ===`);
+        preSynth = synthesizeAllVoices({ sb, compDir, ttsEngine: opts.tts });
+        console.log(`  voice: ${preSynth.voiceLabel}`);
+        titleDur = Math.max(sb.titleCard.duration, preSynth.cues.title.duration + 0.85);
+        outroDur = Math.max(sb.outroCard.duration, preSynth.cues.outro.duration + 1.15);
+      }
+
+      console.log(`=== [${lang}] Generating animated cards, overlays & seeding synthetic account ===`);
+      const langAssets = opts.dryRun
+        ? null
+        : await generateLangAssets(assetBrowser, sb, workDir, { formats: opts.formats, titleDur, outroDur });
       const seeded = await seedDemoAccount(assetBrowser, sb, shared.breakfastPhoto);
 
       try {
@@ -122,25 +155,58 @@ async function main() {
         });
 
         const hookScene = recorded.find(r => r.id === 'hook');
-        const posterPath = path.join(opts.outDir, `poster-${lang}.jpg`);
-        await renderPoster(assetBrowser, {
-          poster: sb.poster,
-          screenshotPath: hookScene.posterShotPath,
-          outPath: posterPath
-        });
+        if (opts.formats.includes('9x16')) {
+          const posterPath = path.join(opts.outDir, `poster-${lang}.jpg`);
+          await renderPoster(assetBrowser, {
+            poster: sb.poster,
+            screenshotPath: hookScene.posterShotPath,
+            outPath: posterPath,
+            wide: false
+          });
+          summary.push({
+            file: path.basename(posterPath),
+            duration: '-',
+            resolution: '1080x1920',
+            codecs: 'jpeg',
+            sizeMB: `${(fs.statSync(posterPath).size / 1048576).toFixed(2)} MB`
+          });
+        }
+        if (opts.formats.includes('16x9')) {
+          const posterWidePath = path.join(opts.outDir, `poster-${lang}-16x9.jpg`);
+          await renderPoster(assetBrowser, {
+            poster: sb.poster,
+            screenshotPath: hookScene.posterShotPath,
+            outPath: posterWidePath,
+            wide: true
+          });
+          summary.push({
+            file: path.basename(posterWidePath),
+            duration: '-',
+            resolution: '1920x1080',
+            codecs: 'jpeg',
+            sizeMB: `${(fs.statSync(posterWidePath).size / 1048576).toFixed(2)} MB`
+          });
+        }
 
-        console.log(`=== [${lang}] Composing final MP4s (silent + voiceover) & verification frames ===`);
+        console.log(`=== [${lang}] Composing final MP4s (${opts.formats.join(', ')}) + ducked BGM/SFX + contact sheets ===`);
         const composed = composeLanguageVideo({
           sb,
           recordedScenes: recorded,
           langAssets,
-          shellPath: shared.shellPath,
+          sharedAssets: shared,
           workDir,
-          outDir: opts.outDir
+          outDir: opts.outDir,
+          formats: opts.formats,
+          ttsEngine: opts.tts,
+          preSynth
         });
 
         const scriptPath = path.join(opts.outDir, `script-${lang}.md`);
-        fs.writeFileSync(scriptPath, formatScriptMarkdown(sb, composed.timeline), 'utf8');
+        fs.writeFileSync(
+          scriptPath,
+          formatScriptMarkdown(sb, composed.timeline, { voiceLabel: composed.voiceLabel }),
+          'utf8'
+        );
 
         for (const out of composed.outputs) {
           summary.push({
@@ -150,14 +216,14 @@ async function main() {
             codecs: `${out.info.video.codec}/${out.info.audio.codec}`,
             sizeMB: `${(out.info.sizeBytes / 1048576).toFixed(2)} MB`
           });
+          summary.push({
+            file: path.basename(out.sheetPath),
+            duration: '-',
+            resolution: '4x4 sheet',
+            codecs: 'jpeg',
+            sizeMB: `${(fs.statSync(out.sheetPath).size / 1048576).toFixed(2)} MB`
+          });
         }
-        summary.push({
-          file: path.basename(posterPath),
-          duration: '-',
-          resolution: '1080x1920',
-          codecs: 'jpeg',
-          sizeMB: `${(fs.statSync(posterPath).size / 1048576).toFixed(2)} MB`
-        });
         summary.push({
           file: path.basename(scriptPath),
           duration: '-',

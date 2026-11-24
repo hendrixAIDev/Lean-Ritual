@@ -26,24 +26,39 @@ function buildInitScript() {
       style.textContent = `
         .__demo-ripple {
           position: fixed;
-          width: 46px;
-          height: 46px;
-          margin-left: -23px;
-          margin-top: -23px;
+          width: 48px;
+          height: 48px;
+          margin-left: -24px;
+          margin-top: -24px;
           border-radius: 50%;
-          border: 3px solid rgba(12, 117, 96, 0.92);
-          background: rgba(12, 117, 96, 0.22);
-          box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+          border: 3px solid rgba(12, 117, 96, 0.94);
+          background: rgba(12, 117, 96, 0.24);
+          box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.78), 0 4px 14px rgba(12, 117, 96, 0.35);
           pointer-events: none;
           z-index: 999999;
           transform: scale(0.35);
           opacity: 0.95;
-          animation: __demoRippleAnim 480ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+          animation: __demoRippleAnim 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
         }
         @keyframes __demoRippleAnim {
-          0% { transform: scale(0.35); opacity: 0.95; }
-          60% { transform: scale(1.15); opacity: 0.65; }
-          100% { transform: scale(1.55); opacity: 0; }
+          0% { transform: scale(0.35); opacity: 0.96; }
+          58% { transform: scale(1.18); opacity: 0.68; }
+          100% { transform: scale(1.62); opacity: 0; }
+        }
+        .__demo-focus-ring {
+          position: fixed;
+          pointer-events: none;
+          z-index: 999990;
+          border-radius: 16px;
+          border: 2.5px solid rgba(12, 117, 96, 0.85);
+          box-shadow: 0 0 0 6px rgba(12, 117, 96, 0.16), 0 8px 24px rgba(12, 117, 96, 0.22);
+          animation: __demoFocusPulse 1400ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        @keyframes __demoFocusPulse {
+          0% { opacity: 0; transform: scale(0.97); }
+          18% { opacity: 1; transform: scale(1.0); }
+          75% { opacity: 0.85; transform: scale(1.0); }
+          100% { opacity: 0; transform: scale(1.015); }
         }
         ::-webkit-scrollbar { display: none; }
         html, body { scrollbar-width: none; }
@@ -59,7 +74,22 @@ function buildInitScript() {
       dot.style.left = `${x}px`;
       dot.style.top = `${y}px`;
       document.body.appendChild(dot);
-      setTimeout(() => dot.remove(), 520);
+      setTimeout(() => dot.remove(), 560);
+    };
+
+    window.__demoHighlight = (el, pad = 6) => {
+      if (!el || !el.getBoundingClientRect) return;
+      ensureStyle();
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      const ring = document.createElement('div');
+      ring.className = '__demo-focus-ring';
+      ring.style.left = `${Math.max(4, r.left - pad)}px`;
+      ring.style.top = `${Math.max(4, r.top - pad)}px`;
+      ring.style.width = `${Math.min(window.innerWidth - 8, r.width + pad * 2)}px`;
+      ring.style.height = `${Math.min(window.innerHeight - 8, r.height + pad * 2)}px`;
+      document.body.appendChild(ring);
+      setTimeout(() => ring.remove(), 1480);
     };
 
     window.addEventListener(
@@ -129,10 +159,18 @@ async function smoothCenter(page, locator, ms = 650, offset = -40) {
   await handle.dispose();
 }
 
-async function humanTap(page, locator, { scroll = true, pauseBefore = 180, pauseAfter = 320 } = {}) {
+async function highlightEl(page, locator, pad = 6) {
+  const handle = await locator.elementHandle();
+  if (!handle) return;
+  await page.evaluate(({ el, p }) => window.__demoHighlight?.(el, p), { el: handle, p: pad });
+  await handle.dispose();
+}
+
+async function humanTap(page, locator, { scroll = true, pauseBefore = 180, pauseAfter = 320, markEvent } = {}) {
   await locator.waitFor({ state: 'visible' });
   if (scroll) await smoothCenter(page, locator, 550);
   await page.waitForTimeout(pauseBefore);
+  markEvent?.('tap');
   await locator.click();
   await page.waitForTimeout(pauseAfter);
 }
@@ -192,7 +230,7 @@ async function attachGuardsAndMocks(page, baseUrl, sb, sceneId) {
     const isCoach = /力量训练和营养教练|strength and nutrition coach/i.test(promptText);
 
     if (isMeal) {
-      await new Promise(r => setTimeout(r, 700));
+      await new Promise(r => setTimeout(r, 550));
       return route.fulfill({
         status: 200,
         contentType: 'application/json; charset=utf-8',
@@ -200,7 +238,7 @@ async function attachGuardsAndMocks(page, baseUrl, sb, sceneId) {
       });
     }
     if (isCoach) {
-      await new Promise(r => setTimeout(r, 850));
+      await new Promise(r => setTimeout(r, 650));
       return route.fulfill({
         status: 200,
         contentType: 'application/json; charset=utf-8',
@@ -237,7 +275,8 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
   const guards = await attachGuardsAndMocks(page, srv.base, sb, sceneId);
 
   let trimStart = 0;
-  let beatSplits = [];
+  const beatSplits = [];
+  const events = [];
   let posterShotPath = null;
 
   try {
@@ -259,8 +298,11 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
     const markBeat = () => {
       beatSplits.push((Date.now() - sceneReadyAt) / 1000);
     };
+    const markEvent = kind => {
+      events.push({ t: (Date.now() - sceneReadyAt) / 1000, kind });
+    };
 
-    const res = await run(page, { markBeat });
+    const res = await run(page, { markBeat, markEvent });
     if (res?.posterShotPath) posterShotPath = res.posterShotPath;
 
     const sceneDuration = (Date.now() - sceneReadyAt) / 1000;
@@ -283,6 +325,7 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
       trimStart,
       recordedDuration: sceneDuration,
       beatSplits,
+      events,
       posterShotPath
     };
   } catch (err) {
@@ -309,11 +352,11 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       run: async page => {
         const posterShotPath = path.join(rawDir, `poster-screen-${sb.lang}.png`);
         await page.screenshot({ path: posterShotPath });
-        await page.waitForTimeout(1600);
+        await page.waitForTimeout(1500);
         await smoothScrollTo(page, 210, 1100);
         await page.waitForTimeout(1200);
         await smoothScrollTo(page, 0, 900);
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(700);
         return { posterShotPath };
       }
     })
@@ -325,20 +368,28 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       ...baseOpts,
       sceneId: 'checkin',
       startTab: 'today',
-      run: async (page, { markBeat }) => {
+      run: async (page, { markBeat, markEvent }) => {
         await page.waitForTimeout(500);
         const checkinCard = page.locator('#c-weight').locator('xpath=ancestor::section[contains(@class,"card")]');
-        await smoothCenter(page, checkinCard, 1100, -10);
-        await page.waitForTimeout(600);
+        await smoothCenter(page, checkinCard, 1050, -10);
+        await page.waitForTimeout(550);
 
-        await humanType(page, page.locator('#c-weight'), '72.4', { delay: 110, scroll: false, pauseAfter: 450 });
-        await humanType(page, page.locator('#c-steps'), '9600', { delay: 100, scroll: false, pauseAfter: 450 });
-        await humanType(page, page.locator('#c-sleep'), '7.5', { delay: 110, scroll: false, pauseAfter: 600 });
+        await humanType(page, page.locator('#c-weight'), '72.4', { delay: 105, scroll: false, pauseAfter: 400 });
+        await humanType(page, page.locator('#c-steps'), '9600', { delay: 95, scroll: false, pauseAfter: 400 });
+        await humanType(page, page.locator('#c-sleep'), '7.5', { delay: 105, scroll: false, pauseAfter: 550 });
 
         markBeat();
-        await humanTap(page, page.locator('[data-act="save-checkin"]'), { scroll: false, pauseBefore: 250, pauseAfter: 400 });
-        await page.getByText(isZh ? '已记录' : 'Logged', { exact: true }).waitFor({ state: 'visible' });
-        await page.waitForTimeout(3200);
+        await humanTap(page, page.locator('[data-act="save-checkin"]'), {
+          scroll: false,
+          pauseBefore: 240,
+          pauseAfter: 350,
+          markEvent
+        });
+        const loggedPill = page.getByText(isZh ? '已记录' : 'Logged', { exact: true });
+        await loggedPill.waitFor({ state: 'visible' });
+        markEvent('chime');
+        await highlightEl(page, checkinCard, 4);
+        await page.waitForTimeout(3000);
       }
     })
   );
@@ -349,47 +400,62 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       ...baseOpts,
       sceneId: 'workout_log',
       startTab: 'today',
-      run: async (page, { markBeat }) => {
-        await page.waitForTimeout(700);
+      run: async (page, { markBeat, markEvent }) => {
+        await page.waitForTimeout(650);
         // Log sets for Exercise 1 (Incline Barbell Bench Press)
         await smoothCenter(page, page.locator('#ex-h-0'), 700, 120);
-        await page.waitForTimeout(500);
-        await humanType(page, page.locator('#w-0-0-w'), '60', { delay: 90, scroll: false, pauseAfter: 180 });
-        await humanType(page, page.locator('#w-0-0-r'), '6', { delay: 90, scroll: false, pauseAfter: 240 });
-        await humanType(page, page.locator('#w-0-1-w'), '60', { delay: 80, scroll: false, pauseAfter: 180 });
-        await humanType(page, page.locator('#w-0-1-r'), '6', { delay: 80, scroll: false, pauseAfter: 240 });
-        await humanType(page, page.locator('#w-0-2-w'), '60', { delay: 80, scroll: false, pauseAfter: 180 });
-        await humanType(page, page.locator('#w-0-2-r'), '5', { delay: 80, scroll: false, pauseAfter: 350 });
+        await page.waitForTimeout(450);
+        await humanType(page, page.locator('#w-0-0-w'), '60', { delay: 85, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#w-0-0-r'), '6', { delay: 85, scroll: false, pauseAfter: 210 });
+        await humanType(page, page.locator('#w-0-1-w'), '60', { delay: 75, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#w-0-1-r'), '6', { delay: 75, scroll: false, pauseAfter: 210 });
+        await humanType(page, page.locator('#w-0-2-w'), '60', { delay: 75, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#w-0-2-r'), '5', { delay: 75, scroll: false, pauseAfter: 320 });
 
         // Log first two sets of Exercise 2 (Flat Barbell Bench Press)
         await smoothCenter(page, page.locator('#ex-h-1'), 750, 110);
-        await page.waitForTimeout(400);
-        await humanType(page, page.locator('#w-1-0-w'), '67.5', { delay: 80, scroll: false, pauseAfter: 180 });
-        await humanType(page, page.locator('#w-1-0-r'), '5', { delay: 80, scroll: false, pauseAfter: 220 });
-        await humanType(page, page.locator('#w-1-1-w'), '67.5', { delay: 80, scroll: false, pauseAfter: 180 });
-        await humanType(page, page.locator('#w-1-1-r'), '5', { delay: 80, scroll: false, pauseAfter: 350 });
+        await page.waitForTimeout(380);
+        await humanType(page, page.locator('#w-1-0-w'), '67.5', { delay: 75, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#w-1-0-r'), '5', { delay: 75, scroll: false, pauseAfter: 200 });
+        await humanType(page, page.locator('#w-1-1-w'), '67.5', { delay: 75, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#w-1-1-r'), '5', { delay: 75, scroll: false, pauseAfter: 320 });
 
         // Scroll to feel chips & Save Workout button
-        await smoothCenter(page, page.locator('[data-act="save-workout"]'), 1000, -100);
-        await humanTap(page, page.locator('[data-act="feel"][data-v="2"]'), { scroll: false, pauseBefore: 200, pauseAfter: 350 });
-        await humanTap(page, page.locator('[data-act="save-workout"]'), { scroll: false, pauseBefore: 250, pauseAfter: 500 });
+        await smoothCenter(page, page.locator('[data-act="save-workout"]'), 950, -100);
+        await humanTap(page, page.locator('[data-act="feel"][data-v="2"]'), {
+          scroll: false,
+          pauseBefore: 180,
+          pauseAfter: 300,
+          markEvent
+        });
+        await humanTap(page, page.locator('[data-act="save-workout"]'), {
+          scroll: false,
+          pauseBefore: 240,
+          pauseAfter: 450,
+          markEvent
+        });
         await smoothScrollTo(page, 0, 750);
-        await page.getByText(isZh ? '已完成' : 'Completed', { exact: true }).waitFor({ state: 'visible' });
-        await page.waitForTimeout(1100);
+        const doneTag = page.getByText(isZh ? '已完成' : 'Completed', { exact: true });
+        await doneTag.waitFor({ state: 'visible' });
+        markEvent('chime');
+        await highlightEl(page, doneTag, 8);
+        await page.waitForTimeout(1050);
 
         // Beat 2: Tap Log tab to showcase weight chart, calorie balance, strength progress & daily history
         markBeat();
-        await humanTap(page, page.locator('#tabs [data-act="tab"][data-v="log"]'), { scroll: false, pauseBefore: 220, pauseAfter: 400 });
-        await page.waitForTimeout(2400);
-        // Smooth scroll to Calorie Balance
+        await humanTap(page, page.locator('#tabs [data-act="tab"][data-v="log"]'), {
+          scroll: false,
+          pauseBefore: 200,
+          pauseAfter: 400,
+          markEvent
+        });
+        await page.waitForTimeout(2300);
         await smoothScrollTo(page, 390, 1100);
-        await page.waitForTimeout(2200);
-        // Smooth scroll to Strength Progress chart
+        await page.waitForTimeout(2100);
         await smoothScrollTo(page, 840, 1100);
-        await page.waitForTimeout(2500);
-        // Peek at Daily Breakdown
+        await page.waitForTimeout(2300);
         await smoothScrollTo(page, 1210, 950);
-        await page.waitForTimeout(1700);
+        await page.waitForTimeout(1600);
       }
     })
   );
@@ -400,15 +466,15 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       ...baseOpts,
       sceneId: 'meals',
       startTab: 'food',
-      run: async (page, { markBeat }) => {
-        await page.waitForTimeout(1100);
+      run: async (page, { markBeat, markEvent }) => {
+        await page.waitForTimeout(1000);
         const logCard = page.locator('#m-text').locator('xpath=ancestor::section[contains(@class,"card")]');
         await smoothCenter(page, logCard, 800, 10);
-        await page.waitForTimeout(450);
+        await page.waitForTimeout(420);
 
         // Select Lunch meal type chip
         const lunchChip = page.locator('input[name="mtype"][value="午餐"]').locator('xpath=following-sibling::span');
-        await humanTap(page, lunchChip, { scroll: false, pauseBefore: 180, pauseAfter: 350 });
+        await humanTap(page, lunchChip, { scroll: false, pauseBefore: 180, pauseAfter: 320, markEvent });
 
         // Attach generated high-protein chicken bowl photo
         const photoBuf = fs.readFileSync(lunchPhotoPath);
@@ -418,14 +484,18 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
           buffer: photoBuf
         });
         await page.locator('.previews img.preview').waitFor({ state: 'visible' });
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(1100);
 
         // Type concise description
-        await humanType(page, page.locator('#m-text'), sb.mocks.mealNote, { delay: isZh ? 75 : 42, scroll: false, pauseAfter: 450 });
+        await humanType(page, page.locator('#m-text'), sb.mocks.mealNote, {
+          delay: isZh ? 70 : 40,
+          scroll: false,
+          pauseAfter: 400
+        });
 
         // Tap Save & AI estimate
         const addBtn = page.locator('[data-act="add-meal"]');
-        await humanTap(page, addBtn, { scroll: true, pauseBefore: 250, pauseAfter: 250 });
+        await humanTap(page, addBtn, { scroll: true, pauseBefore: 240, pauseAfter: 240, markEvent });
 
         // Wait for AI estimate to populate kcal=540
         await page.waitForFunction(() => {
@@ -434,14 +504,16 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
         }, { timeout: 10000 });
 
         markBeat();
+        markEvent('chime');
         // Scroll smoothly to show the newly estimated meal card with photo + macros + tip
         const newMeal = page.locator('.meal').filter({ hasText: sb.mocks.mealNote.slice(0, 12) }).first();
-        await smoothCenter(page, newMeal, 900, -10);
-        await page.waitForTimeout(3600);
+        await smoothCenter(page, newMeal, 850, -10);
+        await highlightEl(page, newMeal, 5);
+        await page.waitForTimeout(3300);
 
         // Scroll back to top so viewer sees daily calorie & protein bars updated!
-        await smoothScrollTo(page, 0, 1000);
-        await page.waitForTimeout(3000);
+        await smoothScrollTo(page, 0, 950);
+        await page.waitForTimeout(2800);
       }
     })
   );
@@ -452,45 +524,56 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       ...baseOpts,
       sceneId: 'coach',
       startTab: 'fb',
-      run: async (page, { markBeat }) => {
-        // Show automatic rule insights at top first
-        await page.waitForTimeout(1600);
-        await smoothCenter(page, page.locator('#fb-text'), 900, 10);
-        await page.waitForTimeout(450);
+      run: async (page, { markBeat, markEvent }) => {
+        await page.waitForTimeout(1450);
+        await smoothCenter(page, page.locator('#fb-text'), 850, 10);
+        await page.waitForTimeout(400);
 
         // Type realistic user note and submit to AI coach
-        await humanType(page, page.locator('#fb-text'), sb.mocks.coachNote, { delay: isZh ? 65 : 38, scroll: false, pauseAfter: 450 });
-        await humanTap(page, page.locator('[data-act="ai-run"]'), { scroll: false, pauseBefore: 220, pauseAfter: 300 });
+        await humanType(page, page.locator('#fb-text'), sb.mocks.coachNote, {
+          delay: isZh ? 62 : 36,
+          scroll: false,
+          pauseAfter: 420
+        });
+        await humanTap(page, page.locator('[data-act="ai-run"]'), {
+          scroll: false,
+          pauseBefore: 220,
+          pauseAfter: 280,
+          markEvent
+        });
 
         // Wait for AI review card with adopt-open chip to appear
         const adoptChip = page.locator('[data-act="adopt-open"]').first();
         await adoptChip.waitFor({ state: 'visible', timeout: 10000 });
+        markEvent('chime');
 
         // Pause briefly on the review summary
         const fbSection = adoptChip.locator('xpath=ancestor::section[contains(@class,"card")]');
-        await smoothCenter(page, fbSection, 900, -80);
-        await page.waitForTimeout(2400);
+        await smoothCenter(page, fbSection, 850, -80);
+        await page.waitForTimeout(2200);
 
         // Beat 2: Open adoption chooser (Today only / Long-term / Decline) -> adopt Today only -> Undo!
         markBeat();
-        await smoothCenter(page, adoptChip, 700, 20);
-        await humanTap(page, adoptChip, { scroll: false, pauseBefore: 260, pauseAfter: 500 });
+        await smoothCenter(page, adoptChip, 650, 20);
+        await humanTap(page, adoptChip, { scroll: false, pauseBefore: 240, pauseAfter: 450, markEvent });
         await page.locator('.chooser').waitFor({ state: 'visible' });
-        await smoothCenter(page, page.locator('.chooser'), 500, 0);
-        // Pause clearly so viewers can read Today only / Long-term / Decline
-        await page.waitForTimeout(2600);
+        await smoothCenter(page, page.locator('.chooser'), 480, 0);
+        await highlightEl(page, page.locator('.chooser'), 6);
+        await page.waitForTimeout(2400);
 
         // Tap "只改今天" / "Today only"
         const todayBtn = page.locator('[data-act="adopt-confirm"]').first();
-        await humanTap(page, todayBtn, { scroll: false, pauseBefore: 240, pauseAfter: 400 });
+        await humanTap(page, todayBtn, { scroll: false, pauseBefore: 220, pauseAfter: 380, markEvent });
         const undoChip = page.locator('[data-act="undo-adjust"]').first();
         await undoChip.waitFor({ state: 'visible' });
-        await page.waitForTimeout(2400);
+        markEvent('chime');
+        await highlightEl(page, undoChip, 6);
+        await page.waitForTimeout(2200);
 
         // Tap "已采纳 · 撤销" / "Applied · Undo" to prove full reversibility!
-        await humanTap(page, undoChip, { scroll: false, pauseBefore: 260, pauseAfter: 450 });
+        await humanTap(page, undoChip, { scroll: false, pauseBefore: 240, pauseAfter: 420, markEvent });
         await adoptChip.waitFor({ state: 'visible' });
-        await page.waitForTimeout(2200);
+        await page.waitForTimeout(2000);
       }
     })
   );
@@ -501,31 +584,43 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
       ...baseOpts,
       sceneId: 'me',
       startTab: 'me',
-      run: async (page, { markBeat }) => {
-        await page.waitForTimeout(1600);
+      run: async (page, { markBeat, markEvent }) => {
+        await page.waitForTimeout(1450);
 
         // Toggle language briefly so viewers see seamless zh <-> en support
         const otherLang = isZh ? 'en' : 'zh';
-        await humanTap(page, page.locator(`[data-act="lang"][data-v="${otherLang}"]`), { scroll: false, pauseBefore: 260, pauseAfter: 350 });
-        await page.waitForTimeout(2600);
+        await humanTap(page, page.locator(`[data-act="lang"][data-v="${otherLang}"]`), {
+          scroll: false,
+          pauseBefore: 240,
+          pauseAfter: 350,
+          markEvent
+        });
+        await page.waitForTimeout(2400);
 
         // Switch back to video's primary language
-        await humanTap(page, page.locator(`[data-act="lang"][data-v="${sb.lang}"]`), { scroll: false, pauseBefore: 240, pauseAfter: 350 });
-        await page.waitForTimeout(1200);
+        await humanTap(page, page.locator(`[data-act="lang"][data-v="${sb.lang}"]`), {
+          scroll: false,
+          pauseBefore: 220,
+          pauseAfter: 350,
+          markEvent
+        });
+        await page.waitForTimeout(1100);
 
         // Beat 2: Scroll to Account card & Export data ("your data is yours")
         markBeat();
         const exportBtn = page.locator('a[href="/api/account/export"]');
-        await smoothCenter(page, exportBtn, 1100, -40);
-        await page.waitForTimeout(1600);
+        await smoothCenter(page, exportBtn, 1000, -40);
+        await highlightEl(page, exportBtn, 6);
+        await page.waitForTimeout(1400);
 
         const [download] = await Promise.all([
           page.waitForEvent('download'),
-          humanTap(page, exportBtn, { scroll: false, pauseBefore: 240, pauseAfter: 300 })
+          humanTap(page, exportBtn, { scroll: false, pauseBefore: 220, pauseAfter: 280, markEvent })
         ]);
         const dlPath = await download.path();
         assert.ok(dlPath && fs.statSync(dlPath).size > 500, 'Expected non-empty NDJSON export download');
-        await page.waitForTimeout(3400);
+        markEvent('chime');
+        await page.waitForTimeout(3000);
       }
     })
   );
