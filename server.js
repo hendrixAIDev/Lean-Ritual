@@ -351,8 +351,20 @@ function importDir(username, dir){
     if (db.prepare("SELECT 1 FROM blobs WHERE id = ?").get(id)) continue;
     const buf = fs.readFileSync(path.join(blobsDir, f)), ext = path.extname(f).slice(1).toLowerCase();
     const type = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic" }[ext] || "image/jpeg";
-    fs.writeFileSync(path.join(CFG.dataDir, "blobs", id), buf);
-    db.prepare("INSERT INTO blobs (id, uid, type, size, created) VALUES (?, ?, ?, ?, ?)").run(id, u.id, type, buf.length, new Date().toISOString()); nb++;
+    const dest = path.join(CFG.dataDir, "blobs", id);
+    let fd;
+    try { fd = fs.openSync(dest, "wx", 0o600); }
+    catch (err) { if (err.code === "EEXIST") { skipped++; continue; } throw err; }
+    try { fs.writeFileSync(fd, buf); fs.fsyncSync(fd); }
+    catch (err) { try { fs.closeSync(fd); } catch {} fs.rmSync(dest, { force: true }); throw err; }
+    fs.closeSync(fd);
+    try {
+      db.prepare("INSERT INTO blobs (id, uid, type, size, created) VALUES (?, ?, ?, ?, ?)").run(id, u.id, type, buf.length, new Date().toISOString());
+    } catch (err) {
+      fs.rmSync(dest, { force: true });
+      throw err;
+    }
+    nb++;
   }
   console.log(`导入完成：文档 ${nd} 条（已存在跳过 ${skipped} 条），照片 ${nb} 张`);
 }

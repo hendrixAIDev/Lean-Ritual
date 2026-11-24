@@ -93,7 +93,7 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 class BackupServiceRuntimeTest(unittest.TestCase):
     def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False,
-                          non_root_paths=None):
+                          non_root_paths=None, disk_usage=None, extra_env=None, py_prelude=None, runuser_post_cmd=None):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
@@ -198,9 +198,11 @@ class BackupServiceRuntimeTest(unittest.TestCase):
         write_stub("chown", f"""
             echo "chown:$*" >> "{events}"
         """)
+        post_hook = f'\n            "{runuser_post_cmd}" "$@"' if runuser_post_cmd else ""
         write_stub("runuser", f"""
+            echo "runuser:$*" >> "{events}"
             shift 3 # -u bojin --
-            exec "$@"
+            "$@"{post_hook}
         """)
         write_stub("rsync", f"""
             if ( : >&9 ) 2>/dev/null; then
@@ -217,14 +219,26 @@ class BackupServiceRuntimeTest(unittest.TestCase):
             echo "rsync:lock=$state:fd9=$fd9:fd8=$fd8:$*" >> "{events}"
         """)
 
-        if free_bytes is not None:
+        if disk_usage is not None or free_bytes is not None or py_prelude:
+            du_line = ""
+            if disk_usage is not None:
+                total_b, used_b, free_b = disk_usage
+                du_line = f'shutil.disk_usage = lambda p: U({total_b}, {used_b}, {free_b})\n'
+            elif free_bytes is not None:
+                du_line = f'shutil.disk_usage = lambda p: U({free_bytes} * 2, {free_bytes}, {free_bytes})\n'
+            prelude_file = root / "py-prelude.py"
+            prelude_file.write_text(
+                "import shutil\nfrom collections import namedtuple\n"
+                'U = namedtuple("U", ["total", "used", "free"])\n'
+                + du_line
+                + (py_prelude or ""),
+                encoding="utf-8",
+            )
             write_stub("python3", f"""
                 if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
                 exec "{real_py}" -c '
-import shutil, sys
-from collections import namedtuple
-U = namedtuple("U", ["total", "used", "free"])
-shutil.disk_usage = lambda p: U({free_bytes} * 2, {free_bytes}, {free_bytes})
+import pathlib, sys
+exec(compile(pathlib.Path({json.dumps(str(prelude_file))}).read_text(), "<prelude>", "exec"))
 code = sys.stdin.read()
 sys.argv = sys.argv[1:]
 exec(compile(code, "<stdin>", "exec"))
@@ -251,6 +265,8 @@ exec(compile(code, "<stdin>", "exec"))
             "DATA_DIR": str(data_dir),
             "BACKUP_ROOT": str(backup_root),
             "OFFSITE_DEST": f"backup@host:{offsite_dir}",
+            "BOJIN_WATCHDOG_STATE_DIR": str(root / "watchdog-state"),
+            **(extra_env or {}),
         }
         result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=20)
         log = events.read_text().splitlines() if events.exists() else []
@@ -440,6 +456,444 @@ os.close(fd)
                 if holder.poll() is None:
                     holder.kill()
                     holder.wait()
+
+    def test_daily_backup_deduplicates_blobs_preflights_new_bytes_and_restores_after_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a, id_b = "a" * 32, "b" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # First backup stores blob A.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            snaps1 = sorted(backup_root.glob("snapshot-*"))
+            self.assertEqual(len(snaps1), 1)
+            snap1 = backup_root / "snapshot-20261120T040000Z"
+            snaps1[0].rename(snap1)
+            for ldg in backup_root.glob("deletions-*.json"):
+                ldg.rename(backup_root / "deletions-20261120T040000Z.json")
+
+            # Add a small new blob B (64 KiB) and update docs.
+            blob_b_bytes = b"B" * (64 * 1024)
+            (data_dir / "blobs" / id_b).write_bytes(blob_b_bytes)
+            (data_dir / "blobs" / id_b).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("UPDATE docs SET data='{\"day\":2}' WHERE path='p1'")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", len(blob_b_bytes), "2026-11-21"))
+
+            # Free space is LESS than full DATA_DIR (~4.1 MiB) + 1.5 GiB,
+            # but GREATER than new bytes (~100 KiB) + 1.5 GiB -> dedup-aware preflight must succeed!
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            res2, _, _ = self.run_backup_script(root, free_bytes=tight_free)
+            self.assertEqual(res2.returncode, 0, res2.stderr)
+
+            snaps2 = [p for p in sorted(backup_root.glob("snapshot-*")) if p != snap1]
+            self.assertEqual(len(snaps2), 1)
+            snap2 = snaps2[0]
+            ledgers2 = [p for p in sorted(backup_root.glob("deletions-*.json")) if p.name != "deletions-20261120T040000Z.json"]
+            self.assertEqual(len(ledgers2), 1)
+
+            st1_a = (snap1 / "blobs" / id_a).lstat()
+            st2_a = (snap2 / "blobs" / id_a).lstat()
+            live_a = (data_dir / "blobs" / id_a).lstat()
+            self.assertEqual((st2_a.st_dev, st2_a.st_ino), (st1_a.st_dev, st1_a.st_ino))
+            self.assertEqual(st2_a.st_nlink, 2)
+            self.assertNotEqual(st2_a.st_ino, live_a.st_ino)
+            self.assertEqual((snap2 / "blobs" / id_b).lstat().st_nlink, 1)
+
+            # Prune snap1 completely, then verify & restore snap2!
+            shutil.rmtree(snap1)
+            self.assertEqual((snap2 / "blobs" / id_a).lstat().st_nlink, 1)
+            restored = root / "restored"
+            restored.mkdir(mode=0o700)
+            env = {**os.environ, "DATA_DIR": str(restored)}
+            subprocess.run([NODE_BIN, str(ROOT / "scripts/data-backup.js"), "verify", str(snap2)], env=env, check=True)
+            subprocess.run([
+                NODE_BIN, str(ROOT / "scripts/data-backup.js"), "restore",
+                str(snap2), str(restored), "--deletions", str(ledgers2[0]),
+            ], env=env, check=True)
+            self.assertEqual((restored / "blobs" / id_a).read_bytes(), blob_a_bytes)
+            self.assertEqual((restored / "blobs" / id_b).read_bytes(), blob_b_bytes)
+            with sqlite3.connect(restored / "bojin.db") as db:
+                self.assertEqual(db.execute("SELECT data FROM docs WHERE path='p1'").fetchone()[0], '{"day":2}')
+
+    def test_post_backup_disk_usage_guard_alerts_at_80_percent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            alert_log = root / "alert.log"
+            alert_bin = root / "bojin-alert"
+            alert_bin.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+            alert_bin.chmod(0o755)
+            gib = 1024 ** 3
+
+            # 75% full (30 GiB used, 10 GiB free) -> succeeds without alert.
+            res_ok, _, backup_root = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 30 * gib, 10 * gib),
+                extra_env={"BOJIN_ALERT_BIN": str(alert_bin)},
+            )
+            self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+            self.assertFalse(alert_log.exists())
+
+            # Rename snapshot to avoid same-second stamp collision.
+            for p in list(backup_root.glob("snapshot-*")):
+                p.rename(backup_root / "snapshot-20261120T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                p.rename(backup_root / "deletions-20261120T040000Z.json")
+
+            state_dir = root / "watchdog-state"
+            uptime_file = root / "uptime"
+            uptime_file.write_text("1000.00 9999.00\n", encoding="utf-8")
+            shared_env = {
+                "BOJIN_ALERT_BIN": str(alert_bin),
+                "BOJIN_WATCHDOG_STATE_DIR": str(state_dir),
+                "BOJIN_WATCHDOG_UPTIME_FILE": str(uptime_file),
+            }
+
+            # 80% full (32 GiB used, 8 GiB free on 40 GiB disk) -> succeeds AND alerts via BOJIN_ALERT_BIN.
+            res_warn, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 32 * gib, 8 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_warn.returncode, 0, res_warn.stderr)
+            self.assertTrue(alert_log.is_file())
+            self.assertIn("80%", alert_log.read_text())
+            self.assertEqual(len(alert_log.read_text().splitlines()), 1)
+
+            # Second run at 82% within 6h cooldown -> throttled (no duplicate warning).
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name != "snapshot-20261120T040000Z":
+                    p.rename(backup_root / "snapshot-20261121T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name != "deletions-20261120T040000Z.json":
+                    p.rename(backup_root / "deletions-20261121T040000Z.json")
+            uptime_file.write_text("1100.00 9999.00\n", encoding="utf-8")
+            res_dup, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 33 * gib, 7 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_dup.returncode, 0, res_dup.stderr)
+            self.assertEqual(len(alert_log.read_text().splitlines()), 1)
+
+            # Escalation to 90% -> immediately fires CRITICAL alert.
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name not in ("snapshot-20261120T040000Z", "snapshot-20261121T040000Z"):
+                    p.rename(backup_root / "snapshot-20261122T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name not in ("deletions-20261120T040000Z.json", "deletions-20261121T040000Z.json"):
+                    p.rename(backup_root / "deletions-20261122T040000Z.json")
+            uptime_file.write_text("1200.00 9999.00\n", encoding="utf-8")
+            res_crit, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 36 * gib, 4 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_crit.returncode, 0, res_crit.stderr)
+            lines = alert_log.read_text().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertIn("CRITICAL", lines[1])
+
+            # Dropping back to 85% while 90% critical cooldown is active -> warning suppressed.
+            for p in list(state_dir.glob("alert-disk-*")):
+                if not p.name.startswith("alert-disk-crit-"):
+                    p.unlink()
+            for p in list(backup_root.glob("snapshot-*")):
+                if p.name not in ("snapshot-20261120T040000Z", "snapshot-20261121T040000Z", "snapshot-20261122T040000Z"):
+                    p.rename(backup_root / "snapshot-20261123T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                if p.name not in ("deletions-20261120T040000Z.json", "deletions-20261121T040000Z.json", "deletions-20261122T040000Z.json"):
+                    p.rename(backup_root / "deletions-20261123T040000Z.json")
+            uptime_file.write_text("1300.00 9999.00\n", encoding="utf-8")
+            res_sup, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 34 * gib, 6 * gib),
+                extra_env=shared_env,
+            )
+            self.assertEqual(res_sup.returncode, 0, res_sup.stderr)
+            self.assertEqual(len(alert_log.read_text().splitlines()), 2)
+
+    def test_daily_preflight_blocks_on_corrupt_history_or_link_failure_and_fsyncs_before_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a = "a" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # Seed an initial backup and age it into 3 old snapshots so retention will prune the oldest one.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            orig_snap = next(backup_root.glob("snapshot-*"))
+            orig_ldg = next(backup_root.glob("deletions-*.json"))
+            snap_old1 = backup_root / "snapshot-20000101T000000Z"
+            snap_old2 = backup_root / "snapshot-20000102T000000Z"
+            snap_old3 = backup_root / "snapshot-20000103T000000Z"
+            orig_snap.rename(snap_old3)
+            orig_ldg.rename(backup_root / "deletions-20000103T000000Z.json")
+            for old_s, old_l in [
+                (snap_old1, backup_root / "deletions-20000101T000000Z.json"),
+                (snap_old2, backup_root / "deletions-20000102T000000Z.json"),
+            ]:
+                shutil.copytree(snap_old3, old_s)
+                old_l.write_text('{"version":1,"users":[]}', encoding="utf-8")
+            for p in list(backup_root.iterdir()):
+                os.utime(p, (1, 1))
+
+            # 1. Simulated os.link EMLINK failure with tight space (< full 4 MiB + 1.5 GiB) must block BEFORE stopping service!
+            (root / "events.log").unlink(missing_ok=True)
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            emlink_prelude = (
+                "import errno, os\n"
+                "def _fail_link(*a, **kw): raise OSError(errno.EMLINK, 'too many links')\n"
+                "os.link = _fail_link\n"
+            )
+            res_emlink, log_emlink, _ = self.run_backup_script(root, free_bytes=tight_free, py_prelude=emlink_prelude)
+            self.assertNotEqual(res_emlink.returncode, 0)
+            self.assertIn("Insufficient free space", res_emlink.stderr)
+            self.assertNotIn("systemctl:stop bojin.service", log_emlink)
+
+            # 2. Same-length corruption across all historical copies with tight space must ALSO block BEFORE stopping service!
+            (root / "events.log").unlink(missing_ok=True)
+            for s in (snap_old1, snap_old2, snap_old3):
+                (s / "blobs" / id_a).write_bytes(b"X" * len(blob_a_bytes))
+            res_corrupt, log_corrupt, _ = self.run_backup_script(root, free_bytes=tight_free)
+            self.assertNotEqual(res_corrupt.returncode, 0)
+            self.assertIn("Insufficient free space", res_corrupt.stderr)
+            self.assertNotIn("systemctl:stop bojin.service", log_corrupt)
+
+            # Restore healthy blob in snap_old3 and verify fsync occurs BEFORE retention prunes snap_old1!
+            (snap_old3 / "blobs" / id_a).write_bytes(blob_a_bytes)
+            trace_file = root / "durability-trace.log"
+            trace_prelude = (
+                f"import os, shutil\n"
+                f"_trace = {str(trace_file)!r}\n"
+                f"_orig_fsync = os.fsync\n"
+                f"_orig_rmtree = shutil.rmtree\n"
+                f"def _t_fsync(fd):\n"
+                f"    st = os.fstat(fd)\n"
+                f"    with open(_trace, 'a') as fh: fh.write(f'fsync:{{st.st_dev}}:{{st.st_ino}}\\n')\n"
+                f"    return _orig_fsync(fd)\n"
+                f"def _t_rmtree(p, *a, **kw):\n"
+                f"    with open(_trace, 'a') as fh: fh.write(f'prune:{{p}}\\n')\n"
+                f"    return _orig_rmtree(p, *a, **kw)\n"
+                f"os.fsync = _t_fsync\n"
+                f"shutil.rmtree = _t_rmtree\n"
+            )
+            res_dur, _, _ = self.run_backup_script(root, free_bytes=tight_free, py_prelude=trace_prelude)
+            self.assertEqual(res_dur.returncode, 0, res_dur.stderr)
+            self.assertFalse(snap_old1.exists(), "Oldest snapshot should have been pruned")
+            trace_lines = trace_file.read_text(encoding="utf-8").splitlines()
+            prune_indices = [i for i, line in enumerate(trace_lines) if line.startswith("prune:") and "snapshot-20000101T000000Z" in line]
+            self.assertTrue(prune_indices, f"Expected prune event in {trace_lines}")
+            first_prune = prune_indices[0]
+            backup_root_st = backup_root.lstat()
+            backup_root_sync = f"fsync:{backup_root_st.st_dev}:{backup_root_st.st_ino}"
+            sync_indices = [i for i, line in enumerate(trace_lines) if line == backup_root_sync]
+            self.assertTrue(sync_indices, f"Expected BACKUP_ROOT fsync in {trace_lines}")
+            self.assertLess(sync_indices[0], first_prune, "BACKUP_ROOT must be fsynced BEFORE retention prunes old snapshots")
+
+    def test_daily_custody_fresh_inodes_root_index_strict_fsync_and_late_fallback_reserve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a = "a" * 32
+            id_b = "b" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            blob_b_bytes = b"B" * (64 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # Seed initial backup with blob A.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            snap1 = backup_root / "snapshot-20000101T000000Z"
+            ldg1 = backup_root / "deletions-20000101T000000Z.json"
+            next(backup_root.glob("snapshot-*")).rename(snap1)
+            next(backup_root.glob("deletions-*.json")).rename(ldg1)
+            os.utime(snap1, (1, 1))
+            os.utime(ldg1, (1, 1))
+
+            # Add new blob B so run 2 stages a fresh blob alongside deferred blob A.
+            (data_dir / "blobs" / id_b).write_bytes(blob_b_bytes)
+            (data_dir / "blobs" / id_b).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("UPDATE docs SET data='{\"day\":2}' WHERE path='p1'")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", len(blob_b_bytes), "2026-11-21"))
+
+            # 1. Custody fresh-inode isolation + root-controlled dedup index:
+            #    Spawn a lingering writer (simulating compromised bojin) holding O_RDWR fds to
+            #    staged bojin.db, blobs/id_b, and deletions.json across backup publication, then
+            #    overwrite via those fds after publication!
+            staged_meta = root / "staged-inodes.json"
+            corrupt_trigger = root / "trigger-corrupt"
+            corrupt_done = root / "corrupt-done"
+            holder_pid_file = root / "holder.pid"
+            hook_script = root / "runuser-hook.py"
+            real_py = shutil.which("python3")
+            hook_script.write_text(
+                f"#!{real_py}\n"
+                "import json, os, pathlib, subprocess, sys\n"
+                "args = sys.argv[1:]\n"
+                "if 'backup' in args:\n"
+                "    i = args.index('backup')\n"
+                "    snap = pathlib.Path(args[i + 1])\n"
+                f"    meta_p = pathlib.Path({str(staged_meta)!r})\n"
+                f"    trig_p = pathlib.Path({str(corrupt_trigger)!r})\n"
+                f"    done_p = pathlib.Path({str(corrupt_done)!r})\n"
+                f"    pid_p = pathlib.Path({str(holder_pid_file)!r})\n"
+                f"    targets = [str(snap / 'bojin.db'), str(snap / 'manifest.json'), str(snap / 'blobs' / {id_b!r})]\n"
+                "    info = {'work_dir': str(snap.parent), 'inodes': {}}\n"
+                "    if '--defer-blobs' in args:\n"
+                "        info['defer_index'] = args[args.index('--defer-blobs') + 1]\n"
+                "    for t in targets:\n"
+                "        st = os.lstat(t)\n"
+                "        info['inodes'][os.path.relpath(t, snap)] = [st.st_dev, st.st_ino]\n"
+                "    meta_p.write_text(json.dumps(info))\n"
+                "    worker = (\n"
+                "        'import os, pathlib, sys, time\\n'\n"
+                "        'fds = [os.open(p, os.O_RDWR) for p in sys.argv[3:]]\\n'\n"
+                "        'trig, done = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])\\n'\n"
+                "        'deadline = time.time() + 15\\n'\n"
+                "        'while not trig.exists() and time.time() < deadline: time.sleep(0.05)\\n'\n"
+                "        'for fd in fds:\\n'\n"
+                "        '    os.lseek(fd, 0, os.SEEK_SET)\\n'\n"
+                "        '    os.write(fd, b\"CORRUPTED-BY-APP-FD\")\\n'\n"
+                "        '    os.close(fd)\\n'\n"
+                "        'done.write_text(\"done\")\\n'\n"
+                "    )\n"
+                f"    p = subprocess.Popen([{real_py!r}, '-c', worker, str(trig_p), str(done_p), *targets], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                "    pid_p.write_text(str(p.pid))\n"
+                "    # Wait briefly until worker opens the fds.\n"
+                "    import time; time.sleep(0.15)\n",
+                encoding="utf-8",
+            )
+            hook_script.chmod(0o755)
+            (root / "events.log").unlink(missing_ok=True)
+            res2, _, _ = self.run_backup_script(root, runuser_post_cmd=str(hook_script))
+            try:
+                self.assertEqual(res2.returncode, 0, res2.stderr)
+                corrupt_trigger.write_text("go")
+                deadline = time.time() + 10
+                while not corrupt_done.exists() and time.time() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(corrupt_done.exists(), "Lingering app writer did not finish")
+            finally:
+                if holder_pid_file.exists():
+                    try:
+                        os.kill(int(holder_pid_file.read_text().strip()), 9)
+                    except OSError:
+                        pass
+
+            info = json.loads(staged_meta.read_text(encoding="utf-8"))
+            work_dir = Path(info["work_dir"]).resolve()
+            defer_idx = Path(info["defer_index"]).resolve()
+            # Dedup index MUST live under a root-controlled parent OUTSIDE app-owned work_dir!
+            self.assertFalse(defer_idx.is_relative_to(work_dir), f"dedup index {defer_idx} must not live inside {work_dir}")
+            self.assertIn(".stage-", str(defer_idx))
+
+            snap2 = next(p for p in backup_root.glob("snapshot-*") if p != snap1)
+            # Every app-produced file MUST have a brand-new inode (different from staged work inode) and remain uncorrupted!
+            for rel, old_inode in info["inodes"].items():
+                new_st = (snap2 / rel).lstat()
+                self.assertNotEqual([new_st.st_dev, new_st.st_ino], old_inode, f"{rel} reused app-writable inode")
+            self.assertEqual((snap2 / "blobs" / id_b).read_bytes(), blob_b_bytes)
+            subprocess.run([NODE_BIN, str(ROOT / "scripts/data-backup.js"), "verify", str(snap2)], check=True)
+            # Prelinked blob A still shares immutable root-owned inode with snap1!
+            self.assertEqual((snap2 / "blobs" / id_a).lstat().st_ino, (snap1 / "blobs" / id_a).lstat().st_ino)
+
+            # Rename snap2 to an old date so we can verify retention is NOT triggered on publication fsync error.
+            snap2_aged = backup_root / "snapshot-20000102T000000Z"
+            ldg2_aged = backup_root / "deletions-20000102T000000Z.json"
+            snap2.rename(snap2_aged)
+            next(p for p in backup_root.glob("deletions-*.json") if p != ldg1).rename(ldg2_aged)
+            os.utime(snap2_aged, (1, 1))
+            os.utime(ldg2_aged, (1, 1))
+
+            # 2. Directory fsync failure (EINVAL) at BACKUP_ROOT publication barrier MUST fail closed,
+            #    leave existing snapshots intact, leave no .publishing-/.stage- leftovers, and restart bojin!
+            (root / "events.log").unlink(missing_ok=True)
+            bst = backup_root.lstat()
+            dir_fsync_fail_prelude = (
+                "import errno, os, stat\n"
+                "_orig_fsync = os.fsync\n"
+                f"_target = ({bst.st_dev}, {bst.st_ino})\n"
+                "def _fail_backup_root_fsync(fd):\n"
+                "    st = os.fstat(fd)\n"
+                "    if stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == _target:\n"
+                "        raise OSError(errno.EINVAL, 'simulated dir fsync EINVAL')\n"
+                "    return _orig_fsync(fd)\n"
+                "os.fsync = _fail_backup_root_fsync\n"
+            )
+            res_fsync, log_fsync, _ = self.run_backup_script(root, py_prelude=dir_fsync_fail_prelude)
+            self.assertNotEqual(res_fsync.returncode, 0)
+            self.assertIn("simulated dir fsync EINVAL", res_fsync.stderr)
+            self.assertIn("systemctl:start bojin.service", log_fsync)
+            self.assertTrue(snap1.is_dir(), "Existing snapshot must not be pruned when publication fsync fails")
+            self.assertTrue(snap2_aged.is_dir())
+            self.assertEqual(sorted(p.name for p in backup_root.iterdir()), sorted([
+                snap1.name, ldg1.name, snap2_aged.name, ldg2_aged.name
+            ]))
+
+            # 3. Late fallback copy AFTER prelink succeeds must re-check free space against 1.5 GiB reserve!
+            #    Let prelink (PY) succeed so preflight passes with tight space (1.5 GiB + 1 MiB),
+            #    then fail os.replace & os.link inside PYMAT so it falls back to copying 4 MiB blob A!
+            (root / "events.log").unlink(missing_ok=True)
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            post_prelink_fault_prelude = (
+                "import errno, os, sys\n"
+                "_orig_replace = os.replace\n"
+                "_orig_link = os.link\n"
+                f"_blob_a = {id_a!r}\n"
+                "def _is_pymat():\n"
+                "    return len(sys.argv) >= 2 and sys.argv[1].endswith('/pub')\n"
+                "def _fault_replace(src, dst):\n"
+                "    if _is_pymat() and str(dst).endswith('/' + _blob_a):\n"
+                "        raise OSError(errno.EIO, 'injected post-prelink replace failure')\n"
+                "    return _orig_replace(src, dst)\n"
+                "def _fault_link(src, dst):\n"
+                "    if _is_pymat() and str(dst).endswith('/' + _blob_a):\n"
+                "        raise OSError(errno.EMLINK, 'injected post-prelink link failure')\n"
+                "    return _orig_link(src, dst)\n"
+                "os.replace = _fault_replace\n"
+                "os.link = _fault_link\n"
+            )
+            res_late, log_late, _ = self.run_backup_script(
+                root, free_bytes=tight_free, py_prelude=post_prelink_fault_prelude
+            )
+            self.assertNotEqual(res_late.returncode, 0)
+            self.assertIn("Insufficient free space", res_late.stderr)
+            self.assertIn("systemctl:start bojin.service", log_late)
+            # Existing snapshots untouched and all staging dirs cleaned up!
+            self.assertEqual(sorted(p.name for p in backup_root.iterdir()), sorted([
+                snap1.name, ldg1.name, snap2_aged.name, ldg2_aged.name
+            ]))
 
 
 if __name__ == "__main__":

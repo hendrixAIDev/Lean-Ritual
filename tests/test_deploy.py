@@ -181,7 +181,9 @@ class DeploymentTests(unittest.TestCase):
             data.mkdir(); releases.mkdir()
             payload_size = 4 * 1024 * 1024
             (data / "bojin.db").write_bytes(b"x" * payload_size)
-            exact_boundary = payload_size + (3 * 1024 ** 3) // 2
+            same_tmp_dev = (Path(tempfile.gettempdir()).stat().st_dev == root.stat().st_dev)
+            peak_db = payload_size * (2 if same_tmp_dev else 1)
+            exact_boundary = peak_db + (3 * 1024 ** 3) // 2
             with patch("shutil.disk_usage", return_value=DiskUsage(exact_boundary * 2, exact_boundary, exact_boundary)):
                 with self.assertRaises(ValueError):
                     deploy.check_free_space(data, releases, backups)
@@ -672,6 +674,497 @@ os.close(fd)
             os.mkfifo(fifo_path, 0o444)
             with self.assertRaises((OSError, ValueError)):
                 self.run_mock_deploy(root)
+
+    def test_preflight_accounts_for_deduplicated_blobs_and_legacy_fallback(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data = root / "data"
+            releases = root / "releases"
+            deploy_backups = root / "deploy-backups"
+            daily_backups = root / "daily-backups"
+            for d in (data / "blobs", releases, deploy_backups, daily_backups):
+                d.mkdir(parents=True)
+
+            db_bytes = 2 * 1024 * 1024
+            old_blob_id = "a" * 32
+            old_blob_bytes = b"P" * (10 * 1024 * 1024)
+            new_blob_id = "b" * 32
+            new_blob_bytes = b"N" * (1 * 1024 * 1024)
+            (data / "bojin.db").write_bytes(b"D" * db_bytes)
+            (data / "blobs" / old_blob_id).write_bytes(old_blob_bytes)
+            (data / "blobs" / new_blob_id).write_bytes(new_blob_bytes)
+
+            # Seed a complete daily snapshot that already stores old_blob_id.
+            snap = daily_backups / "snapshot-20261120T040000Z"
+            (snap / "blobs").mkdir(parents=True)
+            (snap / "bojin.db").write_bytes(b"D" * db_bytes)
+            (snap / "blobs" / old_blob_id).write_bytes(old_blob_bytes)
+            (snap / "blobs" / old_blob_id).chmod(0o600)
+            (snap / "manifest.json").write_text(json.dumps({
+                "version": 1,
+                "files": [
+                    {"name": "bojin.db", "size": db_bytes, "sha256": hashlib.sha256(b"D" * db_bytes).hexdigest()},
+                    {"name": f"blobs/{old_blob_id}", "size": len(old_blob_bytes), "sha256": hashlib.sha256(old_blob_bytes).hexdigest()},
+                ],
+            }), encoding="utf-8")
+
+            same_tmp_dev = (Path(tempfile.gettempdir()).stat().st_dev == deploy_backups.stat().st_dev)
+            new_only_extra = max(db_bytes, len(new_blob_bytes)) if same_tmp_dev else max(db_bytes, len(new_blob_bytes))
+            new_only_boundary = db_bytes + len(new_blob_bytes) + new_only_extra + deploy.MIN_FREE_HEADROOM
+            full_extra = max(db_bytes, len(old_blob_bytes), len(new_blob_bytes))
+            full_boundary = db_bytes + len(old_blob_bytes) + len(new_blob_bytes) + full_extra + deploy.MIN_FREE_HEADROOM
+
+            # With dedup enabled and healthy linkable blob, only peak DBs + new_blob + 1.5 GiB are required.
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary)):
+                with self.assertRaises(ValueError):
+                    deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+
+            # Simulated hardlink failures (EMLINK, EXDEV, EPERM) must NOT discount the blob!
+            import errno
+            for err_code in (errno.EMLINK, errno.EXDEV, errno.EPERM):
+                with self.subTest(link_errno=err_code):
+                    with patch("os.link", side_effect=OSError(err_code, "simulated link failure")):
+                        with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                            with self.assertRaises(ValueError):
+                                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+                        with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, full_boundary + 1)):
+                            deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+
+            # Same-length corruption in the historical snapshot must NOT discount the blob!
+            (snap / "blobs" / old_blob_id).write_bytes(b"X" * len(old_blob_bytes))
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                with self.assertRaises(ValueError):
+                    deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, full_boundary + 1)):
+                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+            # Restore healthy blob for legacy fallback check.
+            (snap / "blobs" / old_blob_id).write_bytes(old_blob_bytes)
+
+            # With dedup disabled (pre-PR release transition), full DATA_DIR (+ verification DB copy) + 1.5 GiB is required.
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                with self.assertRaises(ValueError):
+                    deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=False)
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, full_boundary + 1)):
+                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=False)
+
+    def test_deploy_snapshot_dedup_self_heal_and_restore_after_prune(self):
+        import shutil
+        import sqlite3
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node not installed")
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            backups = root / "deploy-backups"
+            daily = root / "daily-backups"
+            data = root / "data"
+            (data / "blobs").mkdir(parents=True)
+            daily.mkdir()
+
+            id_a, id_b = "a" * 32, "b" * 32
+            (data / "blobs" / id_a).write_bytes(b"unchanged-meal-photo-bytes")
+            (data / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, type TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"v\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", 26, "2026-11-20"))
+
+            seen_args = []
+            def run_real_backup(*args):
+                # Strip /usr/sbin/runuser -u bojin -- /usr/bin/env -i PATH=... DATA_DIR=... /usr/bin/node
+                idx = args.index("/usr/bin/node")
+                script_and_args = list(args[idx + 1:])
+                seen_args.append(script_and_args)
+                env = {**os.environ, "DATA_DIR": str(data)}
+                subprocess.run([node_bin, *script_and_args], env=env, check=True, capture_output=True)
+
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                 patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(os.getuid(), os.getgid())), \
+                 patch("os.chown"), patch.object(deploy, "command", side_effect=run_real_backup):
+                pub1 = deploy.snapshot(ROOT)
+                self.assertNotIn("--defer-blobs", seen_args[0])
+
+                # Add blob B and update docs, then take a second deploy snapshot.
+                (data / "blobs" / id_b).write_bytes(b"new-photo-v2")
+                (data / "blobs" / id_b).chmod(0o600)
+                with sqlite3.connect(data / "bojin.db") as db:
+                    db.execute("UPDATE docs SET data='{\"v\":2}' WHERE path='p1'")
+                    db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", 12, "2026-11-21"))
+
+                pub2 = deploy.snapshot(ROOT)
+                self.assertIn("--defer-blobs", seen_args[2])
+
+                st1_a = (pub1 / "snapshot/blobs" / id_a).lstat()
+                st2_a = (pub2 / "snapshot/blobs" / id_a).lstat()
+                live_a = (data / "blobs" / id_a).lstat()
+                self.assertEqual((st2_a.st_dev, st2_a.st_ino), (st1_a.st_dev, st1_a.st_ino))
+                self.assertEqual(st2_a.st_nlink, 2)
+                self.assertNotEqual(st2_a.st_ino, live_a.st_ino)
+                self.assertEqual((pub2 / "snapshot/blobs" / id_b).lstat().st_nlink, 1)
+
+                # Prune pub1 completely, then verify & restore pub2 via real data-backup.js!
+                shutil.rmtree(pub1)
+                self.assertEqual((pub2 / "snapshot/blobs" / id_a).lstat().st_nlink, 1)
+                restored = root / "restored"
+                restored.mkdir(mode=0o700)
+                env = {**os.environ, "DATA_DIR": str(restored)}
+                subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub2 / "snapshot")], env=env, check=True)
+                subprocess.run([
+                    node_bin, str(ROOT / "scripts/data-backup.js"), "restore",
+                    str(pub2 / "snapshot"), str(restored), "--deletions", str(pub2 / "deletions.json"),
+                ], env=env, check=True)
+                self.assertEqual((restored / "blobs" / id_a).read_bytes(), b"unchanged-meal-photo-bytes")
+                self.assertEqual((restored / "blobs" / id_b).read_bytes(), b"new-photo-v2")
+                with sqlite3.connect(restored / "bojin.db") as db:
+                    self.assertEqual(db.execute("SELECT data FROM docs WHERE path='p1'").fetchone()[0], '{"v":2}')
+
+                # Corrupt pub2's blob A (same length); a 3rd snapshot must self-heal by copying from DATA_DIR!
+                (pub2 / "snapshot/blobs" / id_a).write_bytes(b"X" * 26)
+                pub3 = deploy.snapshot(ROOT)
+                self.assertEqual((pub3 / "snapshot/blobs" / id_a).read_bytes(), b"unchanged-meal-photo-bytes")
+                self.assertNotEqual(
+                    (pub3 / "snapshot/blobs" / id_a).lstat().st_ino,
+                    (pub2 / "snapshot/blobs" / id_a).lstat().st_ino,
+                )
+                subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub3 / "snapshot")], env=env, check=True)
+
+    def test_disk_usage_guard_shared_cooldown_and_escalation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            alert_log = root / "alert.log"
+            alert_bin = root / "bojin-alert"
+            alert_bin.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+            alert_bin.chmod(0o755)
+            state_dir = root / "watchdog-state"
+            uptime_file = root / "uptime"
+            uptime_file.write_text("1000.00 9999.00\n", encoding="utf-8")
+            with patch.object(deploy, "ALERT", alert_bin), \
+                 patch.object(deploy, "WATCHDOG_STATE_DIR", state_dir), \
+                 patch.object(deploy, "UPTIME_FILE", uptime_file), \
+                 patch("syslog.syslog"):
+                # 1. 79% full -> no alert.
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 79 * 1024 ** 3, 21 * 1024 ** 3)):
+                    self.assertEqual(deploy.check_disk_usage_guard(root), [])
+                self.assertFalse(alert_log.exists())
+
+                # 2. 80% full -> fires once and writes shared warning stamp.
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 80 * 1024 ** 3, 20 * 1024 ** 3)):
+                    alerts = deploy.check_disk_usage_guard(root)
+                self.assertEqual(len(alerts), 1)
+                self.assertIn("80%", alert_log.read_text())
+
+                # 3. Repeated deploy at 82% within 6h -> throttled (no duplicate).
+                uptime_file.write_text("1100.00 9999.00\n", encoding="utf-8")
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 82 * 1024 ** 3, 18 * 1024 ** 3)):
+                    self.assertEqual(deploy.check_disk_usage_guard(root), [])
+                self.assertEqual(len(alert_log.read_text().splitlines()), 1)
+
+                # 4. Escalation to 90% within warning cooldown -> fires CRITICAL immediately.
+                uptime_file.write_text("1200.00 9999.00\n", encoding="utf-8")
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 90 * 1024 ** 3, 10 * 1024 ** 3)):
+                    crit = deploy.check_disk_usage_guard(root)
+                self.assertEqual(len(crit), 1)
+                self.assertIn("CRITICAL", crit[0])
+                self.assertEqual(len(alert_log.read_text().splitlines()), 2)
+
+                # 5. Dropping to 84% while 90% critical cooldown is active -> 80% warning suppressed!
+                for p in list(state_dir.glob("alert-disk-*")):
+                    if not p.name.startswith("alert-disk-crit-"):
+                        p.unlink()
+                uptime_file.write_text("1300.00 9999.00\n", encoding="utf-8")
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 84 * 1024 ** 3, 16 * 1024 ** 3)):
+                    self.assertEqual(deploy.check_disk_usage_guard(root), [])
+                self.assertEqual(len(alert_log.read_text().splitlines()), 2)
+
+                # 6. Failed alert delivery must not record cooldown stamp.
+                uptime_file.write_text("30000.00 9999.00\n", encoding="utf-8")
+                alert_bin.write_text("#!/bin/sh\nexit 1\n")
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 81 * 1024 ** 3, 19 * 1024 ** 3)):
+                    self.assertEqual(deploy.check_disk_usage_guard(root), [])
+                alert_bin.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 81 * 1024 ** 3, 19 * 1024 ** 3)):
+                    self.assertEqual(len(deploy.check_disk_usage_guard(root)), 1)
+
+    def test_deploy_snapshot_fsyncs_durably_and_rejects_multilinked_staging(self):
+        import shutil
+        import sqlite3
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node not installed")
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            backups = root / "deploy-backups"
+            daily = root / "daily-backups"
+            data = root / "data"
+            (data / "blobs").mkdir(parents=True)
+            daily.mkdir()
+            id_a = "a" * 32
+            (data / "blobs" / id_a).write_bytes(b"durable-photo-bytes")
+            (data / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data / "bojin.db") as db:
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, type TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", 19, "2026-11-24"))
+
+            def run_real_backup(*args):
+                idx = args.index("/usr/bin/node")
+                env = {**os.environ, "DATA_DIR": str(data)}
+                subprocess.run([node_bin, *args[idx + 1:]], env=env, check=True, capture_output=True)
+
+            fsynced_inodes = []
+            real_fsync = os.fsync
+            def tracked_fsync(fd):
+                st = os.fstat(fd)
+                fsynced_inodes.append((st.st_dev, st.st_ino))
+                return real_fsync(fd)
+
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                 patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(os.getuid(), os.getgid())), \
+                 patch("os.chown"), patch("os.fsync", side_effect=tracked_fsync), \
+                 patch.object(deploy, "command", side_effect=run_real_backup):
+                pub = deploy.snapshot(ROOT)
+
+            # Verify durable fsync barriers covered files, snapshot dirs, and BACKUPS parent directory!
+            for target_p in (
+                pub / "snapshot/bojin.db",
+                pub / "snapshot/manifest.json",
+                pub / "snapshot/blobs" / id_a,
+                pub / "deletions.json",
+                pub / "snapshot/blobs",
+                pub / "snapshot",
+                pub,
+                backups,
+            ):
+                st = target_p.lstat()
+                self.assertIn((st.st_dev, st.st_ino), fsynced_inodes, f"Expected fsync on {target_p}")
+
+            # Untrusted staging with a multi-linked file (st_nlink > 1) MUST be rejected by take_custody_tree!
+            external = root / "external-secret"
+            external.write_bytes(b"linked")
+            def evil_multilink(*args):
+                idx = args.index("/usr/bin/node")
+                sub = args[idx + 1:]
+                if sub[1] == "backup":
+                    dest = Path(sub[2])
+                    (dest / "blobs").mkdir(parents=True)
+                    (dest / "bojin.db").write_bytes(b"db")
+                    (dest / "manifest.json").write_text("{}")
+                    os.link(external, dest / "blobs" / id_a)
+                elif sub[1] == "ledger":
+                    Path(sub[2]).write_text('{"version":1,"users":[]}')
+
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                 patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(os.getuid(), os.getgid())), \
+                 patch("os.chown"), patch.object(deploy, "command", side_effect=evil_multilink):
+                with self.assertRaisesRegex(ValueError, "multi-linked"):
+                    deploy.snapshot(ROOT)
+
+    def test_custody_isolates_app_open_writers_and_root_owns_dedup_index(self):
+        import shutil
+        import sqlite3
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node not installed")
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            backups = root / "deploy-backups"
+            daily = root / "daily-backups"
+            data = root / "data"
+            (data / "blobs").mkdir(parents=True)
+            daily.mkdir()
+            id_a = "a" * 32
+            blob_a_bytes = b"fresh-app-staged-photo-payload"
+            (data / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data / "bojin.db") as db:
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, type TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"v\":1}','2026-11-24')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-24"))
+
+            held_fds = []
+            staged_inodes = {}
+            seen_backup_calls = []
+            chown_records = []
+
+            def fake_chown(path, uid, gid, follow_symlinks=True):
+                chown_records.append((Path(path), uid, gid, follow_symlinks))
+
+            def run_and_hold_open_writers(*args):
+                idx = args.index("/usr/bin/node")
+                sub = list(args[idx + 1:])
+                seen_backup_calls.append(sub)
+                env = {**os.environ, "DATA_DIR": str(data)}
+                subprocess.run([node_bin, *sub], env=env, check=True, capture_output=True)
+                # Simulate a compromised app process retaining O_RDWR fds to every file it staged.
+                if sub[1] == "backup" and not held_fds:
+                    snap_work = Path(sub[2])
+                    for rel in ("bojin.db", "manifest.json", f"blobs/{id_a}"):
+                        p = snap_work / rel
+                        st = p.lstat()
+                        staged_inodes[rel] = (st.st_dev, st.st_ino)
+                        held_fds.append((rel, os.open(p, os.O_RDWR)))
+                elif sub[1] == "ledger" and "deletions.json" not in staged_inodes:
+                    ldg_work = Path(sub[2])
+                    st = ldg_work.lstat()
+                    staged_inodes["deletions.json"] = (st.st_dev, st.st_ino)
+                    held_fds.append(("deletions.json", os.open(ldg_work, os.O_RDWR)))
+
+            try:
+                with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                     patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(1001, 1001)), \
+                     patch("os.chown", side_effect=fake_chown), \
+                     patch.object(deploy, "command", side_effect=run_and_hold_open_writers):
+                    pub1 = deploy.snapshot(ROOT)
+
+                    # Every published app-produced file MUST be a brand-new inode (different from staged inode).
+                    for rel, old_inode in staged_inodes.items():
+                        pub_path = (pub1 / "deletions.json") if rel == "deletions.json" else (pub1 / "snapshot" / rel)
+                        new_st = pub_path.lstat()
+                        self.assertNotEqual((new_st.st_dev, new_st.st_ino), old_inode, f"{rel} reused app-writable inode")
+
+                    # Mutate EVERY file through the lingering O_RDWR fds held by the app process!
+                    for _, fd in held_fds:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        os.write(fd, b"CORRUPTED-BY-APP-FD")
+
+                    # Published snapshot & ledger MUST remain 100% intact and verify cleanly!
+                    self.assertEqual((pub1 / "snapshot/blobs" / id_a).read_bytes(), blob_a_bytes)
+                    self.assertEqual(json.loads((pub1 / "deletions.json").read_text(encoding="utf-8"))["version"], 1)
+                    subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub1 / "snapshot")], check=True)
+
+                    # Second snapshot uses --defer-blobs; verify dedup-index.json was created under a
+                    # root-controlled parent OUTSIDE the app-owned .work-* directory!
+                    pub2 = deploy.snapshot(ROOT)
+                    defer_call = [c for c in seen_backup_calls if "--defer-blobs" in c]
+                    self.assertTrue(defer_call, f"Expected --defer-blobs call in {seen_backup_calls}")
+                    snap_arg = Path(defer_call[0][2]).resolve()
+                    work_dir = snap_arg.parent
+                    idx_arg = Path(defer_call[0][defer_call[0].index("--defer-blobs") + 1]).resolve()
+                    self.assertFalse(idx_arg.is_relative_to(work_dir), f"dedup index {idx_arg} must not live inside app work dir {work_dir}")
+                    self.assertTrue(any(p.name == "dedup-index.json" and (uid, gid) == (0, 1001) and follow is False
+                                        for p, uid, gid, follow in chown_records))
+                    self.assertTrue(any(p.name == "index" and (uid, gid) == (0, 0) and follow is False
+                                        for p, uid, gid, follow in chown_records))
+                    # Second snapshot hardlinks the immutable root-owned inode from pub1.
+                    self.assertEqual((pub2 / "snapshot/blobs" / id_a).lstat().st_ino, (pub1 / "snapshot/blobs" / id_a).lstat().st_ino)
+            finally:
+                for _, fd in held_fds:
+                    os.close(fd)
+
+    def test_dir_fsync_failure_propagates_at_publication_barrier(self):
+        import errno
+        import stat
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        for err_code in (errno.EINVAL, errno.EBADF, errno.EROFS):
+            with self.subTest(fsync_errno=err_code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                with patch("os.fsync", side_effect=OSError(err_code, "simulated dir fsync failure")):
+                    with self.assertRaises(OSError) as ctx:
+                        deploy.fsync_dir(root)
+                    self.assertEqual(ctx.exception.errno, err_code)
+
+                # Also verify deploy.snapshot propagates directory fsync failure at BACKUPS barrier!
+                previous, backups, data = root / "prev", root / "backups", root / "data"
+                (previous / "scripts").mkdir(parents=True)
+                data.mkdir()
+
+                def fake_command(*args):
+                    action, destination = args[-2], Path(args[-1])
+                    if action == "backup":
+                        (destination / "blobs").mkdir(parents=True)
+                        (destination / "bojin.db").write_bytes(b"db")
+                        (destination / "manifest.json").write_text("{}")
+                    elif action == "ledger":
+                        destination.write_text('{"version":1,"users":[]}')
+
+                real_fsync = os.fsync
+                def fail_on_backups_dir(fd):
+                    st = os.fstat(fd)
+                    if stat.S_ISDIR(st.st_mode) and backups.exists():
+                        bst = backups.lstat()
+                        if (st.st_dev, st.st_ino) == (bst.st_dev, bst.st_ino):
+                            raise OSError(err_code, "simulated backups dir fsync failure")
+                    return real_fsync(fd)
+
+                with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DATA", data), \
+                     patch("pwd.getpwnam", return_value=FakePw(1001, 1001)), \
+                     patch("os.chown"), patch("os.fsync", side_effect=fail_on_backups_dir), \
+                     patch.object(deploy, "command", side_effect=fake_command):
+                    with self.assertRaises(OSError) as ctx:
+                        deploy.snapshot(previous)
+                    self.assertEqual(ctx.exception.errno, err_code)
+
+    def test_late_fallback_copy_enforces_space_reserve_after_prelink(self):
+        import errno
+        import shutil
+        import sqlite3
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node not installed")
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            backups = root / "deploy-backups"
+            daily = root / "daily-backups"
+            data = root / "data"
+            (data / "blobs").mkdir(parents=True)
+            daily.mkdir()
+            id_a = "a" * 32
+            blob_a_bytes = b"Z" * (4 * 1024 * 1024)
+            (data / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data / "bojin.db") as db:
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, type TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"v\":1}','2026-11-24')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-24"))
+
+            def run_real_backup(*args):
+                idx = args.index("/usr/bin/node")
+                env = {**os.environ, "DATA_DIR": str(data)}
+                subprocess.run([node_bin, *args[idx + 1:]], env=env, check=True, capture_output=True)
+
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                 patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(os.getuid(), os.getgid())), \
+                 patch("os.chown"), patch.object(deploy, "command", side_effect=run_real_backup):
+                pub1 = deploy.snapshot(ROOT)
+
+                # Prelink succeeds before shutdown, allowing tight free space (1.5 GiB + 1 MiB) to pass preflight.
+                prelink_dir = root / "prelink-stage"
+                prelink_dir.mkdir(mode=0o700)
+                prelinked_by_id, prelinked_by_sha = deploy.prepare_prelinked_blobs(data, (backups, daily), prelink_dir)
+                self.assertIn(id_a, prelinked_by_id)
+                tight_free = deploy.MIN_FREE_HEADROOM + 1 * 1024 * 1024
+                with patch("shutil.disk_usage", return_value=DiskUsage(tight_free * 2, tight_free, tight_free)):
+                    deploy.check_free_space(data, backups, backup_roots=(backups, daily), dedup_enabled=True, prelinked_by_id=prelinked_by_id)
+
+                    # Fault injection AFTER prelink succeeded: corrupt prelinked copy AND fail os.link so
+                    # materialization must fall back to copying the 4 MiB blob -> MUST abort to preserve reserve!
+                    (prelink_dir / id_a).unlink()
+                    with patch("os.link", side_effect=OSError(errno.EMLINK, "post-prelink link failure")):
+                        with self.assertRaisesRegex(ValueError, "1.5 GiB"):
+                            deploy.snapshot(ROOT, prelink_stage=(prelinked_by_id, prelinked_by_sha))
+
+                # Existing snapshot pub1 must be completely intact and no staging leftovers remain!
+                self.assertEqual(list(backups.iterdir()), [pub1])
+                self.assertEqual((pub1 / "snapshot/blobs" / id_a).read_bytes(), blob_a_bytes)
+
+                # With sufficient free space (1.5 GiB + 10 MiB), the same post-prelink fault self-heals via copy!
+                plenty_free = deploy.MIN_FREE_HEADROOM + 10 * 1024 * 1024
+                with patch("shutil.disk_usage", return_value=DiskUsage(plenty_free * 2, plenty_free, plenty_free)):
+                    with patch("os.link", side_effect=OSError(errno.EMLINK, "post-prelink link failure")):
+                        pub2 = deploy.snapshot(ROOT, prelink_stage=(prelinked_by_id, prelinked_by_sha))
+                self.assertEqual((pub2 / "snapshot/blobs" / id_a).read_bytes(), blob_a_bytes)
+                subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub2 / "snapshot")], check=True)
 
 
 if __name__ == "__main__":
