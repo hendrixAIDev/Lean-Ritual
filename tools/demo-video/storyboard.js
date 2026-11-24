@@ -55,7 +55,7 @@ const STORYBOARDS = {
         label: '1 分钟建档 · 专属计划',
         chapter: '01 · 1 分钟定制',
         transition: 'circleopen',
-        minDuration: 11.5,
+        minDuration: 10.0,
         beats: [
           {
             caption: '1 分钟，填好目标和身体状况',
@@ -74,7 +74,7 @@ const STORYBOARDS = {
         label: '今天 · 每日打卡',
         chapter: '02 · 每日打卡',
         transition: 'perspective_swing',
-        minDuration: 9.5,
+        minDuration: 8.0,
         beats: [
           {
             caption: '每天 10 秒打卡',
@@ -92,7 +92,7 @@ const STORYBOARDS = {
         label: '记训练与记录趋势',
         chapter: '03 · 记训练 & 记录',
         transition: 'perspective_swing',
-        minDuration: 17.0,
+        minDuration: 11.5,
         beats: [
           {
             caption: '每次训练，告诉你练多重',
@@ -111,7 +111,7 @@ const STORYBOARDS = {
         label: '饮食 · 拍照 AI 估算',
         chapter: '04 · 饮食拍照估算',
         transition: 'perspective_swing',
-        minDuration: 13.5,
+        minDuration: 10.5,
         beats: [
           {
             caption: '拍张照，AI 帮你算热量',
@@ -129,13 +129,12 @@ const STORYBOARDS = {
         label: '反馈 · AI 教练与一键撤销',
         chapter: '05 · AI 教练反馈',
         transition: 'perspective_swing',
-        minDuration: 14.0,
+        minDuration: 10.5,
         beats: [
           {
             caption: 'AI 教练帮你复盘',
             callout: '看两周数据 · 给出调整',
-            narration: '卡住了？写一句感受，AI 教练看完两周数据给你建议。',
-            spoken: '卡住了吗？写一句感受，AI 教练看完两周数据给你建议。'
+            narration: '进入平台期了？写一句感受，AI 教练看完两周数据给你建议。'
           },
           {
             caption: '一键采纳，随时撤销',
@@ -145,16 +144,25 @@ const STORYBOARDS = {
       },
       {
         id: 'me',
-        label: '我的 · 主屏幕、双语与导出',
-        chapter: '06 · 我的 & 数据',
+        label: '我的 · 主屏幕与双语',
+        chapter: '06 · 主屏幕 & 双语',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 4.8,
         beats: [
           {
             caption: '像 App 一样放在主屏幕',
             callout: '中文 / English',
             narration: '中英文随时切换，还能像 App 一样放在主屏幕。'
-          },
+          }
+        ]
+      },
+      {
+        id: 'export',
+        label: '我的 · 一键导出数据',
+        chapter: '07 · 数据随时带走',
+        transition: 'perspective_swing',
+        minDuration: 4.8,
+        beats: [
           {
             caption: '你的数据，随时带走',
             callout: '一键导出',
@@ -265,7 +273,7 @@ const STORYBOARDS = {
         label: '1-Minute Setup',
         chapter: '01 · 1-Minute Setup',
         transition: 'circleopen',
-        minDuration: 11.5,
+        minDuration: 10.0,
         beats: [
           {
             caption: '1 minute: your goal and body',
@@ -284,7 +292,7 @@ const STORYBOARDS = {
         label: 'Today · Daily Check-in',
         chapter: '02 · Daily Check-in',
         transition: 'perspective_swing',
-        minDuration: 9.5,
+        minDuration: 8.0,
         beats: [
           {
             caption: '10-second daily check-in',
@@ -302,7 +310,7 @@ const STORYBOARDS = {
         label: 'Workouts & Progress',
         chapter: '03 · Workouts & Progress',
         transition: 'perspective_swing',
-        minDuration: 17.0,
+        minDuration: 11.5,
         beats: [
           {
             caption: 'Know what weight to lift',
@@ -321,7 +329,7 @@ const STORYBOARDS = {
         label: 'Meals · Photo Estimate (AI)',
         chapter: '04 · Meal Photo AI',
         transition: 'perspective_swing',
-        minDuration: 13.5,
+        minDuration: 10.5,
         beats: [
           {
             caption: 'Snap a photo, AI counts it',
@@ -339,7 +347,7 @@ const STORYBOARDS = {
         label: 'Feedback · AI Coach',
         chapter: '05 · AI Coach',
         transition: 'perspective_swing',
-        minDuration: 14.0,
+        minDuration: 10.5,
         beats: [
           {
             caption: 'Your AI coach checks in',
@@ -354,16 +362,25 @@ const STORYBOARDS = {
       },
       {
         id: 'me',
-        label: 'Me · Home Screen, Language & Export',
-        chapter: '06 · Me & Your Data',
+        label: 'Me · Home Screen & Language',
+        chapter: '06 · Home Screen & Language',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 4.8,
         beats: [
           {
             caption: 'Add it to your home screen',
             callout: '中文 / English',
             narration: 'Switch languages anytime, and keep it on your home screen like an app.'
-          },
+          }
+        ]
+      },
+      {
+        id: 'export',
+        label: 'Me · One-Tap Data Export',
+        chapter: '07 · Your Data',
+        transition: 'perspective_swing',
+        minDuration: 4.8,
+        beats: [
           {
             caption: 'Your data, yours to keep',
             callout: 'One-tap export',
@@ -431,8 +448,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v7（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v7 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v8（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v8 (English)`
   );
   lines.push('');
   lines.push(

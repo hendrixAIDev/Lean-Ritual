@@ -577,7 +577,7 @@ function verifyMp4(mp4Path, expectedW, expectedH) {
   assert.equal(info.video?.height, expectedH, `${mp4Path}: expected height ${expectedH}`);
   assert.ok(Math.abs(info.video.fps - FPS) < 0.5, `${mp4Path}: expected ${FPS}fps, got ${info.video.fps}`);
   assert.equal(info.audio?.codec, 'aac', `${mp4Path}: expected aac audio`);
-  assert.ok(info.duration >= 80 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 80-135s range`);
+  assert.ok(info.duration >= 75 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 75-135s range`);
   assert.ok(info.sizeBytes <= MAX_BYTES, `${mp4Path}: size ${(info.sizeBytes / 1048576).toFixed(2)} MB exceeds 25 MB`);
   return info;
 }
@@ -610,9 +610,13 @@ function planLanguageTimeline({ sb, recordedScenes, voiceCuesMap }) {
     const segIdx = plan.length;
 
     if (sc.beats.length === 1) {
-      const minForVo = 0.42 + beatVo[0].duration + 0.72;
+      const leadIn = sc.id === 'export' ? 0.55 : 0.42;
+      const minForVo = leadIn + beatVo[0].duration + 0.72;
       sceneDur = Math.max(sceneDur, minForVo);
-      voicePlan.push({ segIdx, localOffset: 0.42, wav: beatVo[0].wav });
+      voicePlan.push({ segIdx, localOffset: leadIn, wav: beatVo[0].wav });
+      if (sc.beats[0]?.callout) {
+        sfxPlan.push({ segIdx, localOffset: 1.9, kind: 'pop' });
+      }
     } else {
       const rawSplit = rec.beatSplits[0] ?? usableDur * 0.5;
       const beat0End = 0.42 + beatVo[0].duration + 0.38;

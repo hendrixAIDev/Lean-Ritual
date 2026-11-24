@@ -510,7 +510,7 @@ async function recordAllScenes({
         await loggedPill.waitFor({ state: 'visible' });
         markEvent('chime');
         await highlightEl(page, checkinCard, 4);
-        await page.waitForTimeout(2400);
+        await page.waitForTimeout(1550);
         return { posterShotPath };
       }
     })
@@ -560,16 +560,16 @@ async function recordAllScenes({
         await humanTap(page, page.locator('#tabs [data-act="tab"][data-v="log"]'), {
           scroll: false,
           pauseBefore: 140,
-          pauseAfter: 260,
+          pauseAfter: 240,
           markEvent
         });
-        await page.waitForTimeout(1350);
-        await smoothScrollTo(page, 390, 820);
-        await page.waitForTimeout(1250);
-        await smoothScrollTo(page, 840, 820);
-        await page.waitForTimeout(1350);
-        await smoothScrollTo(page, 1210, 720);
-        await page.waitForTimeout(950);
+        await page.waitForTimeout(1150);
+        await smoothScrollTo(page, 390, 780);
+        await page.waitForTimeout(1100);
+        await smoothScrollTo(page, 840, 780);
+        await page.waitForTimeout(1150);
+        await smoothScrollTo(page, 1210, 680);
+        await page.waitForTimeout(600);
       }
     })
   );
@@ -632,8 +632,8 @@ async function recordAllScenes({
         await page.waitForTimeout(2350);
 
         // Scroll back to top so viewer sees daily calorie & protein bars updated!
-        await smoothScrollTo(page, 0, 720);
-        await page.waitForTimeout(2000);
+        await smoothScrollTo(page, 0, 700);
+        await page.waitForTimeout(1250);
       }
     })
   );
@@ -693,49 +693,58 @@ async function recordAllScenes({
     })
   );
 
-  // Scene 5: Me — Home Screen Hint, Language Switch, Export Data
+  // Scene 6: Me — Home Screen & Bilingual Switch
   if (want('me')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'me',
       startTab: 'me',
-      run: async (page, { markBeat, markEvent }) => {
-        await page.waitForTimeout(780);
+      run: async (page, { markEvent }) => {
+        await page.waitForTimeout(550);
 
         // Toggle language briefly so viewers see seamless zh <-> en support
         const otherLang = isZh ? 'en' : 'zh';
         await humanTap(page, page.locator(`[data-act="lang"][data-v="${otherLang}"]`), {
           scroll: false,
-          pauseBefore: 160,
-          pauseAfter: 240,
+          pauseBefore: 150,
+          pauseAfter: 220,
           markEvent
         });
-        await page.waitForTimeout(1550);
+        await page.waitForTimeout(1500);
 
         // Switch back to video's primary language
         await humanTap(page, page.locator(`[data-act="lang"][data-v="${sb.lang}"]`), {
           scroll: false,
-          pauseBefore: 160,
-          pauseAfter: 240,
+          pauseBefore: 150,
+          pauseAfter: 220,
           markEvent
         });
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(850);
+      }
+    })
+  );
 
-        // Beat 2: Scroll to Account card & Export data ("your data is yours")
-        markBeat();
+  // Scene 7: Me — One-Tap Data Export ("your data is yours")
+  if (want('export')) scenes.push(
+    await recordSingleScene({
+      ...baseOpts,
+      sceneId: 'export',
+      startTab: 'me',
+      run: async (page, { markEvent }) => {
+        await page.waitForTimeout(260);
         const exportBtn = page.locator('a[href="/api/account/export"]');
-        await smoothCenter(page, exportBtn, 720, -40);
+        await smoothCenter(page, exportBtn, 680, -40);
         await highlightEl(page, exportBtn, 6);
-        await page.waitForTimeout(950);
+        await page.waitForTimeout(680);
 
         const [download] = await Promise.all([
           page.waitForEvent('download'),
-          humanTap(page, exportBtn, { scroll: false, pauseBefore: 160, pauseAfter: 220, markEvent })
+          humanTap(page, exportBtn, { scroll: false, pauseBefore: 150, pauseAfter: 220, markEvent })
         ]);
         const dlPath = await download.path();
         assert.ok(dlPath && fs.statSync(dlPath).size > 500, 'Expected non-empty NDJSON export download');
         markEvent('chime');
-        await page.waitForTimeout(1900);
+        await page.waitForTimeout(1450);
       }
     })
   );

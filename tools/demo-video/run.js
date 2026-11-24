@@ -222,7 +222,7 @@ async function main() {
           continue;
         }
 
-        console.log(`=== [${lang}] Recording 6 live walkthrough scenes ===`);
+        console.log(`=== [${lang}] Recording ${sb.scenes.length} live walkthrough scenes ===`);
         const recorded = await recordAllScenes({
           browser: recordBrowser,
           srv: seeded.srv,

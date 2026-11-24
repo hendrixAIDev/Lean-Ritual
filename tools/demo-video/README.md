@@ -1,6 +1,6 @@
-# Lean Ritual Product Intro Video Generator (v7)
+# Lean Ritual Product Intro Video Generator (v8)
 
-Reproducible generator for the ~1:30–1:45 user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
+Reproducible generator for the ~1:30 user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
 
 See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
 
@@ -9,7 +9,7 @@ See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
 - Starts a disposable local `server.js` on `127.0.0.1` with a temporary `DATA_DIR` (never touches production or real user data).
 - Creates a synthetic demo account (`demo@example.com`, display name `小林` / `Alex`) and seeds 3 weeks of realistic check-ins (gentle weight trend), progressive-load Push/Pull/Legs workouts, and daily meals.
 - Intercepts `POST /api/ai` in Playwright so meal-photo macro estimation and AI coach reviews return instant, realistic results with zero AI API spend and zero loading/error screens.
-- Records 6 human-paced mobile scenes (`390×844` @2x → `780×1688`) with tap ripples, subtle milestone focus pulses, smooth cubic-eased scrolling, and frame-accurate UI interaction timestamps.
+- Records 7 human-paced mobile scenes (`390×844` @2x → `780×1688`) with tap ripples, subtle milestone focus pulses, smooth cubic-eased scrolling, and frame-accurate UI interaction timestamps.
 - Keeps the phone frame and app screen completely rock-solid (fixed position and static Lanczos scaling, zero zoom/pan wobble), using animated callout chips, highlights, and curated `xfade` scene transitions (`circleopen`, `smoothleft`, `smoothup`, `fade`) for visual polish.
 - Supports three TTS engines (`--tts`):
   - **`elevenlabs`** — ElevenLabs REST API (`eleven_v3` GA default, or `eleven_multilingual_v2` via `ELEVENLABS_MODEL_ID`) for natural Mandarin (`Evan Zhao`) and English (`Bella`) narration, with per-line SHA-256 disk caching (`~/.cache/lean-ritual-demo-video/tts/elevenlabs`) so re-renders never spend credits twice. Reads the key only from `ELEVENLABS_API_KEY` or `~/.config/lean-ritual/elevenlabs.env` (`ELEVENLABS_API_KEY=...`), never logging or committing it.
@@ -17,7 +17,7 @@ See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
   - **`say`** — local macOS `/usr/bin/say` fallback.
   - **`auto`** (default) — uses ElevenLabs when an API key is configured, falling back to free local Kokoro otherwise. Per-language overrides such as `--tts zh=elevenlabs,en=kokoro` are also supported.
 - Generates an original warm Rhodes/ambient background music bed + tactile UI taps, transition swooshes, confirmation chimes, and callout pops (`sound_design.py`, CC0 / original), mixing BGM through `sidechaincompress` so music ducks cleanly under narration.
-- Verifies duration (`80–135s`), resolution, codecs (`h264`/`aac`), and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
+- Verifies duration (`75–135s`), resolution, codecs (`h264`/`aac`), and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
 
 ## Prerequisites
 

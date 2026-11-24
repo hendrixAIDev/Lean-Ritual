@@ -1,6 +1,6 @@
-# Demo Video v7 Asset & License Manifest
+# Demo Video v8 Asset & License Manifest
 
-Every external and procedurally generated asset used by `tools/demo-video/` is listed below with its exact source and commercial license. All assets used in the v7 renders allow commercial use (with ElevenLabs commercial rights governed by the owner's paid subscription at generation time).
+Every external and procedurally generated asset used by `tools/demo-video/` is listed below with its exact source and commercial license. All assets used in the v8 renders allow commercial use (with ElevenLabs commercial rights governed by the owner's paid subscription at generation time).
 
 ## 1. Voiceover (ElevenLabs Neural TTS + Free Local Kokoro Fallback)
 
