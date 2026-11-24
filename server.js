@@ -212,7 +212,7 @@ async function handle(req, res){
           if (!res.write(chunk)) await new Promise(resolve => {const done=()=>{res.off("drain",done);res.off("close",done);resolve();};res.once("drain",done);res.once("close",done);});
         }
         res.end();
-      } finally { exportingUsers.delete(user.id); }
+      } finally { exportingUsers.delete(user.id); feedback.sweep(); }
       return;
     }
     if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: !!CFG.orKey, aiModel: CFG.orModel });

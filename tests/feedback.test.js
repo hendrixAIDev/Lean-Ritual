@@ -343,6 +343,152 @@ test("sustained SQLite lock where cleanup DELETE also fails preserves blob file 
   assert.equal(fs.existsSync(path.join(dataDir, "blobs", committedBlobId)), false, "sweep unlinked blob file after DB row removal");
 });
 
+test("sweep() defers cleanup for accounts with an active export and cleans up after export finishes", async t => {
+  const pngB64 = await tinyPngBase64("teal");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-fb-export-overlap-"));
+  const dataDir = path.join(root, "data");
+  fs.mkdirSync(path.join(dataDir, "blobs"), { recursive: true });
+  const realDb = new DatabaseSync(path.join(dataDir, "bojin.db"));
+  realDb.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
+    CREATE TABLE ai_usage (uid TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY(uid, day));
+    CREATE TABLE sessions (token TEXT PRIMARY KEY, uid TEXT NOT NULL, expires INTEGER NOT NULL);
+    CREATE TABLE users (id TEXT PRIMARY KEY);
+  `);
+  t.after(() => {
+    try { realDb.close(); } catch {}
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const accountData = createAccountData(realDb, dataDir);
+  const uploads = createUploads(realDb, dataDir);
+  let sustainedLock = false;
+
+  const wrappedDb = {
+    exec(sql) {
+      if (sustainedLock && sql === "BEGIN IMMEDIATE") {
+        throw Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+      }
+      return realDb.exec(sql);
+    },
+    prepare(sql) {
+      if (sustainedLock && /^DELETE FROM blobs\b/i.test(sql.trim())) {
+        return {
+          run() {
+            throw Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+          }
+        };
+      }
+      return realDb.prepare(sql);
+    }
+  };
+
+  const fb = createFeedback(wrappedDb, dataDir, {
+    uploads,
+    accountData,
+    log: () => {}
+  });
+
+  const origSave = uploads.save.bind(uploads);
+  let lockOnNextSave = false;
+  let lastBlobId = null;
+  uploads.save = (...args) => {
+    const saved = origSave(...args);
+    lastBlobId = saved.id;
+    if (lockOnNextSave) sustainedLock = true;
+    return saved;
+  };
+
+  async function createDeferredBlob(uid) {
+    lastBlobId = null;
+    lockOnNextSave = true;
+    try {
+      await assert.rejects(
+        () => fb.submit({ id: uid }, {
+          type: "bug",
+          message: `deferred lock for ${uid}`,
+          screenshot: { contentType: "image/png", dataBase64: pngB64 }
+        }),
+        /database is locked/
+      );
+    } finally {
+      lockOnNextSave = false;
+    }
+    assert.ok(lastBlobId, `expected deferred blob for ${uid}`);
+    return lastBlobId;
+  }
+
+  // Keep the sustained lock active while queuing both deferred blobs so the second
+  // submission's pre-check sweep() cannot remove the first before the export begins.
+  const exportBlobId = await createDeferredBlob("u_export");
+  const otherBlobId = await createDeferredBlob("u_other");
+  sustainedLock = false;
+  const expectedBytes = fs.readFileSync(path.join(dataDir, "blobs", exportBlobId));
+
+  // Start exporting u_export and pause right after the photo NDJSON prefix is yielded
+  // (after SELECT ... FROM blobs, before fs.createReadStream opens the file).
+  const iter = accountData.exportChunks({ id: "u_export" });
+  let ndjson = "";
+  let sawPhotoPrefix = false;
+  while (true) {
+    const step = await iter.next();
+    assert.equal(step.done, false, "expected photo prefix before export ended");
+    ndjson += step.value;
+    if (step.value.includes(`"id":"${exportBlobId}"`) && step.value.endsWith(',"dataBase64":"')) {
+      sawPhotoPrefix = true;
+      break;
+    }
+  }
+  assert.equal(sawPhotoPrefix, true, "must pause on photo prefix before file open");
+  assert.equal(accountData.isExporting("u_export"), true);
+  assert.equal(accountData.isExporting("u_other"), false);
+
+  // Trigger sweep both directly and via another user's feedback submission while u_export is paused.
+  fb.sweep();
+  const triggerRes = await fb.submit({ id: "u_trigger" }, { type: "idea", message: "triggers sweep" });
+  assert.equal(triggerRes.ok, true);
+
+  // u_export's blob MUST stay intact during its active export; u_other's blob MUST be swept.
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(exportBlobId).n, 1, "active export blob row must be deferred");
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", exportBlobId)), true, "active export blob file must not be unlinked");
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(otherBlobId).n, 0, "non-exporting user's deferred blob row should be swept");
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", otherBlobId)), false, "non-exporting user's deferred blob file should be unlinked");
+
+  // Resume export to completion: must succeed cleanly with full valid NDJSON and intact bytes.
+  while (true) {
+    const step = await iter.next();
+    if (step.done) break;
+    ndjson += step.value;
+  }
+  const exported = ndjson.trim().split("\n").map(JSON.parse);
+  const photoEntry = exported.find(x => x.kind === "photo" && x.id === exportBlobId);
+  assert.ok(photoEntry, "export must include the deferred blob");
+  assert.deepEqual(Buffer.from(photoEntry.dataBase64, "base64"), expectedBytes);
+  assert.equal(accountData.isExporting("u_export"), false, "export flag must clear on completion");
+
+  // Once the export finishes, sweep() cleans up u_export's deferred blob cleanly.
+  fb.sweep();
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(exportBlobId).n, 0, "sweep removed deferred blob row after export");
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", exportBlobId)), false, "sweep unlinked blob file after export");
+
+  // Early cancellation of an export must also release the active-export guard so sweep can proceed.
+  const cancelledBlobId = await createDeferredBlob("u_cancel");
+  sustainedLock = false;
+  const cancelIter = accountData.exportChunks({ id: "u_cancel" });
+  const firstStep = await cancelIter.next();
+  assert.equal(firstStep.done, false);
+  assert.equal(accountData.isExporting("u_cancel"), true);
+  fb.sweep();
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(cancelledBlobId).n, 1);
+  await cancelIter.return();
+  assert.equal(accountData.isExporting("u_cancel"), false);
+  fb.sweep();
+  assert.equal(realDb.prepare("SELECT COUNT(*) n FROM blobs WHERE id = ?").get(cancelledBlobId).n, 0);
+  assert.equal(fs.existsSync(path.join(dataDir, "blobs", cancelledBlobId)), false);
+});
+
 test("feedback concurrency bound, pre-body daily quota check, and UTC day reset", async t => {
   let clock = Date.parse("2026-11-20T10:00:00Z");
   const { feedback } = makeDbFixture(t, {

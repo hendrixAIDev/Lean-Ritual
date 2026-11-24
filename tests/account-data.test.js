@@ -10,3 +10,18 @@ test('deletion survives cleanup interruption, blocks stale requests and preserve
  fs.rmSync(path.join(dir,'blobs',photos.u_one));service.completeDeletion('u_one');service.completeDeletion('u_one');assert.equal(db.prepare('SELECT COUNT(*) n FROM docs WHERE uid=?').get('u_one').n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM docs WHERE uid=?').get('u_two').n,1);assert.ok(fs.existsSync(path.join(dir,'blobs',photos.u_two)));assert.equal(service.pending().length,0);assert.equal(service.ledger()[0].uid,'u_one');
 });
 test('restoring an old backup replays newer deletion requests rather than resurrecting accounts',async t=>{const {root,dir,db,photos,service}=fixture(t),snapshot=path.join(root,'before-delete');await createSnapshot(dir,snapshot);service.requestDeletion({id:'u_one'});service.completeDeletion('u_one');const ledger=readLedger(dir),restored=path.join(root,'restored');restoreSnapshot(snapshot,restored,ledger);const copy=new DatabaseSync(path.join(restored,'bojin.db'));try{assert.equal(copy.prepare('SELECT COUNT(*) n FROM users WHERE id=?').get('u_one').n,0);assert.equal(copy.prepare('SELECT COUNT(*) n FROM users WHERE id=?').get('u_two').n,1);assert.equal(fs.existsSync(path.join(restored,'blobs',photos.u_one)),false);assert.equal(fs.readFileSync(path.join(restored,'blobs',photos.u_two),'utf8'),'u_two');}finally{copy.close();}});
+test('isExporting tracks overlapping exports and clears on completion, abort, or mid-stream error',async t=>{const {service}=fixture(t);
+ assert.equal(service.isExporting('u_one'),false);
+ const a=service.exportChunks({id:'u_one'}),b=service.exportChunks({id:'u_one'});
+ assert.equal((await a.next()).done,false);assert.equal(service.isExporting('u_one'),true);assert.equal(service.isExporting('u_two'),false);
+ assert.equal((await b.next()).done,false);assert.equal(service.isExporting('u_one'),true);
+ for await(const _ of a){}
+ assert.equal(service.isExporting('u_one'),true,'refcount stays active until second overlapping export finishes');
+ await b.return();
+ assert.equal(service.isExporting('u_one'),false,'refcount clears after abort');
+ const c=service.exportChunks({id:'u_one'});
+ assert.equal((await c.next()).done,false);assert.equal(service.isExporting('u_one'),true);
+ service.requestDeletion({id:'u_one'});
+ await assert.rejects(async()=>{for await(const _ of c){}},e=>e.status===423);
+ assert.equal(service.isExporting('u_one'),false,'refcount clears after mid-stream error');
+});
