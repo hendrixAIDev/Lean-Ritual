@@ -673,6 +673,161 @@ os.close(fd)
             with self.assertRaises((OSError, ValueError)):
                 self.run_mock_deploy(root)
 
+    def test_preflight_accounts_for_deduplicated_blobs_and_legacy_fallback(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data = root / "data"
+            releases = root / "releases"
+            deploy_backups = root / "deploy-backups"
+            daily_backups = root / "daily-backups"
+            for d in (data / "blobs", releases, deploy_backups, daily_backups):
+                d.mkdir(parents=True)
+
+            db_bytes = 2 * 1024 * 1024
+            old_blob_id = "a" * 32
+            old_blob_bytes = b"P" * (10 * 1024 * 1024)
+            new_blob_id = "b" * 32
+            new_blob_bytes = b"N" * (1 * 1024 * 1024)
+            (data / "bojin.db").write_bytes(b"D" * db_bytes)
+            (data / "blobs" / old_blob_id).write_bytes(old_blob_bytes)
+            (data / "blobs" / new_blob_id).write_bytes(new_blob_bytes)
+
+            # Seed a complete daily snapshot that already stores old_blob_id.
+            snap = daily_backups / "snapshot-20261120T040000Z"
+            (snap / "blobs").mkdir(parents=True)
+            (snap / "bojin.db").write_bytes(b"D" * db_bytes)
+            (snap / "blobs" / old_blob_id).write_bytes(old_blob_bytes)
+            (snap / "blobs" / old_blob_id).chmod(0o600)
+            (snap / "manifest.json").write_text(json.dumps({
+                "version": 1,
+                "files": [
+                    {"name": "bojin.db", "size": db_bytes, "sha256": hashlib.sha256(b"D" * db_bytes).hexdigest()},
+                    {"name": f"blobs/{old_blob_id}", "size": len(old_blob_bytes), "sha256": hashlib.sha256(old_blob_bytes).hexdigest()},
+                ],
+            }), encoding="utf-8")
+
+            new_only_boundary = db_bytes + len(new_blob_bytes) + deploy.MIN_FREE_HEADROOM
+            full_boundary = db_bytes + len(old_blob_bytes) + len(new_blob_bytes) + deploy.MIN_FREE_HEADROOM
+
+            # With dedup enabled, only new bytes (db + new_blob) + 1.5 GiB are required.
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary)):
+                with self.assertRaises(ValueError):
+                    deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=True)
+
+            # With dedup disabled (pre-PR release transition), full DATA_DIR + 1.5 GiB is still required.
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, new_only_boundary + 1)):
+                with self.assertRaises(ValueError):
+                    deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=False)
+            with patch("shutil.disk_usage", return_value=DiskUsage(full_boundary * 2, full_boundary, full_boundary + 1)):
+                deploy.check_free_space(data, releases, deploy_backups, backup_roots=(deploy_backups, daily_backups), dedup_enabled=False)
+
+    def test_deploy_snapshot_dedup_self_heal_and_restore_after_prune(self):
+        import shutil
+        import sqlite3
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("node not installed")
+        FakePw = namedtuple("FakePw", ["pw_uid", "pw_gid"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            backups = root / "deploy-backups"
+            daily = root / "daily-backups"
+            data = root / "data"
+            (data / "blobs").mkdir(parents=True)
+            daily.mkdir()
+
+            id_a, id_b = "a" * 32, "b" * 32
+            (data / "blobs" / id_a).write_bytes(b"unchanged-meal-photo-bytes")
+            (data / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, type TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"v\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", 26, "2026-11-20"))
+
+            seen_args = []
+            def run_real_backup(*args):
+                # Strip /usr/sbin/runuser -u bojin -- /usr/bin/env -i PATH=... DATA_DIR=... /usr/bin/node
+                idx = args.index("/usr/bin/node")
+                script_and_args = list(args[idx + 1:])
+                seen_args.append(script_and_args)
+                env = {**os.environ, "DATA_DIR": str(data)}
+                subprocess.run([node_bin, *script_and_args], env=env, check=True, capture_output=True)
+
+            with patch.object(deploy, "BACKUPS", backups), patch.object(deploy, "DAILY_BACKUPS", daily), \
+                 patch.object(deploy, "DATA", data), patch("pwd.getpwnam", return_value=FakePw(os.getuid(), os.getgid())), \
+                 patch("os.chown"), patch.object(deploy, "command", side_effect=run_real_backup):
+                pub1 = deploy.snapshot(ROOT)
+                self.assertNotIn("--defer-blobs", seen_args[0])
+
+                # Add blob B and update docs, then take a second deploy snapshot.
+                (data / "blobs" / id_b).write_bytes(b"new-photo-v2")
+                (data / "blobs" / id_b).chmod(0o600)
+                with sqlite3.connect(data / "bojin.db") as db:
+                    db.execute("UPDATE docs SET data='{\"v\":2}' WHERE path='p1'")
+                    db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", 12, "2026-11-21"))
+
+                pub2 = deploy.snapshot(ROOT)
+                self.assertIn("--defer-blobs", seen_args[2])
+
+                st1_a = (pub1 / "snapshot/blobs" / id_a).lstat()
+                st2_a = (pub2 / "snapshot/blobs" / id_a).lstat()
+                live_a = (data / "blobs" / id_a).lstat()
+                self.assertEqual((st2_a.st_dev, st2_a.st_ino), (st1_a.st_dev, st1_a.st_ino))
+                self.assertEqual(st2_a.st_nlink, 2)
+                self.assertNotEqual(st2_a.st_ino, live_a.st_ino)
+                self.assertEqual((pub2 / "snapshot/blobs" / id_b).lstat().st_nlink, 1)
+
+                # Prune pub1 completely, then verify & restore pub2 via real data-backup.js!
+                shutil.rmtree(pub1)
+                self.assertEqual((pub2 / "snapshot/blobs" / id_a).lstat().st_nlink, 1)
+                restored = root / "restored"
+                restored.mkdir(mode=0o700)
+                env = {**os.environ, "DATA_DIR": str(restored)}
+                subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub2 / "snapshot")], env=env, check=True)
+                subprocess.run([
+                    node_bin, str(ROOT / "scripts/data-backup.js"), "restore",
+                    str(pub2 / "snapshot"), str(restored), "--deletions", str(pub2 / "deletions.json"),
+                ], env=env, check=True)
+                self.assertEqual((restored / "blobs" / id_a).read_bytes(), b"unchanged-meal-photo-bytes")
+                self.assertEqual((restored / "blobs" / id_b).read_bytes(), b"new-photo-v2")
+                with sqlite3.connect(restored / "bojin.db") as db:
+                    self.assertEqual(db.execute("SELECT data FROM docs WHERE path='p1'").fetchone()[0], '{"v":2}')
+
+                # Corrupt pub2's blob A (same length); a 3rd snapshot must self-heal by copying from DATA_DIR!
+                (pub2 / "snapshot/blobs" / id_a).write_bytes(b"X" * 26)
+                pub3 = deploy.snapshot(ROOT)
+                self.assertEqual((pub3 / "snapshot/blobs" / id_a).read_bytes(), b"unchanged-meal-photo-bytes")
+                self.assertNotEqual(
+                    (pub3 / "snapshot/blobs" / id_a).lstat().st_ino,
+                    (pub2 / "snapshot/blobs" / id_a).lstat().st_ino,
+                )
+                subprocess.run([node_bin, str(ROOT / "scripts/data-backup.js"), "verify", str(pub3 / "snapshot")], env=env, check=True)
+
+    def test_disk_usage_guard_alerts_at_80_percent_and_not_below(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            alert_log = root / "alert.log"
+            alert_bin = root / "bojin-alert"
+            alert_bin.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+            alert_bin.chmod(0o755)
+            with patch.object(deploy, "ALERT", alert_bin), patch("syslog.syslog"):
+                # 79% full -> no alert.
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 79 * 1024 ** 3, 21 * 1024 ** 3)):
+                    alerts = deploy.check_disk_usage_guard(root)
+                self.assertEqual(alerts, [])
+                self.assertFalse(alert_log.exists())
+
+                # 80% full -> alert fires via existing bojin-alert path.
+                with patch("shutil.disk_usage", return_value=DiskUsage(100 * 1024 ** 3, 80 * 1024 ** 3, 20 * 1024 ** 3)):
+                    alerts = deploy.check_disk_usage_guard(root)
+                self.assertEqual(len(alerts), 1)
+                self.assertIn("80%", alert_log.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

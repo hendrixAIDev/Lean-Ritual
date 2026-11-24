@@ -14,11 +14,21 @@ These commands are prepared, not deployed. Run as the configured service user un
 Every supported data-writing entry point (server.js and auth-admin.js) holds a shared filesystem lease. Backup takes an exclusive lease and refuses if any writer is running. It does not pretend that independently copying SQLite files and photos during writes is consistent. The current single-server beta uses a short maintenance window.
 
 1. Coordinate under the root-owned transition maintenance wrapper (`sudo /usr/local/sbin/bojin-maintenance-lock -- ...`, installed from `ops/maintenance-lock.sh`), stop the service, and finish admin commands. Never run `flock` without `sudo`, against world-writable `/run/lock`, or on `/run/bojin/maintenance.lock` alone until all legacy lock participants are retired. Do not edit the databases with external tools during backup.
-2. With DATA_DIR set, run `node scripts/data-backup.js backup /private/backups/NEW-SNAPSHOT`.
+2. With DATA_DIR set, run `node scripts/data-backup.js backup /private/backups/NEW-SNAPSHOT` (optionally pass `--link-dest /private/backups/PREV-SNAPSHOT` one or more times to hardlink unchanged photo blobs on the same filesystem).
 3. Run `node scripts/data-backup.js ledger /private/backups/NEW-deletions.json` to preserve the latest deletion requests.
 4. Restart the service, then copy both the snapshot directory and deletion ledger to private off-server storage over authenticated encrypted transport. Verify the copy using `node scripts/data-backup.js verify SNAPSHOT`.
 
 The snapshot includes bojin.db, auth.sqlite if present, and every photo referenced by bojin.db. SQLite's backup API captures database state including WAL. SHA-256 and SQLite integrity checks detect incomplete/corrupt copies. Unreferenced orphan files, transient development emails, secrets and application source are intentionally excluded. Archive AUTH_SECRET and the deployment environment separately in secure credential storage; do not put them in the snapshot manifest.
+
+### Snapshot photo deduplication and disk-usage guard
+
+Unchanged photo blobs under `blobs/` are deduplicated across snapshots via same-filesystem hardlinks (SQLite databases `bojin.db` and `auth.sqlite` are always copied fresh, and snapshots never share inodes with live `DATA_DIR`):
+
+- **Automated daily and pre-deploy backups (`/usr/local/libexec/bojin-backup` and `/usr/local/sbin/lean-ritual-deploy`):** Before stopping the app, root indexes existing complete `root:root` snapshots across both `/var/backups/bojin` and `/var/backups/bojin-deploy` on the same filesystem. `data-backup.js` runs unprivileged as `bojin` with `--defer-blobs` and copies only the databases plus new/changed photo blobs. After root takes `root:root 0700`/`0600` ownership of the staged snapshot, root creates hardlinks (`os.link`) to existing verified snapshot blobs (compatible with Ubuntu 24.04 `fs.protected_hardlinks=1` without granting `bojin` access to historical backups), verifies every file's size, SHA-256, and SQLite integrity (self-healing by falling back to a fresh verified copy if an older snapshot blob is corrupt or hits a link limit), and atomically publishes the snapshot.
+- **Self-contained snapshots after pruning:** Each snapshot directory contains ordinary regular-file entries for every referenced blob. Pruning older snapshots only decrements hardlink counts (`st_nlink`); every surviving snapshot remains complete and independently restorable.
+- **Dedup-aware free-space preflight:** Backup and deploy preflight checks require free space strictly greater than `new_snapshot_bytes + 1.5 GiB` (databases plus photo blobs not already stored in a same-filesystem snapshot). During a transition before `--defer-blobs`-capable app code is deployed, preflight conservatively falls back to full `size(DATA_DIR) + 1.5 GiB` and deduplicates after copy.
+- **80% disk-usage guard (`ALERT_URL`):** `ops/health-watchdog.sh` warns via `/usr/local/libexec/bojin-alert` (`ALERT_URL` in `/etc/bojin-alert.env`) as soon as disk or inode usage on `/var/lib/bojin`, `/var/backups`, or `/opt` reaches **80%** (`BOJIN_WATCHDOG_DISK_WARN_PERCENT=80`, `BOJIN_WATCHDOG_INODE_WARN_PERCENT=80`, 6 h cooldown) and escalates immediately at **90%** (`BOJIN_WATCHDOG_DISK_CRIT_PERCENT=90`, separate cooldown key). Both `bojin-backup` (`BACKUP_DISK_WARN_PERCENT=80`) and `lean-ritual-deploy` also alert via `/usr/local/libexec/bojin-alert` if disk usage reaches 80% after backup/deploy (or if low disk space blocks a deploy).
+- **Host helper upgrade note:** Merging application code updates `lib/snapshots.js` and `scripts/data-backup.js`, but host-side dedup, dedup-aware preflight, and 80% disk alerts require installing the updated root helpers (`ops/deploy-release.py`, `ops/install-backup.sh`, `ops/install-reliability.sh`) under `sudo /usr/local/sbin/bojin-maintenance-lock -- ...`.
 
 Daily backups and pre-deploy snapshots stay on the server for approximately 7 days
 (owner decision 2026-11-16). BACKUP_RETENTION_DAYS in /etc/bojin-backup.env defaults
@@ -48,7 +58,7 @@ For one transition release, each updated root helper — and the manual operator
 
 ## Restore and rollback
 
-Never restore over the live `/var/lib/bojin` directory. For an actual production recovery or cutover, acquire `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` (until all legacy lock participants are retired), stop all writers (`bojin.service` and any admin CLI), preserve the current `/var/lib/bojin` directory for investigation, and restore into a new empty `bojin:bojin` (`0700`) directory after staging read-only copies (`root:bojin`, `0750` dirs, `0640` files) so `/var/backups` ownership is never altered:
+Never restore over the live `/var/lib/bojin` directory. Each deduplicated snapshot is completely self-contained and restorable on its own even after all older snapshots have been pruned. **Never run `chmod` or `chown` in-place inside `/var/backups/bojin` or `/var/backups/bojin-deploy`** (deduplicated snapshots share hardlinked photo inodes, so mutating permissions in place would affect every snapshot sharing that inode). Always copy the chosen snapshot out with `cp -rP` (which creates independent files in the staging directory without hardlinking back to `/var/backups`) before adjusting staging ownership/permissions for `bojin`. For an actual production recovery or cutover, acquire `sudo /usr/local/sbin/bojin-maintenance-lock -- ...` (until all legacy lock participants are retired), stop all writers (`bojin.service` and any admin CLI), preserve the current `/var/lib/bojin` directory for investigation, and restore into a new empty `bojin:bojin` (`0700`) directory after staging read-only copies (`root:bojin`, `0750` dirs, `0640` files) so `/var/backups` ownership is never altered:
 
 ```sh
 sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin-restored \
@@ -435,7 +445,7 @@ Tests cover writer exclusion, checksums, refusing overwrites, snapshots with bot
 
 Deploys reject an intentionally stopped service unless authorized once via
 `sudo install -m 0600 -o root -g root /dev/null /etc/bojin/allow-deploy-when-stopped`; the deploy consumes this authorization under the maintenance lock.
-Backup and deploy require free space greater than size(DATA_DIR) + 1.5 GiB before stopping the app. Backup releases the maintenance lock before bounded offsite rsync.
+Backup and deploy require free space greater than `new_snapshot_bytes + 1.5 GiB` before stopping the app (accounting for hardlink-deduplicated photo blobs on the same filesystem, falling back to full `size(DATA_DIR) + 1.5 GiB` before dedup-capable code is live). Watchdog, backup, and deploy all alert via `ALERT_URL` (`/usr/local/libexec/bojin-alert`) before disk usage passes 80% (with immediate critical escalation at 90%). Backup releases the maintenance lock before bounded offsite rsync.
 Release pruning skips entirely until the upgraded deploy helper has recorded /opt/bojin-previous after a successful deploy; active and previous pointers must resolve. Releases younger than the retention window are also kept.
 
 ### Browser security headers

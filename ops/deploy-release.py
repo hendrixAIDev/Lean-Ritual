@@ -3,13 +3,16 @@
 import contextlib
 import errno
 import fcntl
+import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
 import signal
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -23,6 +26,7 @@ RELEASES = Path("/opt/bojin-releases")
 CURRENT = Path("/opt/bojin")
 DATA = Path("/var/lib/bojin")
 BACKUPS = Path("/var/backups/bojin-deploy")
+DAILY_BACKUPS = Path("/var/backups/bojin")
 LOCK = Path("/run/bojin/maintenance.lock")
 # Transition compatibility (one release): also lock the legacy path after LOCK so an
 # un-upgraded host helper or manual command cannot run maintenance concurrently.
@@ -35,9 +39,14 @@ STOPPED_DEPLOY_FLAG = Path("/etc/bojin/allow-deploy-when-stopped")
 ALLOWED = {"server.js", "package.json", "package-lock.json", ".release.json", "lib", "scripts", "public", "node_modules"}
 MAX_BYTES = 600 * 1024 * 1024
 MIN_FREE_HEADROOM = (3 * 1024 ** 3) // 2
+DISK_WARN_PERCENT = 80
 UPLOAD_TIMEOUT = 300
 ALLOWED_SERVICE_STATES = {"active", "activating", "reloading", "failed"}
 STOPPED_SERVICE_STATES = {"inactive", "deactivating"}
+DATABASE_NAMES = ("bojin.db", "auth.sqlite")
+BLOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+BLOB_PATH_RE = re.compile(r"^blobs/[0-9a-f]{32}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def unpack_release(stream, destination):
@@ -92,14 +101,156 @@ def notify_alert(message):
             syslog.syslog(syslog.LOG_ERR, "lean-ritual-deploy alert failed: " + repr(error))
 
 
+def sha256_file(path):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Snapshot files must be regular files")
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
+
+
+def release_supports_defer_blobs(release_dir):
+    try:
+        base = Path(release_dir)
+        if base.is_symlink():
+            base = base.resolve(strict=True)
+        script = base / "scripts/data-backup.js"
+        if script.is_symlink() or not script.is_file():
+            return False
+        return "--defer-blobs" in script.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def iter_existing_snapshots(backup_roots):
+    seen = set()
+    for raw_root in backup_roots:
+        if raw_root is None:
+            continue
+        root = Path(raw_root)
+        try:
+            if root.is_symlink() or not root.is_dir():
+                continue
+            entries = sorted(root.iterdir(), key=lambda p: p.name, reverse=True)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+                continue
+            for candidate in (entry, entry / "snapshot"):
+                try:
+                    if candidate.is_symlink() or not candidate.is_dir():
+                        continue
+                    manifest = candidate / "manifest.json"
+                    db = candidate / "bojin.db"
+                    blobs = candidate / "blobs"
+                    if (manifest.is_symlink() or not manifest.is_file()
+                            or db.is_symlink() or not db.is_file()
+                            or blobs.is_symlink() or not blobs.is_dir()):
+                        continue
+                    key = (candidate.lstat().st_dev, candidate.lstat().st_ino)
+                except OSError:
+                    continue
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield candidate
+
+
+def index_existing_blobs(backup_roots, target_dev):
+    by_id = {}
+    by_sha256 = {}
+    seen_inodes = {}
+    expected_uid = os.getuid()
+    for snap in iter_existing_snapshots(backup_roots):
+        try:
+            manifest = json.loads((snap / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+            continue
+        for item in manifest["files"]:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            size = item.get("size")
+            sha = item.get("sha256")
+            if (not isinstance(name, str) or not BLOB_PATH_RE.fullmatch(name)
+                    or not isinstance(size, int) or isinstance(size, bool) or size < 0
+                    or not isinstance(sha, str) or not SHA256_RE.fullmatch(sha)):
+                continue
+            blob_id = name[6:]
+            cand = snap / "blobs" / blob_id
+            try:
+                st = cand.lstat()
+            except OSError:
+                continue
+            if (not stat.S_ISREG(st.st_mode) or st.st_dev != target_dev
+                    or st.st_size != size or st.st_uid != expected_uid
+                    or (stat.S_IMODE(st.st_mode) & 0o077) != 0):
+                continue
+            if blob_id not in by_id:
+                by_id[blob_id] = (size, st.st_dev, st.st_ino)
+            inode_key = (st.st_dev, st.st_ino)
+            inode_set = seen_inodes.setdefault(sha, set())
+            if inode_key in inode_set:
+                continue
+            inode_set.add(inode_key)
+            existing = by_sha256.get(sha)
+            if existing is None:
+                by_sha256[sha] = (size, [cand])
+            elif existing[0] == size:
+                existing[1].append(cand)
+    return by_id, by_sha256
+
+
 def data_size(path):
     total = 0
     for root, _, files in os.walk(Path(path).resolve()):
         for name in files:
             try:
-                total += (Path(root) / name).lstat().st_size
+                st = (Path(root) / name).lstat()
+                if stat.S_ISREG(st.st_mode):
+                    total += st.st_size
             except FileNotFoundError:
                 pass
+    return total
+
+
+def estimate_snapshot_bytes(data_dir, backup_roots=None, target_dev=None, dedup_enabled=True):
+    data_path = Path(data_dir).resolve()
+    blobs_dir = data_path / "blobs"
+    existing_by_id = {}
+    if dedup_enabled and backup_roots and target_dev is not None:
+        existing_by_id, _ = index_existing_blobs(backup_roots, target_dev)
+    total = 0
+    for root, _, files in os.walk(data_path):
+        root_path = Path(root)
+        in_blobs = (root_path == blobs_dir)
+        for name in files:
+            try:
+                st = (root_path / name).lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            if in_blobs and BLOB_ID_RE.fullmatch(name):
+                cand = existing_by_id.get(name)
+                if cand is not None:
+                    cand_size, cand_dev, cand_ino = cand
+                    if cand_size == st.st_size and (cand_dev, cand_ino) != (st.st_dev, st.st_ino):
+                        continue
+            total += st.st_size
     return total
 
 
@@ -110,11 +261,51 @@ def existing_parent(path):
     return current
 
 
-def check_free_space(data_dir, *targets):
-    required = data_size(data_dir) + MIN_FREE_HEADROOM
+def disk_usage_percent(path):
+    usage = shutil.disk_usage(existing_parent(path))
+    denom = usage.used + usage.free
+    pct = math.ceil(usage.used * 100 / denom) if denom > 0 else 100
+    return pct, usage.free
+
+
+def check_disk_usage_guard(*targets, warn_percent=DISK_WARN_PERCENT):
+    seen_devs = set()
+    alerts = []
     for target in targets:
-        if shutil.disk_usage(existing_parent(target)).free <= required:
-            raise ValueError("Need more than DATA_DIR size + 1.5 GiB free before staging and snapshot")
+        parent = existing_parent(target)
+        dev = parent.stat().st_dev
+        if dev in seen_devs:
+            continue
+        seen_devs.add(dev)
+        pct, free = disk_usage_percent(parent)
+        if pct >= warn_percent:
+            free_gib = free / (1024 ** 3)
+            message = (
+                f"disk holding {parent} is {pct}% full ({free_gib:.1f} GiB free) during deploy; "
+                f"inspect backups, releases, and photos before disk fills"
+            )
+            syslog.syslog(syslog.LOG_WARNING, "lean-ritual-deploy: " + message)
+            notify_alert(message)
+            alerts.append(message)
+    return alerts
+
+
+def check_free_space(data_dir, *targets, backup_roots=None, dedup_enabled=True):
+    roots = backup_roots if backup_roots is not None else targets
+    by_dev = {}
+    for target in targets:
+        parent = existing_parent(target)
+        dev = parent.stat().st_dev
+        if dev not in by_dev:
+            by_dev[dev] = estimate_snapshot_bytes(data_dir, roots, dev, dedup_enabled=dedup_enabled)
+        needed = by_dev[dev]
+        required = needed + MIN_FREE_HEADROOM
+        free = shutil.disk_usage(parent).free
+        if free <= required:
+            raise ValueError(
+                f"Need more than new snapshot bytes ({needed}) + 1.5 GiB free before staging and snapshot "
+                f"(need > {required} bytes, have {free} bytes)"
+            )
 
 
 def consume_stopped_deploy_flag():
@@ -240,6 +431,188 @@ def chown_root_tree(root):
             os.chown(entry, 0, 0, follow_symlinks=False)
 
 
+def copy_regular_file_verified(src_path, dst_path, expected_size, expected_sha):
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    src_fd = os.open(src_path, os.O_RDONLY | nofollow)
+    dst_fd = None
+    try:
+        src_st = os.fstat(src_fd)
+        if not stat.S_ISREG(src_st.st_mode):
+            raise ValueError("Source blob must be a regular file")
+        dst_fd = os.open(dst_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(src_fd, 1024 * 1024)
+            if not chunk:
+                break
+            view = memoryview(chunk)
+            while view:
+                written = os.write(dst_fd, view)
+                view = view[written:]
+            digest.update(chunk)
+            total += len(chunk)
+        os.fchmod(dst_fd, 0o600)
+    except BaseException:
+        if dst_fd is not None:
+            os.close(dst_fd)
+            dst_fd = None
+        Path(dst_path).unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(src_fd)
+        if dst_fd is not None:
+            os.close(dst_fd)
+    if total != expected_size or digest.hexdigest() != expected_sha:
+        Path(dst_path).unlink(missing_ok=True)
+        raise ValueError("Copied blob checksum mismatch")
+
+
+def materialize_and_verify_snapshot(snapshot_dir, data_dir, by_sha256, target_dev, verify_full=True):
+    snapshot_dir = Path(snapshot_dir)
+    data_path = Path(data_dir).resolve()
+    blobs_dir = snapshot_dir / "blobs"
+    manifest_path = snapshot_dir / "manifest.json"
+    if (snapshot_dir.is_symlink() or not snapshot_dir.is_dir()
+            or blobs_dir.is_symlink() or not blobs_dir.is_dir()
+            or manifest_path.is_symlink() or not manifest_path.is_file()):
+        raise ValueError("Invalid snapshot layout")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+        if not verify_full:
+            return
+        raise ValueError("Unsupported snapshot manifest")
+
+    expected_uid = os.getuid()
+    seen_names = set()
+    manifest_sizes = {}
+    for item in manifest["files"]:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid snapshot manifest entry")
+        name = item.get("name")
+        size = item.get("size")
+        sha = item.get("sha256")
+        is_db = name in DATABASE_NAMES
+        is_blob = isinstance(name, str) and bool(BLOB_PATH_RE.fullmatch(name))
+        if (not (is_db or is_blob) or name in seen_names
+                or not isinstance(size, int) or isinstance(size, bool) or size < 0
+                or not isinstance(sha, str) or not SHA256_RE.fullmatch(sha)):
+            raise ValueError("Unsafe or invalid snapshot manifest entry")
+        seen_names.add(name)
+        manifest_sizes[name] = size
+        dest = snapshot_dir / name
+
+        if is_db:
+            if not verify_full:
+                continue
+            if dest.is_symlink() or not dest.is_file():
+                raise ValueError("Snapshot database must be a regular file")
+            if Path(str(dest) + "-wal").exists():
+                raise ValueError("Snapshot contains a WAL sidecar")
+            if dest.lstat().st_size != size or sha256_file(dest) != sha:
+                raise ValueError("Snapshot checksum mismatch: " + name)
+            continue
+
+        blob_id = name[6:]
+        live_blob = data_path / "blobs" / blob_id
+        live_id = None
+        try:
+            live_st = live_blob.lstat()
+            if stat.S_ISREG(live_st.st_mode):
+                live_id = (live_st.st_dev, live_st.st_ino)
+        except OSError:
+            pass
+
+        if dest.is_symlink():
+            raise ValueError("Refusing symlink inside snapshot blobs")
+        if dest.exists():
+            if not stat.S_ISREG(dest.lstat().st_mode):
+                raise ValueError("Snapshot blob must be a regular file")
+            if verify_full:
+                if dest.lstat().st_size != size or sha256_file(dest) != sha:
+                    raise ValueError("Snapshot checksum mismatch: " + name)
+            elif by_sha256 and sha in by_sha256 and by_sha256[sha][0] == size:
+                # Legacy transition: replace copied blob with a verified hardlink to an existing snapshot.
+                for cand in by_sha256[sha][1]:
+                    try:
+                        cst = cand.lstat()
+                        if (not stat.S_ISREG(cst.st_mode) or cst.st_dev != target_dev
+                                or cst.st_size != size or cst.st_uid != expected_uid
+                                or (stat.S_IMODE(cst.st_mode) & 0o077) != 0
+                                or (cst.st_dev, cst.st_ino) == live_id):
+                            continue
+                        if sha256_file(cand) != sha:
+                            continue
+                        tmp_link = blobs_dir / (".dedup-" + blob_id)
+                        tmp_link.unlink(missing_ok=True)
+                        os.link(cand, tmp_link)
+                        try:
+                            os.replace(tmp_link, dest)
+                            break
+                        except OSError:
+                            tmp_link.unlink(missing_ok=True)
+                    except OSError:
+                        continue
+            continue
+
+        # Deferred blob: materialize via hardlink from existing snapshot, or fall back to verified copy.
+        materialized = False
+        cand_entry = by_sha256.get(sha)
+        if cand_entry is not None and cand_entry[0] == size:
+            for cand in cand_entry[1]:
+                try:
+                    cst = cand.lstat()
+                    if (not stat.S_ISREG(cst.st_mode) or cst.st_dev != target_dev
+                            or cst.st_size != size or cst.st_uid != expected_uid
+                            or (stat.S_IMODE(cst.st_mode) & 0o077) != 0
+                            or (cst.st_dev, cst.st_ino) == live_id):
+                        continue
+                    os.link(cand, dest)
+                except OSError:
+                    continue
+                try:
+                    dst_st = dest.lstat()
+                    if stat.S_ISREG(dst_st.st_mode) and dst_st.st_size == size and sha256_file(dest) == sha:
+                        materialized = True
+                        break
+                except (OSError, ValueError):
+                    pass
+                dest.unlink(missing_ok=True)
+        if not materialized:
+            copy_regular_file_verified(live_blob, dest, size, sha)
+
+    if not verify_full:
+        return
+
+    if "bojin.db" not in seen_names:
+        raise ValueError("Snapshot has no application database")
+    for entry in blobs_dir.iterdir():
+        if entry.is_symlink() or not entry.is_file() or ("blobs/" + entry.name) not in seen_names:
+            raise ValueError("Unexpected file in snapshot blobs: " + entry.name)
+
+    with tempfile.TemporaryDirectory(prefix="bojin-verify-") as tmpdir:
+        tmp_path = Path(tmpdir)
+        for db_name in DATABASE_NAMES:
+            if db_name not in seen_names:
+                continue
+            copy_path = tmp_path / db_name
+            shutil.copyfile(snapshot_dir / db_name, copy_path)
+            copy_path.chmod(0o600)
+            conn = sqlite3.connect(f"file:{copy_path}?mode=ro", uri=True)
+            try:
+                if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise ValueError("Database integrity check failed: " + db_name)
+                if db_name == "bojin.db":
+                    for blob_id, blob_size in conn.execute("SELECT id, size FROM blobs"):
+                        rel = "blobs/" + str(blob_id)
+                        if (not isinstance(blob_id, str) or not BLOB_ID_RE.fullmatch(blob_id)
+                                or rel not in seen_names
+                                or (blobs_dir / blob_id).lstat().st_size != blob_size):
+                            raise ValueError("Snapshot is missing a referenced photo")
+            finally:
+                conn.close()
+
+
 def snapshot(previous):
     if BACKUPS.is_symlink():
         raise ValueError("Refusing symlink deploy backup directory")
@@ -254,14 +627,33 @@ def snapshot(previous):
     try:
         os.chown(work, app.pw_uid, app.pw_gid)
         work.chmod(0o700)
-        for arguments in [("backup", str(work / "snapshot")), ("ledger", str(work / "deletions.json"))]:
+        target_dev = work.stat().st_dev
+        _, by_sha256 = index_existing_blobs((BACKUPS, DAILY_BACKUPS), target_dev)
+        use_defer = release_supports_defer_blobs(previous) and bool(by_sha256)
+        dedup_index = work / "dedup-index.json"
+        if use_defer:
+            dedup_index.write_text(
+                json.dumps({"version": 1, "sha256": {h: sz for h, (sz, _) in by_sha256.items()}}),
+                encoding="utf-8",
+            )
+            os.chown(dedup_index, 0, app.pw_gid, follow_symlinks=False)
+            dedup_index.chmod(0o640)
+            backup_args = ("backup", str(work / "snapshot"), "--defer-blobs", str(dedup_index))
+        else:
+            backup_args = ("backup", str(work / "snapshot"))
+        for arguments in [backup_args, ("ledger", str(work / "deletions.json"))]:
             command("/usr/sbin/runuser", "-u", "bojin", "--", "/usr/bin/env", "-i",
                     "PATH=/usr/bin:/bin", "DATA_DIR=" + str(DATA), "/usr/bin/node",
                     str(previous / "scripts/data-backup.js"), *arguments)
+        dedup_index.unlink(missing_ok=True)
         chown_root_tree(work)
         work.chmod(0o700)
         (work / "snapshot").chmod(0o700)
         (work / "deletions.json").chmod(0o600)
+        if use_defer:
+            materialize_and_verify_snapshot(work / "snapshot", DATA, by_sha256, target_dev, verify_full=True)
+        elif by_sha256:
+            materialize_and_verify_snapshot(work / "snapshot", DATA, by_sha256, target_dev, verify_full=False)
         if published.exists() or published.is_symlink():
             raise FileExistsError("Deploy snapshot destination already exists")
         work.rename(published)
@@ -349,14 +741,24 @@ def main():
         raise ValueError("Complete and verify the one-time host setup first")
     verify_service_unit(check_active_state=False)
     RELEASES.mkdir(mode=0o755, exist_ok=True)
-    check_free_space(DATA, RELEASES, BACKUPS)
+    dedup_enabled = release_supports_defer_blobs(CURRENT)
+    try:
+        check_free_space(DATA, RELEASES, BACKUPS, backup_roots=(BACKUPS, DAILY_BACKUPS), dedup_enabled=dedup_enabled)
+    except ValueError:
+        notify_alert("deploy blocked by low disk space; free space before deploys and backups fail")
+        raise
     candidate = None
     try:
         with maintenance_lock():
             # Staging shares the maintenance lock with retention.
             candidate, metadata = stage_release(sys.stdin.buffer, RELEASES)
             revision = metadata["revision"]
-            check_free_space(DATA, RELEASES, BACKUPS)
+            dedup_enabled = release_supports_defer_blobs(CURRENT)
+            try:
+                check_free_space(DATA, RELEASES, BACKUPS, backup_roots=(BACKUPS, DAILY_BACKUPS), dedup_enabled=dedup_enabled)
+            except ValueError:
+                notify_alert("deploy blocked by low disk space after staging; free space before deploys and backups fail")
+                raise
             verify_service_unit(check_active_state=True)
 
             def healthy(rollback=False):
@@ -385,6 +787,7 @@ def main():
         if candidate is not None and candidate.exists() and (not CURRENT.is_symlink() or CURRENT.resolve() != candidate.resolve()):
             shutil.rmtree(candidate, ignore_errors=True)
         raise
+    check_disk_usage_guard(DATA, RELEASES, BACKUPS)
     print("Deployed " + revision, flush=True)
 
 

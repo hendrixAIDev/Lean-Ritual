@@ -1433,6 +1433,71 @@ os.close(fd)
         res_sym = subprocess.run(["bash", str(harness)], env=self.h.base_env(), capture_output=True, text=True, timeout=10)
         self.assertNotEqual(res_sym.returncode, 0)
 
+    def test_disk_usage_guard_warns_at_80_and_escalates_immediately_at_90(self) -> None:
+        # 1. 79% disk / 79% inodes -> silent.
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "79%", "ipcent": "79%", "target": "/"}
+        self.h.set_uptime(1000.0)
+        res79 = self.h.run_watchdog()
+        self.assertEqual(res79.returncode, 0, res79.stderr)
+        self.assertEqual([e for e in self.h.events() if e["kind"] == "curl" and "ntfy.sh" in e["url"]], [])
+
+        # 2. 80% disk -> fires warning alert via ALERT_URL before disk passes 80%.
+        self.h.clear_events()
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "80%", "ipcent": "50%", "target": "/"}
+        self.h.set_uptime(1030.0)
+        res80 = self.h.run_watchdog()
+        self.assertEqual(res80.returncode, 0, res80.stderr)
+        delivered80 = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(delivered80), 1, delivered80)
+        self.assertIn("80%", delivered80[0])
+        self.assertIn("warning threshold 80%", delivered80[0])
+
+        # 3. 83% disk 30s later -> suppressed by 6h warning cooldown.
+        self.h.clear_events()
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "83%", "ipcent": "50%", "target": "/"}
+        self.h.set_uptime(1060.0)
+        self.h.run_watchdog()
+        self.assertEqual([e for e in self.h.events() if e["kind"] == "curl" and "ntfy.sh" in e["url"]], [])
+
+        # 4. 90% disk 60s later -> escalates IMMEDIATELY via separate critical key (not blocked by 80% cooldown).
+        self.h.clear_events()
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "90%", "ipcent": "50%", "target": "/"}
+        self.h.set_uptime(1090.0)
+        res90 = self.h.run_watchdog()
+        self.assertEqual(res90.returncode, 0, res90.stderr)
+        delivered90 = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(delivered90), 1, delivered90)
+        self.assertIn("CRITICAL", delivered90[0])
+        self.assertIn("90%", delivered90[0])
+
+        # 5. 80% inodes -> warns at 80% threshold.
+        self.h.clear_events()
+        for p in ("/var/lib/bojin", "/var/backups", "/opt"):
+            self.h.config["df"][p] = {"pcent": "50%", "ipcent": "80%", "target": "/"}
+        self.h.set_uptime(1120.0)
+        res_inodes = self.h.run_watchdog()
+        self.assertEqual(res_inodes.returncode, 0, res_inodes.stderr)
+        delivered_inodes = [
+            e["args"][e["args"].index("--data-binary") + 1]
+            for e in self.h.events()
+            if e["kind"] == "curl" and "ntfy.sh" in e["url"]
+        ]
+        self.assertEqual(len(delivered_inodes), 1, delivered_inodes)
+        self.assertIn("inodes", delivered_inodes[0])
+        self.assertIn("80%", delivered_inodes[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,8 +11,9 @@ HEALTH_URL=${BOJIN_WATCHDOG_HEALTH_URL:-http://127.0.0.1:8080/api/health}
 CADDY_URL=${BOJIN_WATCHDOG_CADDY_URL:-http://127.0.0.1:80/}
 FAIL_LIMIT=${BOJIN_WATCHDOG_FAIL_LIMIT:-3}
 ACTIVATING_LIMIT=${BOJIN_WATCHDOG_ACTIVATING_LIMIT:-3}
-DISK_WARN_PERCENT=${BOJIN_WATCHDOG_DISK_WARN_PERCENT:-90}
-INODE_WARN_PERCENT=${BOJIN_WATCHDOG_INODE_WARN_PERCENT:-90}
+DISK_WARN_PERCENT=${BOJIN_WATCHDOG_DISK_WARN_PERCENT:-80}
+DISK_CRIT_PERCENT=${BOJIN_WATCHDOG_DISK_CRIT_PERCENT:-90}
+INODE_WARN_PERCENT=${BOJIN_WATCHDOG_INODE_WARN_PERCENT:-80}
 # Keep worst-case runtime (including 1s SIGKILL grace and bounded logger) comfortably
 # under TimeoutStartSec=60: up to 24s for checks, <=2s for stalled journald detection,
 # leaving >=24s (22s alert budget) within a 50s total cap.
@@ -241,9 +242,14 @@ check_filesystems() {
     mount_key=$(printf '%s' "$mount_id" | tr -c 'a-zA-Z0-9' '_')
 
     used=${pcent%%%}
-    if [[ "$used" =~ ^[0-9]+$ ]] && (( used >= DISK_WARN_PERCENT )); then
-      queue_alert "disk-$mount_key" 21600 \
-        "disk holding $path ($mount_id) is ${used}% full; free space before writes start failing"
+    if [[ "$used" =~ ^[0-9]+$ ]]; then
+      if (( DISK_CRIT_PERCENT > DISK_WARN_PERCENT && used >= DISK_CRIT_PERCENT )); then
+        queue_alert "disk-crit-$mount_key" 21600 \
+          "CRITICAL: disk holding $path ($mount_id) is ${used}% full; free space before writes start failing"
+      elif (( used >= DISK_WARN_PERCENT )); then
+        queue_alert "disk-$mount_key" 21600 \
+          "disk holding $path ($mount_id) is ${used}% full (warning threshold ${DISK_WARN_PERCENT}%); inspect backups, releases, and photos before disk fills"
+      fi
     fi
 
     iused=${ipcent%%%}

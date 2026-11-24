@@ -93,7 +93,7 @@ class RuntimeDeploymentTest(unittest.TestCase):
 
 class BackupServiceRuntimeTest(unittest.TestCase):
     def run_backup_script(self, root, active_state="active", free_bytes=None, fail_backup=False, fail_start=False,
-                          non_root_paths=None):
+                          non_root_paths=None, disk_usage=None, extra_env=None):
         bindir = root / "bin"
         bindir.mkdir(exist_ok=True)
         events = root / "events.log"
@@ -217,7 +217,21 @@ class BackupServiceRuntimeTest(unittest.TestCase):
             echo "rsync:lock=$state:fd9=$fd9:fd8=$fd8:$*" >> "{events}"
         """)
 
-        if free_bytes is not None:
+        if disk_usage is not None:
+            total_b, used_b, free_b = disk_usage
+            write_stub("python3", f"""
+                if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
+                exec "{real_py}" -c '
+import shutil, sys
+from collections import namedtuple
+U = namedtuple("U", ["total", "used", "free"])
+shutil.disk_usage = lambda p: U({total_b}, {used_b}, {free_b})
+code = sys.stdin.read()
+sys.argv = sys.argv[1:]
+exec(compile(code, "<stdin>", "exec"))
+' "$@"
+            """)
+        elif free_bytes is not None:
             write_stub("python3", f"""
                 if [[ "${{1:-}}" == "-c" ]]; then exec "{real_py}" "$@"; fi
                 exec "{real_py}" -c '
@@ -251,6 +265,7 @@ exec(compile(code, "<stdin>", "exec"))
             "DATA_DIR": str(data_dir),
             "BACKUP_ROOT": str(backup_root),
             "OFFSITE_DEST": f"backup@host:{offsite_dir}",
+            **(extra_env or {}),
         }
         result = subprocess.run(["bash", str(harness)], env=env, text=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=20)
         log = events.read_text().splitlines() if events.exists() else []
@@ -440,6 +455,110 @@ os.close(fd)
                 if holder.poll() is None:
                     holder.kill()
                     holder.wait()
+
+    def test_daily_backup_deduplicates_blobs_preflights_new_bytes_and_restores_after_prune(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data_dir = root / "data"
+            (data_dir / "blobs").mkdir(parents=True)
+            id_a, id_b = "a" * 32, "b" * 32
+            blob_a_bytes = b"A" * (4 * 1024 * 1024)
+            (data_dir / "blobs" / id_a).write_bytes(blob_a_bytes)
+            (data_dir / "blobs" / id_a).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE docs(path TEXT PRIMARY KEY, uid TEXT, parent TEXT, data TEXT, updated TEXT)")
+                db.execute("CREATE TABLE blobs(id TEXT PRIMARY KEY, uid TEXT, mime TEXT, size INT, created TEXT)")
+                db.execute("INSERT INTO docs VALUES('p1','u_1','p','{\"day\":1}','2026-11-20')")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_a, "u_1", "image/webp", len(blob_a_bytes), "2026-11-20"))
+
+            # First backup stores blob A.
+            res1, _, backup_root = self.run_backup_script(root)
+            self.assertEqual(res1.returncode, 0, res1.stderr)
+            snaps1 = sorted(backup_root.glob("snapshot-*"))
+            self.assertEqual(len(snaps1), 1)
+            snap1 = backup_root / "snapshot-20261120T040000Z"
+            snaps1[0].rename(snap1)
+            for ldg in backup_root.glob("deletions-*.json"):
+                ldg.rename(backup_root / "deletions-20261120T040000Z.json")
+
+            # Add a small new blob B (64 KiB) and update docs.
+            blob_b_bytes = b"B" * (64 * 1024)
+            (data_dir / "blobs" / id_b).write_bytes(blob_b_bytes)
+            (data_dir / "blobs" / id_b).chmod(0o600)
+            with sqlite3.connect(data_dir / "bojin.db") as db:
+                db.execute("UPDATE docs SET data='{\"day\":2}' WHERE path='p1'")
+                db.execute("INSERT INTO blobs VALUES(?,?,?,?,?)", (id_b, "u_1", "image/webp", len(blob_b_bytes), "2026-11-21"))
+
+            # Free space is LESS than full DATA_DIR (~4.1 MiB) + 1.5 GiB,
+            # but GREATER than new bytes (~100 KiB) + 1.5 GiB -> dedup-aware preflight must succeed!
+            tight_free = (3 * 1024 ** 3) // 2 + 1 * 1024 * 1024
+            res2, _, _ = self.run_backup_script(root, free_bytes=tight_free)
+            self.assertEqual(res2.returncode, 0, res2.stderr)
+
+            snaps2 = [p for p in sorted(backup_root.glob("snapshot-*")) if p != snap1]
+            self.assertEqual(len(snaps2), 1)
+            snap2 = snaps2[0]
+            ledgers2 = [p for p in sorted(backup_root.glob("deletions-*.json")) if p.name != "deletions-20261120T040000Z.json"]
+            self.assertEqual(len(ledgers2), 1)
+
+            st1_a = (snap1 / "blobs" / id_a).lstat()
+            st2_a = (snap2 / "blobs" / id_a).lstat()
+            live_a = (data_dir / "blobs" / id_a).lstat()
+            self.assertEqual((st2_a.st_dev, st2_a.st_ino), (st1_a.st_dev, st1_a.st_ino))
+            self.assertEqual(st2_a.st_nlink, 2)
+            self.assertNotEqual(st2_a.st_ino, live_a.st_ino)
+            self.assertEqual((snap2 / "blobs" / id_b).lstat().st_nlink, 1)
+
+            # Prune snap1 completely, then verify & restore snap2!
+            shutil.rmtree(snap1)
+            self.assertEqual((snap2 / "blobs" / id_a).lstat().st_nlink, 1)
+            restored = root / "restored"
+            restored.mkdir(mode=0o700)
+            env = {**os.environ, "DATA_DIR": str(restored)}
+            subprocess.run([NODE_BIN, str(ROOT / "scripts/data-backup.js"), "verify", str(snap2)], env=env, check=True)
+            subprocess.run([
+                NODE_BIN, str(ROOT / "scripts/data-backup.js"), "restore",
+                str(snap2), str(restored), "--deletions", str(ledgers2[0]),
+            ], env=env, check=True)
+            self.assertEqual((restored / "blobs" / id_a).read_bytes(), blob_a_bytes)
+            self.assertEqual((restored / "blobs" / id_b).read_bytes(), blob_b_bytes)
+            with sqlite3.connect(restored / "bojin.db") as db:
+                self.assertEqual(db.execute("SELECT data FROM docs WHERE path='p1'").fetchone()[0], '{"day":2}')
+
+    def test_post_backup_disk_usage_guard_alerts_at_80_percent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            alert_log = root / "alert.log"
+            alert_bin = root / "bojin-alert"
+            alert_bin.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> '{alert_log}'\n")
+            alert_bin.chmod(0o755)
+            gib = 1024 ** 3
+
+            # 75% full (30 GiB used, 10 GiB free) -> succeeds without alert.
+            res_ok, _, backup_root = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 30 * gib, 10 * gib),
+                extra_env={"BOJIN_ALERT_BIN": str(alert_bin)},
+            )
+            self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+            self.assertFalse(alert_log.exists())
+
+            # Rename snapshot to avoid same-second stamp collision.
+            for p in list(backup_root.glob("snapshot-*")):
+                p.rename(backup_root / "snapshot-20261120T040000Z")
+            for p in list(backup_root.glob("deletions-*.json")):
+                p.rename(backup_root / "deletions-20261120T040000Z.json")
+
+            # 80% full (32 GiB used, 8 GiB free on 40 GiB disk) -> succeeds AND alerts via BOJIN_ALERT_BIN.
+            res_warn, _, _ = self.run_backup_script(
+                root,
+                disk_usage=(40 * gib, 32 * gib, 8 * gib),
+                extra_env={"BOJIN_ALERT_BIN": str(alert_bin)},
+            )
+            self.assertEqual(res_warn.returncode, 0, res_warn.stderr)
+            self.assertTrue(alert_log.is_file())
+            self.assertIn("80%", alert_log.read_text())
 
 
 if __name__ == "__main__":

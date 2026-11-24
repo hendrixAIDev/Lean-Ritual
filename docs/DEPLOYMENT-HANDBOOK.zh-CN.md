@@ -131,7 +131,7 @@ SMTP、AUTH_SECRET、AI 凭证留在主机，不上传到 GitHub 变量或文档
    ```
 
 2. **在新的空目录恢复，保留当前数据供调查**：切勿覆盖线上 `/var/lib/bojin`，也避免先把生产目录移走后才发现备份不可读。
-3. **准备只读暂存副本并以 `bojin` 低权限执行校验与恢复**：不改动 `/var/backups` 归属，将快照与最新台账拷贝至临时 `root:bojin` 目录（目录 `0750`、文件 `0640`），创建 `bojin:bojin`（`0700`）空目标目录；`data-backup.js` 不需要 `/etc/bojin/environment`，以 `sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=<目标目录> /usr/bin/node /opt/bojin/scripts/data-backup.js verify <暂存快照>` 先做完整性校验，再运行 `restore <暂存快照> <目标目录> --deletions <暂存台账>`，全程不输出业务数据或密钥。
+3. **准备只读暂存副本并以 `bojin` 低权限执行校验与恢复**：每日备份（`/var/backups/bojin`）与部署前备份（`/var/backups/bojin-deploy`）之间对未修改的照片文件使用同文件系统硬链接去重，每份快照仍完全自包含，旧快照按 7 天策略清理后较新快照依旧可独立恢复。**切勿在 `/var/backups` 原地执行 `chmod`/`chown`**（硬链接共享 inode，原地改权会影响所有共享该照片的快照），必须用 `cp -rP` 将目标快照与最新台账拷贝出独立副本至临时 `root:bojin` 目录（目录 `0750`、文件 `0640`），再创建 `bojin:bojin`（`0700`）空目标目录；`data-backup.js` 不需要 `/etc/bojin/environment`，以 `sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=<目标目录> /usr/bin/node /opt/bojin/scripts/data-backup.js verify <暂存快照>` 先做完整性校验，再运行 `restore <暂存快照> <目标目录> --deletions <暂存台账>`，全程不输出业务数据或密钥。
 4. **核验恢复结果**：工具校验 SHA-256 哈希与 SQLite 完整性并事务重放删除台账；再用只读 SQLite 连接核验恢复文件所有权/权限（`0600`/`0700` `bojin:bojin`）、`PRAGMA integrity_check`、`blobs` 行数与磁盘文件大小一一对应、账号隔离及台账内 UID 零残留。
 5. **用隔离临时实例完成验证后再加锁切换**：
 

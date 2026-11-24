@@ -4,6 +4,9 @@ set -euo pipefail
 : "${BACKUP_ROOT:?Set BACKUP_ROOT outside DATA_DIR}"
 : "${BACKUP_RETENTION_DAYS:=7}"
 [[ "$BACKUP_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid BACKUP_RETENTION_DAYS" >&2; exit 1; }
+: "${BACKUP_DISK_WARN_PERCENT:=80}"
+[[ "$BACKUP_DISK_WARN_PERCENT" =~ ^([1-9][0-9]?|100)$ ]] || { echo "Invalid BACKUP_DISK_WARN_PERCENT" >&2; exit 1; }
+ALERT_BIN=${BOJIN_ALERT_BIN:-/usr/local/libexec/bojin-alert}
 # Install this wrapper root-owned outside the deployable application tree.
 LOCK_DIR=/run/bojin
 LOCK_FILE=/run/bojin/maintenance.lock
@@ -148,21 +151,89 @@ chmod -- 710 "$BACKUP_ROOT"
   echo "Backup target already exists for $stamp" >&2
   exit 1
 }
-python3 - "$DATA_DIR" "$BACKUP_ROOT" <<'PY'
-import os, pathlib, shutil, sys
+supports_defer=0
+if [[ -f /opt/bojin/scripts/data-backup.js && ! -L /opt/bojin/scripts/data-backup.js ]] && grep -q -- '--defer-blobs' /opt/bojin/scripts/data-backup.js; then
+  supports_defer=1
+fi
+python3 - "$DATA_DIR" "$BACKUP_ROOT" "$supports_defer" <<'PY'
+import json, os, pathlib, re, shutil, stat, sys
 data_dir = pathlib.Path(sys.argv[1]).resolve()
 backup_root = pathlib.Path(sys.argv[2])
-size = 0
+dedup_enabled = sys.argv[3] == "1"
+blob_id_re = re.compile(r"^[0-9a-f]{32}$")
+blob_path_re = re.compile(r"^blobs/[0-9a-f]{32}$")
+sha256_re = re.compile(r"^[0-9a-f]{64}$")
+target_dev = backup_root.stat().st_dev
+expected_uid = os.getuid()
+existing_by_id = {}
+if dedup_enabled:
+    for raw_root in (backup_root, pathlib.Path("/var/backups/bojin-deploy")):
+        try:
+            if raw_root.is_symlink() or not raw_root.is_dir():
+                continue
+            entries = sorted(raw_root.iterdir(), key=lambda p: p.name, reverse=True)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+                continue
+            for snap in (entry, entry / "snapshot"):
+                try:
+                    if snap.is_symlink() or not snap.is_dir():
+                        continue
+                    mf = snap / "manifest.json"
+                    db = snap / "bojin.db"
+                    bd = snap / "blobs"
+                    if mf.is_symlink() or not mf.is_file() or db.is_symlink() or not db.is_file() or bd.is_symlink() or not bd.is_dir():
+                        continue
+                    manifest = json.loads(mf.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+                    continue
+                for item in manifest["files"]:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name")
+                    sz = item.get("size")
+                    sha = item.get("sha256")
+                    if (not isinstance(name, str) or not blob_path_re.fullmatch(name)
+                            or not isinstance(sz, int) or isinstance(sz, bool) or sz < 0
+                            or not isinstance(sha, str) or not sha256_re.fullmatch(sha)):
+                        continue
+                    bid = name[6:]
+                    if bid in existing_by_id:
+                        continue
+                    try:
+                        st = (bd / bid).lstat()
+                    except OSError:
+                        continue
+                    if (stat.S_ISREG(st.st_mode) and st.st_dev == target_dev
+                            and st.st_size == sz and st.st_uid == expected_uid
+                            and (stat.S_IMODE(st.st_mode) & 0o077) == 0):
+                        existing_by_id[bid] = (sz, st.st_dev, st.st_ino)
+
+blobs_dir = data_dir / "blobs"
+needed = 0
 for root, _, files in os.walk(data_dir):
+    root_path = pathlib.Path(root)
+    in_blobs = (root_path == blobs_dir)
     for name in files:
         try:
-            size += (pathlib.Path(root) / name).lstat().st_size
+            st = (root_path / name).lstat()
         except FileNotFoundError:
-            pass
-required = size + (3 * 1024 ** 3) // 2
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        if in_blobs and blob_id_re.fullmatch(name):
+            cand = existing_by_id.get(name)
+            if cand is not None and cand[0] == st.st_size and (cand[1], cand[2]) != (st.st_dev, st.st_ino):
+                continue
+        needed += st.st_size
+required = needed + (3 * 1024 ** 3) // 2
 free = shutil.disk_usage(backup_root).free
 if free <= required:
-    sys.exit(f"Insufficient free space in {backup_root}: need > {required} bytes, have {free} bytes")
+    sys.exit(f"Insufficient free space in {backup_root}: need > {required} bytes (new={needed} bytes), have {free} bytes")
 PY
 state=$(systemctl show -p ActiveState --value bojin.service)
 case "$state" in
@@ -172,13 +243,87 @@ systemctl stop bojin.service
 work=$(mktemp -d "$BACKUP_ROOT/.run-XXXXXXXX")
 chown -- bojin:bojin "$work"
 chmod -- 700 "$work"
+dedup_index="$work/dedup-index.json"
+use_defer=0
+if [[ "$supports_defer" == 1 ]]; then
+  if python3 - "$BACKUP_ROOT" "$dedup_index" <<'PYIDX'
+import json, os, pathlib, re, stat, sys
+backup_root = pathlib.Path(sys.argv[1])
+index_path = pathlib.Path(sys.argv[2])
+blob_path_re = re.compile(r"^blobs/[0-9a-f]{32}$")
+sha256_re = re.compile(r"^[0-9a-f]{64}$")
+target_dev = backup_root.stat().st_dev
+expected_uid = os.getuid()
+sha_sizes = {}
+for raw_root in (backup_root, pathlib.Path("/var/backups/bojin-deploy")):
+    try:
+        if raw_root.is_symlink() or not raw_root.is_dir():
+            continue
+        entries = sorted(raw_root.iterdir(), key=lambda p: p.name, reverse=True)
+    except OSError:
+        continue
+    for entry in entries:
+        if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+            continue
+        for snap in (entry, entry / "snapshot"):
+            try:
+                if snap.is_symlink() or not snap.is_dir():
+                    continue
+                mf = snap / "manifest.json"
+                db = snap / "bojin.db"
+                bd = snap / "blobs"
+                if mf.is_symlink() or not mf.is_file() or db.is_symlink() or not db.is_file() or bd.is_symlink() or not bd.is_dir():
+                    continue
+                manifest = json.loads(mf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+                continue
+            for item in manifest["files"]:
+                if not isinstance(item, dict):
+                    continue
+                name, sz, sha = item.get("name"), item.get("size"), item.get("sha256")
+                if (not isinstance(name, str) or not blob_path_re.fullmatch(name)
+                        or not isinstance(sz, int) or isinstance(sz, bool) or sz < 0
+                        or not isinstance(sha, str) or not sha256_re.fullmatch(sha)):
+                    continue
+                if sha in sha_sizes:
+                    continue
+                try:
+                    st = (bd / name[6:]).lstat()
+                except OSError:
+                    continue
+                if (stat.S_ISREG(st.st_mode) and st.st_dev == target_dev
+                        and st.st_size == sz and st.st_uid == expected_uid
+                        and (stat.S_IMODE(st.st_mode) & 0o077) == 0):
+                    sha_sizes[sha] = sz
+if not sha_sizes:
+    sys.exit(2)
+index_path.write_text(json.dumps({"version": 1, "sha256": sha_sizes}), encoding="utf-8")
+PYIDX
+  then
+    chown -- root:bojin "$dedup_index"
+    chmod -- 640 "$dedup_index"
+    use_defer=1
+  else
+    rc=$?
+    if (( rc != 2 )); then
+      exit "$rc"
+    fi
+  fi
+fi
 run_backup() {
   runuser -u bojin -- env -i PATH=/usr/bin:/bin DATA_DIR="$DATA_DIR" \
     /usr/bin/node /opt/bojin/scripts/data-backup.js "$@" 8>&- 9>&-
 }
 # Application-supplied JS must never run as root, including during backups.
-run_backup backup "$work/snapshot"
+if [[ "$use_defer" == 1 ]]; then
+  run_backup backup "$work/snapshot" --defer-blobs "$dedup_index"
+else
+  run_backup backup "$work/snapshot"
+fi
 run_backup ledger "$work/deletions.json"
+rm -f -- "$dedup_index"
 if [[ -n $(find "$work" -type l -print -quit) ]]; then
   echo "Refusing symlink inside staged backup" >&2
   exit 1
@@ -186,6 +331,258 @@ fi
 chown -RP -- root:root "$work/snapshot" "$work/deletions.json"
 chmod -- 700 "$work/snapshot"
 chmod -- 600 "$work/deletions.json"
+python3 - "$work/snapshot" "$DATA_DIR" "$BACKUP_ROOT" "$use_defer" <<'PYMAT'
+import hashlib, json, os, pathlib, re, shutil, sqlite3, stat, sys, tempfile
+snapshot_dir = pathlib.Path(sys.argv[1])
+data_dir = pathlib.Path(sys.argv[2]).resolve()
+backup_root = pathlib.Path(sys.argv[3])
+verify_full = sys.argv[4] == "1"
+blob_id_re = re.compile(r"^[0-9a-f]{32}$")
+blob_path_re = re.compile(r"^blobs/[0-9a-f]{32}$")
+sha256_re = re.compile(r"^[0-9a-f]{64}$")
+database_names = ("bojin.db", "auth.sqlite")
+target_dev = snapshot_dir.stat().st_dev
+expected_uid = os.getuid()
+
+def sha256_file(path):
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Snapshot files must be regular files")
+        h = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+        return h.hexdigest()
+    finally:
+        os.close(fd)
+
+def copy_verified(src, dst, exp_size, exp_sha):
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    sfd = os.open(src, os.O_RDONLY | nofollow)
+    dfd = None
+    try:
+        if not stat.S_ISREG(os.fstat(sfd).st_mode):
+            raise ValueError("Source blob must be a regular file")
+        dfd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+        h = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(sfd, 1024 * 1024)
+            if not chunk:
+                break
+            view = memoryview(chunk)
+            while view:
+                n = os.write(dfd, view)
+                view = view[n:]
+            h.update(chunk)
+            total += len(chunk)
+        os.fchmod(dfd, 0o600)
+    except BaseException:
+        if dfd is not None:
+            os.close(dfd)
+            dfd = None
+        pathlib.Path(dst).unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(sfd)
+        if dfd is not None:
+            os.close(dfd)
+    if total != exp_size or h.hexdigest() != exp_sha:
+        pathlib.Path(dst).unlink(missing_ok=True)
+        raise ValueError("Copied blob checksum mismatch")
+
+by_sha256 = {}
+seen_inodes = {}
+for raw_root in (backup_root, pathlib.Path("/var/backups/bojin-deploy")):
+    try:
+        if raw_root.is_symlink() or not raw_root.is_dir():
+            continue
+        entries = sorted(raw_root.iterdir(), key=lambda p: p.name, reverse=True)
+    except OSError:
+        continue
+    for entry in entries:
+        if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+            continue
+        for snap in (entry, entry / "snapshot"):
+            try:
+                if snap.is_symlink() or not snap.is_dir():
+                    continue
+                mf = snap / "manifest.json"
+                db = snap / "bojin.db"
+                bd = snap / "blobs"
+                if mf.is_symlink() or not mf.is_file() or db.is_symlink() or not db.is_file() or bd.is_symlink() or not bd.is_dir():
+                    continue
+                manifest = json.loads(mf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+                continue
+            for item in manifest["files"]:
+                if not isinstance(item, dict):
+                    continue
+                name, sz, sha = item.get("name"), item.get("size"), item.get("sha256")
+                if (not isinstance(name, str) or not blob_path_re.fullmatch(name)
+                        or not isinstance(sz, int) or isinstance(sz, bool) or sz < 0
+                        or not isinstance(sha, str) or not sha256_re.fullmatch(sha)):
+                    continue
+                cand = bd / name[6:]
+                try:
+                    st = cand.lstat()
+                except OSError:
+                    continue
+                if (not stat.S_ISREG(st.st_mode) or st.st_dev != target_dev
+                        or st.st_size != sz or st.st_uid != expected_uid
+                        or (stat.S_IMODE(st.st_mode) & 0o077) != 0):
+                    continue
+                ikey = (st.st_dev, st.st_ino)
+                iset = seen_inodes.setdefault(sha, set())
+                if ikey in iset:
+                    continue
+                iset.add(ikey)
+                cur = by_sha256.get(sha)
+                if cur is None:
+                    by_sha256[sha] = (sz, [cand])
+                elif cur[0] == sz:
+                    cur[1].append(cand)
+
+if not verify_full and not by_sha256:
+    sys.exit(0)
+
+blobs_dir = snapshot_dir / "blobs"
+mf_path = snapshot_dir / "manifest.json"
+if (snapshot_dir.is_symlink() or not snapshot_dir.is_dir()
+        or blobs_dir.is_symlink() or not blobs_dir.is_dir()
+        or mf_path.is_symlink() or not mf_path.is_file()):
+    raise ValueError("Invalid snapshot layout")
+manifest = json.loads(mf_path.read_text(encoding="utf-8"))
+if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+    if not verify_full:
+        sys.exit(0)
+    raise ValueError("Unsupported snapshot manifest")
+
+seen_names = set()
+for item in manifest["files"]:
+    if not isinstance(item, dict):
+        raise ValueError("Invalid snapshot manifest entry")
+    name, size, sha = item.get("name"), item.get("size"), item.get("sha256")
+    is_db = name in database_names
+    is_blob = isinstance(name, str) and bool(blob_path_re.fullmatch(name))
+    if (not (is_db or is_blob) or name in seen_names
+            or not isinstance(size, int) or isinstance(size, bool) or size < 0
+            or not isinstance(sha, str) or not sha256_re.fullmatch(sha)):
+        raise ValueError("Unsafe or invalid snapshot manifest entry")
+    seen_names.add(name)
+    dest = snapshot_dir / name
+    if is_db:
+        if not verify_full:
+            continue
+        if dest.is_symlink() or not dest.is_file():
+            raise ValueError("Snapshot database must be a regular file")
+        if pathlib.Path(str(dest) + "-wal").exists():
+            raise ValueError("Snapshot contains a WAL sidecar")
+        if dest.lstat().st_size != size or sha256_file(dest) != sha:
+            raise ValueError("Snapshot checksum mismatch: " + name)
+        continue
+    bid = name[6:]
+    live_blob = data_dir / "blobs" / bid
+    live_id = None
+    try:
+        lst = live_blob.lstat()
+        if stat.S_ISREG(lst.st_mode):
+            live_id = (lst.st_dev, lst.st_ino)
+    except OSError:
+        pass
+    if dest.is_symlink():
+        raise ValueError("Refusing symlink inside snapshot blobs")
+    if dest.exists():
+        if not stat.S_ISREG(dest.lstat().st_mode):
+            raise ValueError("Snapshot blob must be a regular file")
+        if verify_full:
+            if dest.lstat().st_size != size or sha256_file(dest) != sha:
+                raise ValueError("Snapshot checksum mismatch: " + name)
+        elif sha in by_sha256 and by_sha256[sha][0] == size:
+            for cand in by_sha256[sha][1]:
+                try:
+                    cst = cand.lstat()
+                    if (not stat.S_ISREG(cst.st_mode) or cst.st_dev != target_dev
+                            or cst.st_size != size or cst.st_uid != expected_uid
+                            or (stat.S_IMODE(cst.st_mode) & 0o077) != 0
+                            or (cst.st_dev, cst.st_ino) == live_id):
+                        continue
+                    if sha256_file(cand) != sha:
+                        continue
+                    tmp_link = blobs_dir / (".dedup-" + bid)
+                    tmp_link.unlink(missing_ok=True)
+                    os.link(cand, tmp_link)
+                    try:
+                        os.replace(tmp_link, dest)
+                        break
+                    except OSError:
+                        tmp_link.unlink(missing_ok=True)
+                except OSError:
+                    continue
+        continue
+    materialized = False
+    cand_entry = by_sha256.get(sha)
+    if cand_entry is not None and cand_entry[0] == size:
+        for cand in cand_entry[1]:
+            try:
+                cst = cand.lstat()
+                if (not stat.S_ISREG(cst.st_mode) or cst.st_dev != target_dev
+                        or cst.st_size != size or cst.st_uid != expected_uid
+                        or (stat.S_IMODE(cst.st_mode) & 0o077) != 0
+                        or (cst.st_dev, cst.st_ino) == live_id):
+                    continue
+                os.link(cand, dest)
+            except OSError:
+                continue
+            try:
+                dst_st = dest.lstat()
+                if stat.S_ISREG(dst_st.st_mode) and dst_st.st_size == size and sha256_file(dest) == sha:
+                    materialized = True
+                    break
+            except (OSError, ValueError):
+                pass
+            dest.unlink(missing_ok=True)
+    if not materialized:
+        copy_verified(live_blob, dest, size, sha)
+
+if not verify_full:
+    sys.exit(0)
+
+if "bojin.db" not in seen_names:
+    raise ValueError("Snapshot has no application database")
+for entry in blobs_dir.iterdir():
+    if entry.is_symlink() or not entry.is_file() or ("blobs/" + entry.name) not in seen_names:
+        raise ValueError("Unexpected file in snapshot blobs: " + entry.name)
+
+with tempfile.TemporaryDirectory(prefix="bojin-verify-") as tmpdir:
+    tmp_path = pathlib.Path(tmpdir)
+    for db_name in database_names:
+        if db_name not in seen_names:
+            continue
+        copy_path = tmp_path / db_name
+        shutil.copyfile(snapshot_dir / db_name, copy_path)
+        copy_path.chmod(0o600)
+        conn = sqlite3.connect(f"file:{copy_path}?mode=ro", uri=True)
+        try:
+            if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise ValueError("Database integrity check failed: " + db_name)
+            if db_name == "bojin.db":
+                for bid, bsz in conn.execute("SELECT id, size FROM blobs"):
+                    rel = "blobs/" + str(bid)
+                    if (not isinstance(bid, str) or not blob_id_re.fullmatch(bid)
+                            or rel not in seen_names
+                            or (blobs_dir / bid).lstat().st_size != bsz):
+                        raise ValueError("Snapshot is missing a referenced photo")
+        finally:
+            conn.close()
+PYMAT
 publishing=1
 mv -- "$work/snapshot" "$snapshot"
 mv -- "$work/deletions.json" "$ledger"
@@ -322,6 +719,35 @@ if [[ "$legacy_locked" == 1 ]]; then
 fi
 flock -u 9
 exec 9>&-
+python3 - "$BACKUP_DISK_WARN_PERCENT" "$ALERT_BIN" "$DATA_DIR" "$BACKUP_ROOT" <<'PYDISK' || true
+import math, os, pathlib, shutil, subprocess, sys
+warn_pct = int(sys.argv[1])
+alert_bin = pathlib.Path(sys.argv[2])
+seen_devs = set()
+for raw in sys.argv[3:]:
+    p = pathlib.Path(raw)
+    if not p.exists():
+        continue
+    dev = p.stat().st_dev
+    if dev in seen_devs:
+        continue
+    seen_devs.add(dev)
+    usage = shutil.disk_usage(p)
+    denom = usage.used + usage.free
+    pct = math.ceil(usage.used * 100 / denom) if denom > 0 else 100
+    if pct >= warn_pct:
+        free_gib = usage.free / (1024 ** 3)
+        msg = (
+            f"disk holding {p} is {pct}% full ({free_gib:.1f} GiB free) after backup; "
+            f"inspect backups, releases, and photos before disk fills"
+        )
+        print("Warning: " + msg, file=sys.stderr, flush=True)
+        if alert_bin.is_file() and os.access(alert_bin, os.X_OK):
+            try:
+                subprocess.run([str(alert_bin), msg], check=False, stdin=subprocess.DEVNULL, timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                pass
+PYDISK
 # SSH keys and destination permissions are configured by the operator. No deletion
 # flags: remote retention must be configured and verified before public launch.
 if [[ -z "${OFFSITE_DEST:-}" ]]; then
