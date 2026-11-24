@@ -43,6 +43,7 @@ button.primary{padding:11px;border:none;border-radius:8px;background:var(--accen
 button.primary:disabled{opacity:.6}
 .err{color:var(--bad);font-size:14px;min-height:1.2em;margin:0}
 .hint{font-size:12px;color:var(--muted);margin:0}
+.hint-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:2px}
 .hint a{color:var(--accent);display:inline-flex;align-items:center;min-height:44px;min-width:44px}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 </style>
@@ -68,7 +69,7 @@ button.primary:disabled{opacity:.6}
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>
     <button type="button" id="resend">重新发送验证邮件</button>
-    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><a id="privacy-link" href="/privacy.html">隐私说明</a></p>
+    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><span class="hint-links"><a id="privacy-link" href="/privacy.html">隐私说明</a><a id="help-link" href="mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88">无法登录？发邮件反馈</a></span></p>
   </form>
 </main>
 <script src="/client-errors.js" referrerpolicy="no-referrer"></script>
@@ -131,6 +132,8 @@ button.primary:disabled{opacity:.6}
       "btn.resend": "重新发送验证邮件",
       "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
       "hint.privacy": "隐私说明",
+      "hint.help": "无法登录？发邮件反馈",
+      "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
       "msg.network": "连不上服务器。",
@@ -195,6 +198,8 @@ button.primary:disabled{opacity:.6}
       "btn.resend": "Resend verification email",
       "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
       "hint.privacy": "Privacy Notice",
+      "hint.help": "Can't sign in? Email feedback",
+      "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20Sign-in%20Feedback",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
       "msg.network": "Cannot reach server.",
@@ -375,6 +380,9 @@ button.primary:disabled{opacity:.6}
     setTxt("#resend", "btn.resend");
     setTxt("#hint-text", "hint.body");
     setTxt("#privacy-link", "hint.privacy");
+    setTxt("#help-link", "hint.help");
+    const helpLink = $("#help-link");
+    if (helpLink) helpLink.href = t("hint.helpMailto");
     if ($("#go")) $("#go").textContent = t("go." + mode);
     if (errKey) setErr(errKey);
     if (bannerKey) setBanner(bannerKey);

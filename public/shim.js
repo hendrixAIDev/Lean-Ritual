@@ -154,5 +154,6 @@
     changePassword: (oldPw, newPw) => api("POST", "/api/auth/change-password", { currentPassword: oldPw, newPassword: newPw, revokeOtherSessions: true }),
     deleteAccount: password => api("POST", "/api/auth/delete-user", {password}),
     logout: () => api("POST", "/api/auth/sign-out", {}),
+    sendFeedback: payload => api("POST", "/api/feedback", payload),
   };
 })();

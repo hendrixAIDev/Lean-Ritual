@@ -43,7 +43,11 @@ Check off each step in order. If a step fails or stalls, note the **time** and t
 
 ## 4. How to Report Results
 
-Whether everything passed or something broke, copy and fill out the template below and send it back. For errors, include the **exact time** (for server log lookup) and a **screenshot**. **Redact any invite/reset tokens in the URL bar and never send passwords.**
+- **Fastest way (recommended, under 30 seconds): submit right inside the app.** Go to **Me → Send feedback**, pick **Bug / Idea / Other**, write a brief note, optionally attach **1 screenshot**, leave **Include device info** checked (attaches app version, tab, browser, screen size, language, online status, and time — never health data, meal photos, or your profile), and tap **Send feedback**.
+- **Can't sign in?** Tap **Can't sign in? Email feedback** at the bottom of the sign-in page (`hendrix.ai.dev@gmail.com`).
+- **Never include passwords, sensitive IDs, or invite/reset tokens from the URL bar in feedback or screenshots.**
+
+If you want to send a full 15-minute walkthrough summary at once, you can also copy and fill out the template below (either in the in-app form or by message):
 
 ```text
 [Lean Ritual Beta Report]
