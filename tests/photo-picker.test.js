@@ -257,6 +257,7 @@ function mountApp({ lang = 'zh', profile = null, days = {}, assetsImpl = null, s
   return {
     ctx,
     appEl,
+    toastEl,
     srStatusEl,
     mTextState,
     ufbMsgState,
@@ -311,10 +312,12 @@ test('all file inputs are hidden behind localized triggers and live status regio
   }
 });
 
+const TEST_DATE = '2026-11-18';
+const OTHER_DATE = '2026-11-19';
+
 test('localized photo picker UI, indexed remove names, live announcements, limit focus, and distinct URL cleanup in zh and en', async () => {
-  const today = new Date().toISOString().slice(0, 10);
   const sampleDay = {
-    date: today,
+    date: TEST_DATE,
     meals: [{ id: 'meal-1', type: '午餐', text: 'Chicken rice', time: '12:30', est: { kcal: 620, protein: 46, by: 'manual' } }]
   };
 
@@ -323,13 +326,13 @@ test('localized photo picker UI, indexed remove names, live announcements, limit
     const app = mountApp({
       lang,
       profile: SAMPLE_PROFILE,
-      days: { [today]: sampleDay },
+      days: { [TEST_DATE]: sampleDay },
       sendFeedbackImpl: async payload => { feedbackSent.push(payload); return { ok: true }; }
     });
     await app.waitBoot();
 
     // Food tab: empty state
-    vm.runInContext('S.tab = "food"; S.date = todayStr(); S.pendingPhotos = null; render();', app.ctx);
+    vm.runInContext(`S.tab = "food"; S.date = "${TEST_DATE}"; S.pendingPhotos = null; render();`, app.ctx);
     const emptyFood = app.appEl.innerHTML;
     assert.match(emptyFood, /id="m-photo"[^>]*class="file-input"[^>]*accept="image\/\*"[^>]*multiple/);
     assert.match(emptyFood, /id="m-photo-btn"[^>]*data-act="pick-file"[^>]*data-for="m-photo"/);
@@ -473,7 +476,7 @@ test('meal-save race: photo edits are disabled and guarded during deferred uploa
   vm.runInContext(`
     compress2 = async file => ({ ok: true, blob: { tag: file.name, type: "image/jpeg" }, thumb: null });
     S.tab = "food";
-    S.date = todayStr();
+    S.date = "${TEST_DATE}";
     S.mealMode = "manual";
     render();
   `, app.ctx);
@@ -576,7 +579,7 @@ test('failed meal write cleans up attempt S.files cache while keeping draft, and
   vm.runInContext(`
     compress2 = async file => ({ ok: true, blob: { tag: file.name, type: "image/jpeg" }, thumb: "data:image/jpeg;base64,AA==" });
     S.tab = "food";
-    S.date = todayStr();
+    S.date = "${TEST_DATE}";
     S.mealMode = "manual";
     render();
   `, noAssetsApp.ctx);
@@ -604,13 +607,12 @@ test('failed meal write cleans up attempt S.files cache while keeping draft, and
   assert.equal(vm.runInContext('Object.keys(S.files).length', noAssetsApp.ctx), 1, 'saved meal keeps its local fallback cache entry');
 
   // 2) retry-photo: upload succeeds, day write fails -> fallback preview URL must NOT be revoked yet; succeeds on retry -> revoked
-  const today = new Date().toISOString().slice(0, 10);
   const retryApp = mountApp({
     lang: 'zh',
     profile: SAMPLE_PROFILE,
     days: {
-      [today]: {
-        date: today,
+      [TEST_DATE]: {
+        date: TEST_DATE,
         meals: [{ id: 'm-retry', type: '午餐', text: 'Retry meal', time: '12:00', photo: null, photoErr: 'network', est: null }]
       }
     },
@@ -620,7 +622,11 @@ test('failed meal write cleans up attempt S.files cache while keeping draft, and
   await retryApp.waitBoot();
   vm.runInContext(`
     S.tab = "food";
-    S.date = todayStr();
+    S.date = "${TEST_DATE}";
+    S.days["${TEST_DATE}"] = {
+      date: "${TEST_DATE}",
+      meals: [{ id: "m-retry", type: "午餐", text: "Retry meal", time: "12:00", photo: null, photoErr: "network", est: null }]
+    };
     S.files["m-retry"] = { blob: { tag: "retry.jpg", type: "image/jpeg" }, url: URL.createObjectURL({ tag: "retry.jpg" }), key: "retry-key-12345678" };
     render();
   `, retryApp.ctx);
@@ -635,7 +641,91 @@ test('failed meal write cleans up attempt S.files cache while keeping draft, and
   await retryApp.dispatchClick({ act: 'retry-photo', v: 'm-retry' });
   assert.ok(retryApp.revokedUrls.includes(fallbackUrl), 'fallback preview URL revoked after day update succeeds');
   assert.equal(vm.runInContext('S.files["m-retry"]?.url', retryApp.ctx), null);
-  assert.equal(vm.runInContext('S.days[S.date].meals[0].photo', retryApp.ctx), 'e'.repeat(32));
+  assert.equal(vm.runInContext(`S.days["${TEST_DATE}"].meals[0].photo`, retryApp.ctx), 'e'.repeat(32));
+});
+
+test('day switch during in-flight save or retry-photo stays bound to original meal date and guards missing target meal', async () => {
+  const deferreds = [];
+  const app = mountApp({
+    lang: 'zh',
+    profile: SAMPLE_PROFILE,
+    days: {
+      [TEST_DATE]: {
+        date: TEST_DATE,
+        meals: [{ id: 'm-orig', type: '午餐', text: 'Original day meal', time: '12:00', photo: null, photoErr: 'network', est: null }]
+      },
+      [OTHER_DATE]: {
+        date: OTHER_DATE,
+        meals: []
+      }
+    },
+    assetsImpl: {
+      upload(blob) {
+        let resolve;
+        const promise = new Promise(r => { resolve = r; });
+        deferreds.push({ tag: blob.tag, resolve });
+        return promise;
+      }
+    }
+  });
+  await app.waitBoot();
+  vm.runInContext(`
+    compress2 = async file => ({ ok: true, blob: { tag: file.name, type: "image/jpeg" }, thumb: null });
+    S.tab = "food";
+    S.date = "${TEST_DATE}";
+    S.mealMode = "manual";
+    S.days["${TEST_DATE}"] = {
+      date: "${TEST_DATE}",
+      meals: [{ id: "m-orig", type: "午餐", text: "Original day meal", time: "12:00", photo: null, photoErr: "network", est: null }]
+    };
+    S.days["${OTHER_DATE}"] = { date: "${OTHER_DATE}", meals: [] };
+    S.files["m-orig"] = { blob: { tag: "orig-retry.jpg", type: "image/jpeg" }, url: URL.createObjectURL({ tag: "orig-retry.jpg" }), key: "orig-retry-key-1234" };
+    render();
+  `, app.ctx);
+  const origRetryUrl = app.createdUrls[0].url;
+
+  // 1) Switch day while addMeal upload is in flight -> meal still writes to TEST_DATE, not OTHER_DATE
+  await app.dispatchChange({ id: 'm-photo', dataset: {}, files: [{ name: 'day-bound.jpg', type: 'image/jpeg' }], value: 'day-bound.jpg' });
+  app.mTextState.value = 'Bound to original date';
+  const saveP = app.dispatchClick({ act: 'add-meal', v: 'manual' });
+  await new Promise(r => setTimeout(r, 15));
+  vm.runInContext(`S.date = "${OTHER_DATE}";`, app.ctx);
+  deferreds.shift().resolve({ id: '1'.repeat(32) });
+  await saveP;
+
+  assert.equal(vm.runInContext(`S.days["${TEST_DATE}"].meals.some(m => m.text === "Bound to original date" && m.photo === "${'1'.repeat(32)}")`, app.ctx), true, 'saved meal must stay bound to original date');
+  assert.equal(vm.runInContext(`S.days["${OTHER_DATE}"].meals.length`, app.ctx), 0, 'switched-to date must remain untouched');
+
+  // 2) Switch day while retry-photo upload is in flight -> updates TEST_DATE meal, clears photoErr, and revokes fallback URL
+  vm.runInContext(`S.date = "${TEST_DATE}";`, app.ctx);
+  const retryP = app.dispatchClick({ act: 'retry-photo', v: 'm-orig' });
+  await new Promise(r => setTimeout(r, 15));
+  vm.runInContext(`S.date = "${OTHER_DATE}";`, app.ctx);
+  deferreds.shift().resolve({ id: '2'.repeat(32) });
+  await retryP;
+
+  assert.equal(vm.runInContext(`S.days["${TEST_DATE}"].meals.find(m => m.id === "m-orig")?.photo`, app.ctx), '2'.repeat(32), 'retry must update meal on original date');
+  assert.equal(vm.runInContext(`S.days["${TEST_DATE}"].meals.find(m => m.id === "m-orig")?.photoErr`, app.ctx), undefined);
+  assert.ok(app.revokedUrls.includes(origRetryUrl), 'fallback URL revoked once original-date meal updated');
+  assert.equal(vm.runInContext('S.files["m-orig"]?.url', app.ctx), null);
+
+  // 3) Target meal deleted while retry-photo upload is in flight -> does not revoke fallback URL or toast photoSaved
+  vm.runInContext(`
+    S.date = "${TEST_DATE}";
+    S.days["${TEST_DATE}"].meals.push({ id: "m-gone", type: "晚餐", text: "Will vanish", time: "19:00", photo: null, photoErr: "network", est: null });
+    S.files["m-gone"] = { blob: { tag: "gone.jpg", type: "image/jpeg" }, url: URL.createObjectURL({ tag: "gone.jpg" }), key: "gone-retry-key-1234" };
+  `, app.ctx);
+  const goneUrl = app.createdUrls.at(-1).url;
+  app.toastEl.textContent = '';
+  const goneRetryP = app.dispatchClick({ act: 'retry-photo', v: 'm-gone' });
+  await new Promise(r => setTimeout(r, 15));
+  // Stored day no longer contains m-gone when updateDay runs
+  app.storeData.set(`data/users/u1/app/days/${TEST_DATE}`, { date: TEST_DATE, meals: [] });
+  deferreds.shift().resolve({ id: '3'.repeat(32) });
+  await goneRetryP;
+
+  assert.equal(app.revokedUrls.includes(goneUrl), false, 'must not revoke fallback if target meal was not updated');
+  assert.equal(app.toastEl.textContent, '', 'must not toast photoSaved when target meal was missing');
 });
 
 function resolvePlaywright() {

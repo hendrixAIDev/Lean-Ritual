@@ -2601,6 +2601,7 @@ async function addMorePhoto(date, id, file, tag){
 }
 async function addMeal(mode, btn){
   if (S.busy.addMeal) return;
+  const date = S.date;
   const textEl = $("#m-text"), rawText = textEl ? String(textEl.value ?? "") : "";
   const text = rawText.trim();
   const type = document.querySelector('input[name="mtype"]:checked')?.value || "加餐";
@@ -2643,7 +2644,6 @@ async function addMeal(mode, btn){
       const f = S.mfill || {}, v = k => roundMacro(k, f[k]);
       if (MF.some(([k]) => v(k) != null)) m.est = {kcal:v("kcal"), protein:v("protein"), carbs:v("carbs"), fat:v("fat"), by:"manual", at:new Date().toISOString()};
     }
-    const date = S.date;
     try { await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }, {quiet:true}); } catch { return; }
     saved = true;
     const savedSet = new Set(picked);
@@ -3976,9 +3976,22 @@ document.addEventListener("click", async ev => {
     case "cu-del": updateDay(S.date, d => { d.custom = d.custom || {ex:[]}; d.custom.ex = (d.custom.ex || []).filter((_, i) => i !== +v); }).catch(()=>{}); break;
     case "ask-claude": await aiEstimate(S.date, v); break;
     case "retry-photo": {
-      const m = S.days[S.date]?.meals?.find(x => x.id === v), entry = S.files[v], f = entry?.blob; if (!m || !f || !S.assets) break;
+      const date = S.date, m = S.days[date]?.meals?.find(x => x.id === v), entry = S.files[v], f = entry?.blob; if (!m || !f || !S.assets) break;
       entry.key = entry.key || makeUploadKey();
-      try { const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id; await updateDay(S.date, d => { const x = d.meals.find(y => y.id === v); if (x) { x.photo = id; delete x.photoErr; delete x.thumb; } }); if (entry.url) { try { URL.revokeObjectURL(entry.url); } catch {} entry.url = null; } toast(t("toast.photoSaved")); }
+      try {
+        const id = (await uploadAssetWithRetry(f, "image/jpeg", entry.key)).id;
+        let updated = false;
+        await updateDay(date, d => {
+          updated = false;
+          const x = d.meals.find(y => y.id === v);
+          if (!x) return;
+          x.photo = id; delete x.photoErr; delete x.thumb; updated = true;
+        });
+        if (updated) {
+          if (entry.url) { try { URL.revokeObjectURL(entry.url); } catch {} entry.url = null; }
+          toast(t("toast.photoSaved"));
+        }
+      }
       catch (e) { toast(PHOTO_ERR(e?.code || "unknown"), 6000); }
       break;
     }
