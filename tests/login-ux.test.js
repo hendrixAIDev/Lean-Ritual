@@ -221,6 +221,14 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
       expect: "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。"
     },
     {
+      name: "register: stale consent revision (409 conflict)",
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
+      route: "/api/auth/sign-up/email",
+      status: 409,
+      body: { message: "Terms or privacy notice updated; refresh the page to review and accept the latest version" },
+      expect: "使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。"
+    },
+    {
       name: "resend: email validation error from better-call",
       setup: ui => ui.els["#resend"].onclick(),
       route: "/api/auth/send-verification-email",

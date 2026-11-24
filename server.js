@@ -233,7 +233,15 @@ async function handle(req, res){
       if (b?.consentTerms !== true || b?.consentSensitiveCrossBorder !== true) {
         throw httpErr(400, "consent_required", "请先勾选同意使用条款、隐私说明及敏感个人信息处理与跨境传输授权");
       }
-      const recorded = authentication.recordConsent(user.id);
+      const submittedVersion = typeof b?.consentVersion === "string" ? b.consentVersion.trim() : "";
+      if (submittedVersion !== CONSENT_VERSION) {
+        return send(res, 409, {
+          error: "consent_version_mismatch",
+          message: "使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
+          requiredConsentVersion: CONSENT_VERSION
+        });
+      }
+      const recorded = authentication.recordConsent(user.id, submittedVersion);
       return send(res, 200, { ok: true, ...recorded });
     }
     if (consentRequired) throw httpErr(403, "consent_required", "请先同意使用条款、隐私说明及数据处理授权");

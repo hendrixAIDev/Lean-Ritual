@@ -70,10 +70,11 @@ button.primary:disabled{opacity:.6}
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <div class="consent-box" id="cw" hidden>
-      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">。</span></span></label>
-      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明所述目的，处理我的健康/身体数据及餐食照片等敏感个人信息，并将相关数据跨境传输至美国（阿里云美西服务器、Google Gemini API 及备用通道 OpenRouter、Resend）。</span></label>
+      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 仅接收你的邮箱地址与验证/重置邮件内容，处理地区依其服务配置与政策而定）。</span></span></label>
+      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）Google Gemini API（启用且你主动使用 AI 时）：接收你提交的 AI 提示文字与餐食照片，处理地区与计费档位以服务端项目配置及供应商政策为准；（3）OpenRouter（仅在启用且 Gemini 主通道临时故障、限流或超时时作为备用 AI 通道）：接收该次请求的 AI 提示文字与照片，处理地区依其及底层供应商政策而定。</span></label>
     </div>
     <p class="err" id="err" role="status" aria-live="polite"></p>
+    <button type="button" id="reload-policy" hidden>刷新页面查看最新版本</button>
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>
     <button type="button" id="resend">重新发送验证邮件</button>
@@ -84,6 +85,7 @@ button.primary:disabled{opacity:.6}
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
+  const DISPLAYED_CONSENT_VERSION = "2026-11-24";
   const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
   const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
@@ -147,8 +149,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "使用条款",
       "consent.termsMid": "和",
       "consent.privacyLink": "隐私说明",
-      "consent.termsPost": "。",
-      "consent.sensitive": "我单独同意按隐私说明所述目的，处理我的健康/身体数据及餐食照片等敏感个人信息，并将相关数据跨境传输至美国（阿里云美西服务器、Google Gemini API 及备用通道 OpenRouter、Resend）。",
+      "consent.termsPost": "（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 仅接收你的邮箱地址与验证/重置邮件内容，处理地区依其服务配置与政策而定）。",
+      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）Google Gemini API（启用且你主动使用 AI 时）：接收你提交的 AI 提示文字与餐食照片，处理地区与计费档位以服务端项目配置及供应商政策为准；（3）OpenRouter（仅在启用且 Gemini 主通道临时故障、限流或超时时作为备用 AI 通道）：接收该次请求的 AI 提示文字与照片，处理地区依其及底层供应商政策而定。",
+      "btn.reloadPolicy": "刷新页面查看最新版本",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
       "msg.network": "连不上服务器。",
@@ -192,6 +195,7 @@ button.primary:disabled{opacity:.6}
       "err.INVITE_REQUIRED": "需要有效邀请码才能注册。",
       "err.INVITE_INVALID": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
       "err.CONSENT_REQUIRED": "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。",
+      "err.CONSENT_OUTDATED": "使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
       "err.CONFIRM_DELETE_PW": "请输入密码以确认删除账号。"
     },
     en: {
@@ -221,8 +225,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "Terms of Use",
       "consent.termsMid": " and ",
       "consent.privacyLink": "Privacy Notice",
-      "consent.termsPost": ".",
-      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data and meal photos) and its cross-border transfer to the US (Alibaba Cloud US West, Google Gemini API with OpenRouter backup, and Resend) for the stated purposes.",
+      "consent.termsPost": " (version 2026-11-24; including transactional account emails sent via Resend, which receives only your email address and verification/reset email content, with processing location governed by Resend's configuration and policies).",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-24) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) Google Gemini API (when enabled and you invoke AI) — the AI prompts and meal photos you submit, with processing location and billing tier governed by server configuration and provider policies; (3) OpenRouter (backup AI path only if Gemini fails, times out, or hits limits) — that request's AI prompts and photos, with processing location governed by OpenRouter and underlying provider policies.",
+      "btn.reloadPolicy": "Reload page to review latest version",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
       "msg.network": "Cannot reach server.",
@@ -266,6 +271,7 @@ button.primary:disabled{opacity:.6}
       "err.INVITE_REQUIRED": "A valid invite code is required to sign up.",
       "err.INVITE_INVALID": "Invite code is invalid, expired, already used, or for another email.",
       "err.CONSENT_REQUIRED": "Please check both boxes to agree to the Terms & Privacy Notice and separately consent to sensitive data processing and cross-border transfer.",
+      "err.CONSENT_OUTDATED": "The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before signing up.",
       "err.CONFIRM_DELETE_PW": "Please enter your password to confirm account deletion."
     }
   };
@@ -333,6 +339,7 @@ button.primary:disabled{opacity:.6}
     "invitation required": "err.INVITE_REQUIRED",
     "invitation is invalid, expired, used, or belongs to another email": "err.INVITE_INVALID",
     "consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required": "err.CONSENT_REQUIRED",
+    "terms or privacy notice updated; refresh the page to review and accept the latest version": "err.CONSENT_OUTDATED",
     "email changes are unavailable": "err.EMAIL_CAN_NOT_BE_UPDATED",
     "confirm your password to delete the account": "err.CONFIRM_DELETE_PW",
     "too many requests": "err.TOO_MANY_REQUESTS",
@@ -374,7 +381,11 @@ button.primary:disabled{opacity:.6}
   function mapAuthError(j, status){ return t(authErrorKey(j, status)); }
 
   let bannerKey = null, errKey = null;
-  function setErr(key){ errKey = key; const el = $("#err"); if (el) el.textContent = key ? t(key) : ""; }
+  function setErr(key){
+    errKey = key;
+    const el = $("#err"); if (el) el.textContent = key ? t(key) : "";
+    const rb = $("#reload-policy"); if (rb) rb.hidden = key !== "err.CONSENT_OUTDATED";
+  }
   function setBanner(key){ bannerKey = key; if (!banner) return; banner.hidden = !key; banner.textContent = key ? t(key) : ""; }
   function clearBanner(){ setBanner(null); }
   const setTxt = (sel, key) => { const el = $(sel); if (el) el.textContent = t(key); };
@@ -413,6 +424,7 @@ button.primary:disabled{opacity:.6}
     setTxt("#c-privacy-link", "consent.privacyLink");
     setTxt("#c-terms-post", "consent.termsPost");
     setTxt("#lbl-c-sensitive", "consent.sensitive");
+    setTxt("#reload-policy", "btn.reloadPolicy");
     const helpLink = $("#help-link");
     if (helpLink) helpLink.href = t("hint.helpMailto");
     if ($("#go")) $("#go").textContent = t("go." + mode);
@@ -440,6 +452,8 @@ button.primary:disabled{opacity:.6}
   if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
   $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
   $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
+  const reloadPolicyBtn = $("#reload-policy");
+  if (reloadPolicyBtn) reloadPolicyBtn.onclick = () => location.reload();
   applyLangUI();
   setMode(mode);
   if(params.has("error")) setErr(params.get("error")==="TOKEN_EXPIRED"?"err.TOKEN_EXPIRED":"err.INVALID_TOKEN");
@@ -464,7 +478,7 @@ button.primary:disabled{opacity:.6}
     if(mode==="register"){
       const cTerms=$("#c-terms"), cSens=$("#c-sensitive");
       if((cTerms && !cTerms.checked) || (cSens && !cSens.checked)){ setErr("err.CONSENT_REQUIRED"); $("#go").disabled=false; return; }
-      body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true};
+      body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
     }
     if(mode==="forgot")body={email,redirectTo:"/login.html"};
     if(mode==="reset")body={token:params.get("token"),newPassword:password};
@@ -481,7 +495,7 @@ button.primary:disabled{opacity:.6}
     }catch{setErr("err.fallback")}finally{$("#go").disabled=false}
   };
   if (typeof window !== "undefined") {
-    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N };
+    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N, consentVersion: DISPLAYED_CONSENT_VERSION };
     if (window.ritualErrorReporter) window.ritualErrorReporter.configure({ getPage: () => "login", getLang: () => curLang });
   }
 })();

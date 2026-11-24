@@ -754,7 +754,7 @@ test("HTTP integration: POST /api/feedback, export, CLI reader, deletion, and ba
   const register = async inv => {
     const r = await req("/api/auth/sign-up/email", {
       email: inv.email, name: "Tester", password: pw, invitation: inv.token, callbackURL: "/login.html",
-      consentTerms: true, consentSensitiveCrossBorder: true
+      consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24"
     });
     assert.equal(r.status, 200, await r.clone().text());
     const mails = fs.readdirSync(path.join(dir, "mail")).map(f => JSON.parse(fs.readFileSync(path.join(dir, "mail", f), "utf8")));

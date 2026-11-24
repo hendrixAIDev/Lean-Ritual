@@ -40,7 +40,7 @@ function readMails(dir) {
     .map(f => JSON.parse(fs.readFileSync(path.join(mailDir, f), 'utf8')));
 }
 
-async function startLocalServer(extraEnv = {}) {
+async function startLocalServer(extraEnv = {}, { nodeArgs = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-browser-'));
   const port = await getFreePort();
   const base = `http://127.0.0.1:${port}`;
@@ -55,9 +55,10 @@ async function startLocalServer(extraEnv = {}) {
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
     OPENROUTER_API_KEY: '',
+    GEMINI_API_KEY: '',
     ...extraEnv
   };
-  const server = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [...nodeArgs, 'server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   server.stderr.on('data', d => { stderr += d.toString(); });
   await new Promise((resolve, reject) => {
@@ -515,10 +516,21 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     }));
   });
   await new Promise(r => provider.listen(providerPort, '127.0.0.1', r));
+  const preloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-smoke-preload-'));
+  const preloadPath = path.join(preloadDir, 'mock-openrouter.cjs');
+  fs.writeFileSync(preloadPath, `'use strict';
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url;
+      if (url === 'https://openrouter.ai/api/v1/chat/completions') return origFetch('http://127.0.0.1:${providerPort}/v1/chat/completions', init);
+      return origFetch(input, init);
+    };
+  `);
   const srv = await startLocalServer({
-    OPENROUTER_API_KEY: 'local-test-provider-key',
-    OPENROUTER_BASE: `http://127.0.0.1:${providerPort}/v1`
-  });
+    OPENROUTER_API_KEY: 'local-test-provider-key'
+  }, { nodeArgs: ['--require', preloadPath] });
+  const origStop = srv.stop;
+  srv.stop = async () => { try { await origStop(); } finally { fs.rmSync(preloadDir, { recursive: true, force: true }); } };
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);

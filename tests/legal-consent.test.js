@@ -106,13 +106,32 @@ test("privacy.html has no draft wording, covers all current disclosures, and lin
     assert.ok(!html.includes(forbidden), `privacy.html must not contain draft wording: ${forbidden}`);
   }
 
-  for (const term of ["2026-11-24", "杰瑞智能技术服务部", "受邀免费试用", "阿里云美国西部", "Google Gemini API", "OpenRouter", "Resend", "意见反馈", "最小化的错误报告", "同意版本号及时间戳", 'href="/terms.html"']) {
+  for (const term of ["2026-11-24", "杰瑞智能技术服务部", "受邀免费试用", "阿里云美国西部", "Google Gemini API", "OpenRouter", "Resend", "意见反馈", "最小化的错误报告", "同意版本号及时间戳", "假名化标识", "不会在未提示的情况下静默清除", 'href="/terms.html"']) {
     assert.ok(zh.includes(term), `privacy.html zh missing: ${term}`);
   }
-  for (const term of ["November 24, 2026", "2026-11-24", "Jierui Intelligent Technology Service Department", "invitation-only free trial", "Alibaba Cloud US West", "Google Gemini API", "OpenRouter", "Resend", "Send feedback", "minimal error reports", "consent version and timestamp", 'href="/terms.html"']) {
+  assert.ok(!zh.includes("匿名标识"), "privacy.html zh must describe HMAC identifier as 假名化标识, not 匿名标识");
+  for (const term of ["November 24, 2026", "2026-11-24", "Jierui Intelligent Technology Service Department", "invitation-only free trial", "Alibaba Cloud US West", "Google Gemini API", "OpenRouter", "Resend", "Send feedback", "minimal error reports", "consent version and timestamp", "HMAC-derived pseudonymous", "rather than discarding them silently", 'href="/terms.html"']) {
     assert.ok(en.includes(term), `privacy.html en missing: ${term}`);
   }
   assert.doesNotMatch(en, CJK_RE, "privacy.html #doc-en must have zero CJK characters");
+
+  // Consent version constant stays synchronized across backend, login, app, privacy, and terms
+  const loginHtml = fs.readFileSync(path.join(ROOT, "public/login.html"), "utf8");
+  const appHtml = fs.readFileSync(path.join(ROOT, "app/index.html"), "utf8");
+  const termsHtml = fs.readFileSync(path.join(ROOT, "public/terms.html"), "utf8");
+  assert.equal(loginHtml.match(/const DISPLAYED_CONSENT_VERSION = "([^"]+)"/)?.[1], CONSENT_VERSION);
+  assert.equal(appHtml.match(/const CONSENT_DOC_VERSION = "([^"]+)"/)?.[1], CONSENT_VERSION);
+  assert.ok(html.includes(`版本：${CONSENT_VERSION}`) && html.includes(`Version: ${CONSENT_VERSION}`));
+  assert.ok(termsHtml.includes(`版本：${CONSENT_VERSION}`) && termsHtml.includes(`Version: ${CONSENT_VERSION}`));
+
+  // Sign-up and returning-user consent checkboxes distinguish Resend (email-only) from host and optional AI providers
+  assert.match(loginHtml, /Resend 仅接收你的邮箱地址与验证\/重置邮件内容/);
+  assert.match(loginHtml, /Resend, which receives only your email address and verification\/reset email content/);
+  assert.match(loginHtml, /阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录/);
+  assert.match(loginHtml, /Google Gemini API（启用且你主动使用 AI 时）/);
+  assert.match(loginHtml, /OpenRouter（仅在启用且 Gemini 主通道临时故障、限流或超时时作为备用 AI 通道）/);
+  assert.match(appHtml, /Resend 仅接收你的邮箱地址与验证\/重置邮件内容/);
+  assert.match(appHtml, /Resend, which receives only your email address and verification\/reset email content/);
 });
 
 test("terms.html covers all required trial terms, health disclaimer, zh/en parity, language toggle, and links from login, Me, and privacy", () => {
@@ -227,20 +246,22 @@ test("signup requires both separate consents without burning invite, records ver
     body: JSON.stringify(body)
   }));
   const baseBody = { email: inv.email, name: "Fresh", password: "fresh-strong-password", invitation: inv.token };
-  for (const badConsent of [
-    {},
-    { consentTerms: true },
-    { consentSensitiveCrossBorder: true },
-    { consentTerms: true, consentSensitiveCrossBorder: false },
-    { consentTerms: "true", consentSensitiveCrossBorder: "true" }
+  for (const [badConsent, expectedStatus] of [
+    [{}, 400],
+    [{ consentTerms: true, agreedConsentVersion: CONSENT_VERSION }, 400],
+    [{ consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION }, 400],
+    [{ consentTerms: true, consentSensitiveCrossBorder: false, agreedConsentVersion: CONSENT_VERSION }, 400],
+    [{ consentTerms: "true", consentSensitiveCrossBorder: "true", agreedConsentVersion: CONSENT_VERSION }, 400],
+    [{ consentTerms: true, consentSensitiveCrossBorder: true }, 409],
+    [{ consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-01-01" }, 409]
   ]) {
     const r = await req("sign-up/email", { ...baseBody, ...badConsent });
-    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(badConsent)}`);
+    assert.equal(r.status, expectedStatus, `expected ${expectedStatus} for ${JSON.stringify(badConsent)}`);
     assert.equal(inspect.prepare("SELECT consumed FROM launch_invites WHERE email = ?").get(inv.email).consumed, null, "invite must remain unconsumed");
   }
 
-  // 4. Both true succeeds and stamps CONSENT_VERSION + ISO timestamp
-  const ok = await req("sign-up/email", { ...baseBody, consentTerms: true, consentSensitiveCrossBorder: true });
+  // 4. Both true + matching displayed version succeeds and stamps CONSENT_VERSION + ISO timestamp
+  const ok = await req("sign-up/email", { ...baseBody, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION });
   assert.equal(ok.status, 200, await ok.clone().text());
   await svc.auth.handler(new Request(mails[0].url));
   const login = await req("sign-in/email", { email: inv.email, password: baseBody.password });
@@ -281,7 +302,7 @@ test("HTTP consent gate: existing unconsented user is blocked from app APIs & bl
   const signupAndLogin = async inv => {
     assert.equal((await api("/api/auth/sign-up/email", {
       email: inv.email, name: "Existing", password: pw, invitation: inv.token,
-      callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true
+      callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION
     })).status, 200);
     const mail = fs.readdirSync(path.join(srv.dir, "mail"))
       .map(f => JSON.parse(fs.readFileSync(path.join(srv.dir, "mail", f), "utf8")))
@@ -346,10 +367,21 @@ test("HTTP consent gate: existing unconsented user is blocked from app APIs & bl
   assert.equal(expBefore.find(x => x.kind === "document").data.weight, 71);
   assert.ok(expBefore.some(x => x.kind === "photo" && x.id === blobA.id));
 
-  // 4. POST /api/account/consent rejects partial consent and accepts both (idempotently)
-  assert.equal((await api("/api/account/consent", { consentTerms: true }, cookieA)).status, 400);
-  assert.equal((await api("/api/account/consent", { consentSensitiveCrossBorder: true }, cookieA)).status, 400);
-  const acceptRes = await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true }, cookieA);
+  // 4. POST /api/account/consent rejects partial consent (400) and missing/stale revision (409), then accepts matching revision (idempotently)
+  assert.equal((await api("/api/account/consent", { consentTerms: true, consentVersion: CONSENT_VERSION }, cookieA)).status, 400);
+  assert.equal((await api("/api/account/consent", { consentSensitiveCrossBorder: true, consentVersion: CONSENT_VERSION }, cookieA)).status, 400);
+  const missingVerRes = await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true }, cookieA);
+  assert.equal(missingVerRes.status, 409);
+  assert.equal((await missingVerRes.json()).error, "consent_version_mismatch");
+  const staleVerRes = await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true, consentVersion: "2026-01-01" }, cookieA);
+  assert.equal(staleVerRes.status, 409);
+  const staleVerBody = await staleVerRes.json();
+  assert.equal(staleVerBody.error, "consent_version_mismatch");
+  assert.equal(staleVerBody.requiredConsentVersion, CONSENT_VERSION);
+  // Still gated after rejected stale revision
+  assert.equal((await api(docA, null, cookieA)).status, 403);
+
+  const acceptRes = await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true, consentVersion: CONSENT_VERSION }, cookieA);
   assert.equal(acceptRes.status, 200);
   const accepted = await acceptRes.json();
   assert.equal(accepted.ok, true);
@@ -357,7 +389,7 @@ test("HTTP consent gate: existing unconsented user is blocked from app APIs & bl
   assert.match(accepted.consentedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
   // Repeat call preserves original consentedAt timestamp
-  const repeat = await (await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true }, cookieA)).json();
+  const repeat = await (await api("/api/account/consent", { consentTerms: true, consentSensitiveCrossBorder: true, consentVersion: CONSENT_VERSION }, cookieA)).json();
   assert.equal(repeat.consentedAt, accepted.consentedAt);
 
   // 5. After consenting, /api/me unlocks, app APIs & blobs work, and export includes consent version + timestamp
@@ -457,11 +489,25 @@ test("headless Chromium: sign-up checkboxes, setup health disclaimer, AI disclai
   await page.locator('#lang-switch [data-lang="en"]').click();
   assert.doesNotMatch(await textExcludingLangToggle(), CJK_RE);
 
-  // Check both and submit
+  // Stale-tab sign-up: simulate an older tab submitting a previous revision -> server returns 409 without burning invite, UI prompts reload
+  let rewriteStaleSignup = true;
+  await page.route("**/api/auth/sign-up/email", async route => {
+    if (!rewriteStaleSignup) return route.continue();
+    rewriteStaleSignup = false;
+    const orig = JSON.parse(route.request().postData() || "{}");
+    assert.equal(orig.agreedConsentVersion, CONSENT_VERSION, "sign-up sends displayed agreedConsentVersion");
+    await route.continue({ postData: JSON.stringify({ ...orig, agreedConsentVersion: "2026-01-01" }) });
+  });
   await page.locator("#c-sensitive").check();
   await page.locator("#go").click();
+  await page.locator("#reload-policy").waitFor({ state: "visible" });
+  assert.match(await page.locator("#err").textContent(), /updated.*reload/i);
+
+  // Submitting again with current displayed revision succeeds (proving invite was not burned by 409)
+  await page.locator("#go").click();
   await page.getByText("Check your email and verify your address before signing in.", { exact: true }).waitFor();
-  assert.equal(signupCalls, 1);
+  assert.equal(signupCalls, 2);
+  await page.unroute("**/api/auth/sign-up/email");
 
   // Verify email & sign in -> lands on setup flow with health disclaimer visible before targets
   const mail1 = fs.readdirSync(path.join(srv.dir, "mail"))
@@ -507,7 +553,19 @@ test("headless Chromium: sign-up checkboxes, setup health disclaimer, AI disclai
   assert.ok((await page.locator(".ai-disclaimer").count()) >= 2);
   assert.match(await page.locator(".ai-disclaimer").first().textContent(), /不构成医疗建议/);
 
-  // 2. Simulate existing unconsented user on next load -> sees one-time consent prompt, can export, cannot use app until accepted
+  // 2. Simulate existing unconsented user WITH a preloaded unsynced local workout draft on next load
+  const draftDate = "2026-11-23";
+  await page.evaluate(({ uid, draftDate }) => {
+    const drafts = {
+      [`${draftDate}|push`]: {
+        key: "push",
+        exercises: [{ name: "上斜杠铃卧推", sets: [{ w: "62.5", r: "6" }] }],
+        feel: "3", pain: "none", painArea: "", note: "Offline pre-rollout workout"
+      }
+    };
+    localStorage.setItem(`bj-user:${uid}:bj-drafts`, JSON.stringify(drafts));
+  }, { uid: inv1.userId, draftDate });
+
   const authDb = new DatabaseSync(path.join(srv.dir, "auth.sqlite"));
   authDb.prepare("UPDATE user SET consentVersion = NULL, consentedAt = NULL WHERE id = ?").run(inv1.userId);
   authDb.close();
@@ -518,6 +576,19 @@ test("headless Chromium: sign-up checkboxes, setup health disclaimer, AI disclai
   assert.equal(await page.locator("#cg-terms").isChecked(), false);
   assert.equal(await page.locator("#cg-sensitive").isChecked(), false);
   await assertAxeClean(context, page, "consent-gate-zh");
+
+  // Gated sign-out with unsynced local draft MUST warn and preserve draft if user cancels
+  let gatedPromptMsg = "";
+  page.once("dialog", async dialog => {
+    gatedPromptMsg = dialog.message();
+    await dialog.dismiss();
+  });
+  await page.locator('#consent-gate [data-act="logout"]').click();
+  await page.waitForTimeout(150);
+  assert.match(gatedPromptMsg, /未同步.*训练草稿/);
+  assert.equal(await page.locator("#consent-gate").isVisible(), true, "cancelling gated sign-out stays on consent gate");
+  const preservedDraft = await page.evaluate(uid => localStorage.getItem(`bj-user:${uid}:bj-drafts`), inv1.userId);
+  assert.ok(preservedDraft && preservedDraft.includes("Offline pre-rollout workout"), "local draft must be preserved when gated sign-out is cancelled");
 
   // Switch consent gate to English & verify zero Chinese + axe clean
   await page.locator('[data-act="lang"][data-v="en"]').click();
@@ -538,10 +609,37 @@ test("headless Chromium: sign-up checkboxes, setup health disclaimer, AI disclai
   await page.locator('[data-act="consent-accept"]').click();
   await page.locator("#consent-err").waitFor({ state: "visible" });
 
-  // Checking both & accepting transitions straight into the app and persists across reload
+  // Stale-tab returning-user consent gate: intercept to send old revision -> server returns 409, UI prompts reload
+  let rewriteStaleGate = true;
+  await page.route("**/api/account/consent", async route => {
+    if (!rewriteStaleGate) return route.continue();
+    rewriteStaleGate = false;
+    const orig = JSON.parse(route.request().postData() || "{}");
+    assert.equal(orig.consentVersion, CONSENT_VERSION, "consent gate sends displayed consentVersion");
+    await route.continue({ postData: JSON.stringify({ ...orig, consentVersion: "2026-01-01" }) });
+  });
   await page.locator("#cg-sensitive").check();
   await page.locator('[data-act="consent-accept"]').click();
+  await page.locator('#consent-gate [data-act="reload-data"]').waitFor({ state: "visible" });
+  assert.match(await page.locator("#consent-err").textContent(), /updated.*reload/i);
+  await page.unroute("**/api/account/consent");
+
+  // Reload after stale-tab warning -> local draft still intact -> accept latest revision -> unlocks app and rescues draft
+  await page.reload();
+  await page.locator("#consent-gate").waitFor({ state: "visible" });
+  await page.locator("#cg-terms").check();
+  await page.locator("#cg-sensitive").check();
+  const rescuedP = page.waitForResponse(r => (
+    (new URL(r.url()).pathname === "/api/doc-commit" && r.request().method() === "POST" && (r.request().postData() || "").includes(draftDate)) ||
+    (new URL(r.url()).pathname === "/api/doc" && r.request().method() === "PUT" && r.url().includes(draftDate))
+  ) && r.status() === 200);
+  await page.locator('[data-act="consent-accept"]').click();
   await page.locator("nav#tabs").waitFor({ state: "visible" });
+  await rescuedP;
+  const bojinCheck = new DatabaseSync(path.join(srv.dir, "bojin.db"));
+  const rescuedRow = bojinCheck.prepare("SELECT data FROM docs WHERE path = ?").get(`data/users/${inv1.userId}/app/days/${draftDate}`);
+  bojinCheck.close();
+  assert.ok(rescuedRow && rescuedRow.data.includes("Offline pre-rollout workout"), "rescued draft must be persisted on server after accepting consent");
   await page.reload();
   await page.locator("nav#tabs").waitFor({ state: "visible" });
   assert.equal(await page.locator("#consent-gate").count(), 0);
@@ -569,6 +667,24 @@ test("headless Chromium: sign-up checkboxes, setup health disclaimer, AI disclai
   authDb2.prepare("UPDATE user SET consentVersion = NULL, consentedAt = NULL WHERE id = ?").run(inv2.userId);
   authDb2.close();
 
+  await page.locator("#e").fill(inv2.email);
+  await page.locator("#p").fill(pass);
+  await page.locator("#go").click();
+  await page.locator("#consent-gate").waitFor({ state: "visible" });
+  // Confirming gated sign-out with a preloaded local draft warns, then clears local draft and signs out
+  await page.evaluate(uid => {
+    localStorage.setItem(`bj-user:${uid}:bj-drafts`, JSON.stringify({
+      "2026-11-23|pull": { key: "pull", exercises: [{ name: "引体向上", sets: [{ w: "0", r: "8" }] }], feel: "", pain: "none", painArea: "", note: "Will discard on confirm" }
+    }));
+  }, inv2.userId);
+  let confirmMsg = "";
+  page.once("dialog", async dialog => { confirmMsg = dialog.message(); await dialog.accept(); });
+  await page.locator('#consent-gate [data-act="logout"]').click();
+  await page.waitForURL("**/login.html");
+  assert.match(confirmMsg, /unsynced workout drafts/i);
+  assert.equal(await page.evaluate(uid => localStorage.getItem(`bj-user:${uid}:bj-drafts`), inv2.userId), null);
+
+  // Sign back in as unconsented user 2 and delete account directly from consent gate
   await page.locator("#e").fill(inv2.email);
   await page.locator("#p").fill(pass);
   await page.locator("#go").click();

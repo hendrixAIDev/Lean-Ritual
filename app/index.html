@@ -190,6 +190,7 @@ details.how[open] > *:not(summary){margin-top:6px}
 // 独立部署版（window.ritual.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
 const HOSTED = true;
 const GUIDE_URL = "/guide.html";
+const CONSENT_DOC_VERSION = "2026-11-24";
 const ORDER = ["push","pull","legs"];
 function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
 const PROGRAM = {
@@ -825,11 +826,13 @@ const I18N = {
     "consent.intro":"薄肌日课已更新使用条款与隐私说明（版本 {ver}）。为继续使用应用，请先阅读并完成以下两项单独勾选确认。",
     "consent.termsPre":"我已满 18 周岁，阅读并同意",
     "consent.termsMid":"和",
-    "consent.termsPost":"。",
-    "consent.sensitive":"我单独同意按隐私说明所述目的，处理我的健康/身体数据及餐食照片等敏感个人信息，并将相关数据跨境传输至美国（阿里云美西服务器、Google Gemini API 及备用通道 OpenRouter、Resend）。",
+    "consent.termsPost":"（版本 {ver}；含账号事务性邮件通过 Resend 发送，Resend 仅接收你的邮箱地址与验证/重置邮件内容，处理地区依其服务配置与政策而定）。",
+    "consent.sensitive":"我单独同意按隐私说明（版本 {ver}）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）Google Gemini API（启用且你主动使用 AI 时）：接收你提交的 AI 提示文字与餐食照片，处理地区与计费档位以服务端项目配置及供应商政策为准；（3）OpenRouter（仅在启用且 Gemini 主通道临时故障、限流或超时时作为备用 AI 通道）：接收该次请求的 AI 提示文字与照片，处理地区依其及底层供应商政策而定。",
     "consent.acceptBtn":"同意并继续使用",
     "consent.saving":"提交中…",
     "consent.errRequired":"请先勾选以上两项同意后再继续。",
+    "consent.errOutdated":"使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
+    "consent.reloadBtn":"刷新页面查看最新版本",
     "consent.toastAccepted":"已记录你的同意，欢迎回来",
     "consent.altTitle":"暂不同意？",
     "consent.altHint":"在同意前你无法使用应用功能，但仍可随时导出全部个人数据、退出登录或永久删除账号。",
@@ -842,6 +845,7 @@ const I18N = {
     "account.errDeleteConfirm":"请填写密码并确认删除", "account.deleteFail":"删除未完成，请重试或联系管理员",
     "account.errUsername":"用户名用 3–32 个字母、数字、下划线、点或减号", "account.usernameSaved":"用户名已保存",
     "account.unsyncedLogoutConfirm":"本机还有未同步或未保存的训练草稿，现在退出登录会丢失本机上的这些草稿。仍要退出登录吗？",
+    "account.unsyncedLogoutGatedConfirm":"本机有尚未同步到服务器的训练草稿；在确认同意条款前无法上传这些草稿，现在退出登录会清除本机上的这些草稿。如需保留并同步，请点「取消」后先同意继续。仍要退出登录并放弃本机草稿吗？",
     "me.eyebrow":"我的", "me.heroTitle":"{stage}阶段 · 每日 {kcal} kcal",
     "me.targetsTitle":"每日目标", "me.kcalUnit":"热量 kcal",
     "me.formula":"算法：BMR 用 {formula} 算得 {bmr} kcal，乘活动系数 {af} 得 TDEE {tdee} kcal，{mult}{adj}。体重用 {wSrc} {w} kg{bfPart}。",
@@ -1228,11 +1232,13 @@ const I18N = {
     "consent.intro":"Lean Ritual has updated its Terms of Use and Privacy Notice (version {ver}). Please review and check both boxes below to continue using the app.",
     "consent.termsPre":"I am 18+ and agree to the ",
     "consent.termsMid":" and ",
-    "consent.termsPost":".",
-    "consent.sensitive":"I separately consent to the processing of my sensitive personal information (health/body data and meal photos) and its cross-border transfer to the US (Alibaba Cloud US West, Google Gemini API with OpenRouter backup, and Resend) for the stated purposes.",
+    "consent.termsPost":" (version {ver}; including transactional account emails sent via Resend, which receives only your email address and verification/reset email content, with processing location governed by Resend's configuration and policies).",
+    "consent.sensitive":"I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version {ver}) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) Google Gemini API (when enabled and you invoke AI) — the AI prompts and meal photos you submit, with processing location and billing tier governed by server configuration and provider policies; (3) OpenRouter (backup AI path only if Gemini fails, times out, or hits limits) — that request's AI prompts and photos, with processing location governed by OpenRouter and underlying provider policies.",
     "consent.acceptBtn":"Agree and continue",
     "consent.saving":"Saving…",
     "consent.errRequired":"Please check both consent boxes before continuing.",
+    "consent.errOutdated":"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before accepting.",
+    "consent.reloadBtn":"Reload page to review latest version",
     "consent.toastAccepted":"Consent recorded — welcome back",
     "consent.altTitle":"Prefer not to agree?",
     "consent.altHint":"You cannot use the app until you accept, but you can still export all your data, sign out, or permanently delete your account.",
@@ -1245,6 +1251,7 @@ const I18N = {
     "account.errDeleteConfirm":"Enter your password and check the confirmation box", "account.deleteFail":"Account deletion didn't complete. Retry or contact admin.",
     "account.errUsername":"Username must be 3–32 letters, numbers, _, ., or -", "account.usernameSaved":"Username saved",
     "account.unsyncedLogoutConfirm":"You have unsynced or unsaved workout drafts on this device. Signing out now will discard them. Sign out anyway?",
+    "account.unsyncedLogoutGatedConfirm":"You have unsynced workout drafts on this device that cannot be uploaded until you accept the updated consent. Signing out now will discard them on this device. Cancel to stay and accept consent so they sync, or confirm to sign out and discard them.",
     "me.eyebrow":"Me", "me.heroTitle":"{stage} · {kcal} kcal/day",
     "me.targetsTitle":"Daily Targets", "me.kcalUnit":"Calories kcal",
     "me.formula":"Formula: BMR via {formula} = {bmr} kcal × activity {af} = TDEE {tdee} kcal ({mult}{adj}). Using {wSrc} {w} kg{bfPart}.",
@@ -1333,6 +1340,7 @@ const API_ERR_EN = {
   storage_quota:"Photo storage limit reached. Delete unused photos or contact admin.",
   account_deleting:"Account deletion is in progress.",
   consent_required:"Please agree to the Terms, Privacy Notice, and data processing consent to continue.",
+  consent_version_mismatch:"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version.",
   sampling_disabled:"AI is not enabled on this server.",
   ai_failed:"AI is temporarily unavailable. Try again later or enter manually.",
   truncated:"AI response was cut off. Try again or shorten your note.",
@@ -1393,6 +1401,7 @@ const API_ERR_ZH = {
   storage_quota:"照片存储空间已达上限，请删除不需要的照片或联系管理员",
   account_deleting:"账号删除处理中，不能再写入或读取记录",
   consent_required:"请先同意使用条款、隐私说明及数据处理授权",
+  consent_version_mismatch:"使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
   sampling_disabled:"服务器没有配置 AI",
   ai_failed:"AI 服务暂时不可用，请稍后再试或手动填写",
   truncated:"AI 的回答太长被截断了",
@@ -2060,17 +2069,18 @@ function dateBar(){
 
 /* ---- 建档 ---- */
 function viewConsentGate(){
-  const ver = S.hostUser?.requiredConsentVersion || "2026-11-24";
+  const ver = CONSENT_DOC_VERSION;
+  const outdated = !!(S.consentOutdated || (S.hostUser?.requiredConsentVersion && S.hostUser.requiredConsentVersion !== ver));
   const d = S.consentDraft || {terms:false, sensitive:false};
-  const errText = S.consentErr ? t(S.consentErr) : S.consentErrObj ? apiErrMsg(S.consentErrObj, t("consent.errRequired")) : "";
+  const errText = outdated ? t("consent.errOutdated") : S.consentErr ? t(S.consentErr) : S.consentErrObj ? apiErrMsg(S.consentErrObj, t("consent.errRequired")) : "";
   return `<div class="stack" id="consent-gate">
   <div class="hero"><div class="row between"><span class="eyebrow">${esc(t("setup.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(t("consent.title"))}</h1>
   <p class="muted">${esc(t("consent.intro", {ver}))}</p></div>
   <section class="card">
-    <label class="checkline top-align" for="cg-terms"><input id="cg-terms" type="checkbox" ${d.terms?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.termsPre"))}<a href="/terms.html" target="_blank" rel="noopener">${esc(t("account.terms"))}</a>${esc(t("consent.termsMid"))}<a href="/privacy.html" target="_blank" rel="noopener">${esc(t("account.privacy"))}</a>${esc(t("consent.termsPost"))}</span></label>
-    <label class="checkline top-align" for="cg-sensitive"><input id="cg-sensitive" type="checkbox" ${d.sensitive?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.sensitive"))}</span></label>
+    <label class="checkline top-align" for="cg-terms"><input id="cg-terms" type="checkbox" ${d.terms?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.termsPre"))}<a href="/terms.html" target="_blank" rel="noopener">${esc(t("account.terms"))}</a>${esc(t("consent.termsMid"))}<a href="/privacy.html" target="_blank" rel="noopener">${esc(t("account.privacy"))}</a>${esc(t("consent.termsPost", {ver}))}</span></label>
+    <label class="checkline top-align" for="cg-sensitive"><input id="cg-sensitive" type="checkbox" ${d.sensitive?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.sensitive", {ver}))}</span></label>
     ${errText ? `<p id="consent-err" class="small" role="alert" style="color:var(--bad)">${esc(errText)}</p>` : ""}
-    <button type="button" class="btn primary block" data-act="consent-accept" ${S.busy.consent?"disabled":""}>${esc(S.busy.consent ? t("consent.saving") : t("consent.acceptBtn"))}</button>
+    ${outdated ? `<button type="button" class="btn primary block" data-act="reload-data">${esc(t("consent.reloadBtn"))}</button>` : `<button type="button" class="btn primary block" data-act="consent-accept" ${S.busy.consent?"disabled":""}>${esc(S.busy.consent ? t("consent.saving") : t("consent.acceptBtn"))}</button>`}
   </section>
   <section class="card"><h2>${esc(t("consent.altTitle"))}</h2>
     <p class="small muted">${esc(t("consent.altHint"))}</p>
@@ -3902,13 +3912,14 @@ document.addEventListener("click", async ev => {
       if (!terms || !sensitive) { S.consentErr = "consent.errRequired"; S.consentErrObj = null; render(); break; }
       S.busy.consent = true; S.consentErr = null; S.consentErrObj = null; render();
       try {
-        const res = await window.ritual.acceptConsent({consentTerms: true, consentSensitiveCrossBorder: true});
+        const res = await window.ritual.acceptConsent({consentTerms: true, consentSensitiveCrossBorder: true, consentVersion: CONSENT_DOC_VERSION});
         S.hostUser = {...(S.hostUser || {}), consentVersion: res.consentVersion, consentedAt: res.consentedAt, consentRequired: false};
-        S.consentRequired = false; S.consentDraft = null; S.consentErr = null; S.consentErrObj = null;
+        S.consentRequired = false; S.consentOutdated = false; S.consentDraft = null; S.consentErr = null; S.consentErrObj = null;
         await finishBootAfterConsent();
         toast(t("consent.toastAccepted"));
       } catch (e) {
-        S.consentErr = null; S.consentErrObj = e || {};
+        if (e?.code === "consent_version_mismatch") { S.consentOutdated = true; S.consentErr = "consent.errOutdated"; S.consentErrObj = null; }
+        else { S.consentErr = null; S.consentErrObj = e || {}; }
         render();
       } finally { S.busy.consent = false; if (S.consentRequired) render(); }
       break;
@@ -4214,24 +4225,29 @@ async function logout(btn){
   try {
     clearTimeout(syncDraft.t);
     const id = S.uid || storageUser;
-    let entries = S.consentRequired ? [] : localDraftEntries(id);
+    let entries = localDraftEntries(id);
     if (entries.length) {
-      let verified = await runBoundedVerify(entries);
-      if (verified) {
-        clearTimeout(syncDraft.t);
-        const afterFirst = localDraftEntries(id);
-        if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
-          entries = afterFirst;
-          verified = entries.length ? await runBoundedVerify(entries) : true;
-          if (verified) {
-            clearTimeout(syncDraft.t);
-            if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+      if (S.consentRequired) {
+        const ask = typeof confirm === "function" ? confirm : window?.confirm;
+        if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutGatedConfirm")))) return;
+      } else {
+        let verified = await runBoundedVerify(entries);
+        if (verified) {
+          clearTimeout(syncDraft.t);
+          const afterFirst = localDraftEntries(id);
+          if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
+            entries = afterFirst;
+            verified = entries.length ? await runBoundedVerify(entries) : true;
+            if (verified) {
+              clearTimeout(syncDraft.t);
+              if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+            }
           }
         }
-      }
-      if (!verified) {
-        const ask = typeof confirm === "function" ? confirm : window?.confirm;
-        if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutConfirm")))) return;
+        if (!verified) {
+          const ask = typeof confirm === "function" ? confirm : window?.confirm;
+          if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutConfirm")))) return;
+        }
       }
     }
     clearTimeout(syncDraft.t);

@@ -1068,7 +1068,7 @@ test('HTTP integration with test-injected fetch routing official HTTPS origins: 
  assert.deepEqual(cfg,{allowSignup:true,invite:true,ai:true});
 
  const password='temporary strong test password';
- assert.equal((await req('/api/auth/sign-up/email',{email:invitation.email,name:'Tester',password,invitation:invitation.token,callbackURL:'/login.html',consentTerms:true,consentSensitiveCrossBorder:true})).status,200);
+ assert.equal((await req('/api/auth/sign-up/email',{email:invitation.email,name:'Tester',password,invitation:invitation.token,callbackURL:'/login.html',consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:'2026-11-24'})).status,200);
  const mail=fs.readdirSync(path.join(dir,'mail')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'mail',f),'utf8'))).find(m=>m.kind==='verify');
  assert.equal((await fetch(mail.url,{redirect:'manual'})).status,302);
  const login=await req('/api/auth/sign-in/email',{email:invitation.email,password});
