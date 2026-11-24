@@ -288,7 +288,7 @@ test('workout grid inputs have unique localized accessible names, decimal weight
 
 test('chooser, inline editors, landmarks, live regions, reduced-motion, contrast tokens, and release exclusion', async () => {
   // 1. Static shell & CSS checks across app/index.html and public/*.html
-  for (const rel of ['app/index.html', 'public/index.html', 'public/login.html', 'public/privacy.html', 'public/guide.html']) {
+  for (const rel of ['app/index.html', 'public/index.html', 'public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html']) {
     const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.match(html, /<main\b/i, `${rel} must contain a <main> landmark`);
     assert.match(html, /:focus-visible\s*\{/, `${rel} must define visible focus styles`);
@@ -345,7 +345,7 @@ test('chooser, inline editors, landmarks, live regions, reduced-motion, contrast
       assert.ok(contrast(fg, bg) >= 4.5, `${themeName} ${pair} (${fg} on ${bg}) contrast ${contrast(fg, bg).toFixed(2)} < 4.5`);
     }
   }
-  for (const rel of ['public/login.html', 'public/privacy.html', 'public/guide.html']) {
+  for (const rel of ['public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html']) {
     const css = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     const light = parseVars(css.match(/:root\s*\{([^}]*)\}/)[1]);
     const dark = parseVars(css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{([^}]*)\}/)[1]);
@@ -497,6 +497,8 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
     await page.goto(`${srv.base}/login.html?invite=${encodeURIComponent(invite.token)}&email=${encodeURIComponent(invite.email)}`);
     await page.locator('#n').fill('A11y Tester');
     await page.locator('#p').fill(pwStr);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
     const mail = fs.readdirSync(path.join(srv.dir, 'mail'))
@@ -620,6 +622,9 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
     try {
       await page.goto(`${srv.base}/privacy.html?lang=${cfg.lang}`);
       await assertAxeClean(context, page, `${cfg.name}/privacy`);
+
+      await page.goto(`${srv.base}/terms.html?lang=${cfg.lang}`);
+      await assertAxeClean(context, page, `${cfg.name}/terms`);
 
       await page.goto(`${srv.base}/guide.html?lang=${cfg.lang}`);
       await assertAxeClean(context, page, `${cfg.name}/guide`);

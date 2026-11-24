@@ -20,12 +20,12 @@ const http=require('node:http');
   await page.exposeFunction('recordCSP', value=>violations.push(value));
   await page.addInitScript(()=>document.addEventListener('securitypolicyviolation', e=>window.recordCSP(e.violatedDirective+': '+e.blockedURI)));
   page.on('console', m=>{if(m.type()==='error' && /Content Security Policy|Refused to|unsafe-eval/i.test(m.text())) failures.push(m.text());});
-  for(const route of ['/login.html','/privacy.html','/guide.html']) { await page.goto(base+route); }
+  for(const route of ['/login.html','/privacy.html','/terms.html','/guide.html']) { await page.goto(base+route); }
   page.on('pageerror',e=>failures.push(e.message));
   page.on('request',r=>{if(/^https?:/.test(r.url())&&!r.url().startsWith(base))external.push(r.url());});
   page.setDefaultTimeout(15000);
   await page.goto(invite.url);
-  await page.locator('#n').fill('Browser tester');await page.locator('#p').fill('browser strong password');await page.locator('#go').click();
+  await page.locator('#n').fill('Browser tester');await page.locator('#p').fill('browser strong password');await page.locator('#c-terms').check();await page.locator('#c-sensitive').check();await page.locator('#go').click();
   await page.getByText('请查收验证邮件，验证后再登录。',{exact:true}).waitFor();
   const mail=fs.readdirSync(path.join(dir,'mail')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'mail',f),'utf8'))).find(m=>m.kind==='verify');
   await page.goto(mail.url);

@@ -151,7 +151,7 @@ test('manifest.webmanifest has valid fields, matching theme tokens, existing PNG
   for (const swName of ['sw.js', 'service-worker.js', 'worker.js']) {
     assert.equal(fs.existsSync(path.join(ROOT, 'public', swName)), false, `unexpected ${swName}`);
   }
-  for (const rel of ['app/index.html', 'public/index.html', 'public/login.html', 'public/privacy.html', 'public/guide.html', 'public/shim.js']) {
+  for (const rel of ['app/index.html', 'public/index.html', 'public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html', 'public/shim.js']) {
     const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.doesNotMatch(text, /serviceWorker\s*\.\s*register/i, `${rel} must not register a service worker`);
   }
@@ -163,6 +163,7 @@ test('all HTML pages include manifest, icons, light/dark theme-color, iOS standa
     { file: 'public/index.html', cover: true },
     { file: 'public/login.html', cover: true },
     { file: 'public/privacy.html', cover: false },
+    { file: 'public/terms.html', cover: false },
     { file: 'public/guide.html', cover: false }
   ];
   for (const { file, cover } of pages) {
@@ -317,7 +318,7 @@ test('headless Chromium detects web app manifest and loads icons across all page
     ]);
   }
 
-  for (const route of ['/login.html', '/privacy.html', '/guide.html']) {
+  for (const route of ['/login.html', '/privacy.html', '/terms.html', '/guide.html']) {
     await page.goto(`${srv.base}${route}`);
     await assertManifestAndHeadOnPage(route);
   }
@@ -327,6 +328,8 @@ test('headless Chromium detects web app manifest and loads icons across all page
   await page.goto(`${srv.base}/login.html?invite=${encodeURIComponent(invite.token)}&email=${encodeURIComponent(invite.email)}`);
   await page.locator('#n').fill('PWA Tester');
   await page.locator('#p').fill(pwStr);
+  await page.locator('#c-terms').check();
+  await page.locator('#c-sensitive').check();
   await page.locator('#go').click();
   await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
   const mail = fs.readdirSync(path.join(srv.dir, 'mail'))

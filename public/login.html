@@ -38,6 +38,10 @@ p{margin:0 0 20px;color:var(--muted)}
 .tabs button.on{border-color:var(--accent);font-weight:700}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 input{font:inherit;font-size:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.consent-box{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.checkline{display:flex;flex-direction:row;align-items:flex-start;gap:10px;min-height:44px;padding:2px 0;font-size:13px;line-height:1.5;color:var(--ink);cursor:pointer}
+.checkline input[type="checkbox"]{width:20px;height:20px;min-height:0;padding:0;margin:2px 0 0;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
+.checkline a{color:var(--accent);text-decoration:underline}
 button{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
 button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;cursor:pointer}
 button.primary:disabled{opacity:.6}
@@ -65,11 +69,15 @@ button.primary:disabled{opacity:.6}
     <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" inputmode="email" autocomplete="email" required autocapitalize="off" spellcheck="false"></label>
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <div class="consent-box" id="cw" hidden>
+      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">。</span></span></label>
+      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明所述目的，处理我的健康/身体数据及餐食照片等敏感个人信息，并将相关数据跨境传输至美国（阿里云美西服务器、Google Gemini API 及备用通道 OpenRouter、Resend）。</span></label>
+    </div>
     <p class="err" id="err" role="status" aria-live="polite"></p>
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>
     <button type="button" id="resend">重新发送验证邮件</button>
-    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><span class="hint-links"><a id="privacy-link" href="/privacy.html">隐私说明</a><a id="help-link" href="mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88">无法登录？发邮件反馈</a></span></p>
+    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><span class="hint-links"><a id="terms-link" href="/terms.html">使用条款</a><a id="privacy-link" href="/privacy.html">隐私说明</a><a id="help-link" href="mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88">无法登录？发邮件反馈</a></span></p>
   </form>
 </main>
 <script src="/client-errors.js" referrerpolicy="no-referrer"></script>
@@ -131,9 +139,16 @@ button.primary:disabled{opacity:.6}
       "btn.forgot": "忘记密码",
       "btn.resend": "重新发送验证邮件",
       "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
+      "hint.terms": "使用条款",
       "hint.privacy": "隐私说明",
       "hint.help": "无法登录？发邮件反馈",
       "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88",
+      "consent.termsPre": "我已满 18 周岁，阅读并同意",
+      "consent.termsLink": "使用条款",
+      "consent.termsMid": "和",
+      "consent.privacyLink": "隐私说明",
+      "consent.termsPost": "。",
+      "consent.sensitive": "我单独同意按隐私说明所述目的，处理我的健康/身体数据及餐食照片等敏感个人信息，并将相关数据跨境传输至美国（阿里云美西服务器、Google Gemini API 及备用通道 OpenRouter、Resend）。",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
       "msg.network": "连不上服务器。",
@@ -176,6 +191,7 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "提交的信息格式不正确，请刷新页面后重试。",
       "err.INVITE_REQUIRED": "需要有效邀请码才能注册。",
       "err.INVITE_INVALID": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
+      "err.CONSENT_REQUIRED": "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。",
       "err.CONFIRM_DELETE_PW": "请输入密码以确认删除账号。"
     },
     en: {
@@ -197,9 +213,16 @@ button.primary:disabled{opacity:.6}
       "btn.forgot": "Forgot password?",
       "btn.resend": "Resend verification email",
       "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
+      "hint.terms": "Terms of Use",
       "hint.privacy": "Privacy Notice",
       "hint.help": "Can't sign in? Email feedback",
       "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20Sign-in%20Feedback",
+      "consent.termsPre": "I am 18+ and agree to the ",
+      "consent.termsLink": "Terms of Use",
+      "consent.termsMid": " and ",
+      "consent.privacyLink": "Privacy Notice",
+      "consent.termsPost": ".",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data and meal photos) and its cross-border transfer to the US (Alibaba Cloud US West, Google Gemini API with OpenRouter backup, and Resend) for the stated purposes.",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
       "msg.network": "Cannot reach server.",
@@ -242,6 +265,7 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "Invalid request format. Please refresh and try again.",
       "err.INVITE_REQUIRED": "A valid invite code is required to sign up.",
       "err.INVITE_INVALID": "Invite code is invalid, expired, already used, or for another email.",
+      "err.CONSENT_REQUIRED": "Please check both boxes to agree to the Terms & Privacy Notice and separately consent to sensitive data processing and cross-border transfer.",
       "err.CONFIRM_DELETE_PW": "Please enter your password to confirm account deletion."
     }
   };
@@ -308,6 +332,7 @@ button.primary:disabled{opacity:.6}
   const MSG_TO_KEY = {
     "invitation required": "err.INVITE_REQUIRED",
     "invitation is invalid, expired, used, or belongs to another email": "err.INVITE_INVALID",
+    "consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required": "err.CONSENT_REQUIRED",
     "email changes are unavailable": "err.EMAIL_CAN_NOT_BE_UPDATED",
     "confirm your password to delete the account": "err.CONFIRM_DELETE_PW",
     "too many requests": "err.TOO_MANY_REQUESTS",
@@ -379,8 +404,15 @@ button.primary:disabled{opacity:.6}
     setTxt("#forgot", "btn.forgot");
     setTxt("#resend", "btn.resend");
     setTxt("#hint-text", "hint.body");
+    setTxt("#terms-link", "hint.terms");
     setTxt("#privacy-link", "hint.privacy");
     setTxt("#help-link", "hint.help");
+    setTxt("#c-terms-pre", "consent.termsPre");
+    setTxt("#c-terms-link", "consent.termsLink");
+    setTxt("#c-terms-mid", "consent.termsMid");
+    setTxt("#c-privacy-link", "consent.privacyLink");
+    setTxt("#c-terms-post", "consent.termsPost");
+    setTxt("#lbl-c-sensitive", "consent.sensitive");
     const helpLink = $("#help-link");
     if (helpLink) helpLink.href = t("hint.helpMailto");
     if ($("#go")) $("#go").textContent = t("go." + mode);
@@ -396,6 +428,8 @@ button.primary:disabled{opacity:.6}
   }
   function setMode(m){
     mode=m; $("#nw").hidden=m!=="register"; $("#iw").hidden=m!=="register";
+    const cw=$("#cw"); if(cw) cw.hidden=m!=="register";
+    if(m!=="register"){ if($("#c-terms")) $("#c-terms").checked=false; if($("#c-sensitive")) $("#c-sensitive").checked=false; }
     $("#pw").hidden=["forgot","resend"].includes(m); $("#p").required=!$("#pw").hidden;
     $("#ew").hidden=m==="reset"; $("#e").required=m!=="reset";
     $("#p").autocomplete=m==="login"?"current-password":"new-password";
@@ -427,7 +461,11 @@ button.primary:disabled{opacity:.6}
     const email=$("#e").value.trim(), password=$("#p").value;
     const routes={login:"sign-in/email",register:"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
     let body={email,password};
-    if(mode==="register")body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1"};
+    if(mode==="register"){
+      const cTerms=$("#c-terms"), cSens=$("#c-sensitive");
+      if((cTerms && !cTerms.checked) || (cSens && !cSens.checked)){ setErr("err.CONSENT_REQUIRED"); $("#go").disabled=false; return; }
+      body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true};
+    }
     if(mode==="forgot")body={email,redirectTo:"/login.html"};
     if(mode==="reset")body={token:params.get("token"),newPassword:password};
     if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};

@@ -120,7 +120,8 @@ test("Better Auth email hooks with MAIL_MODE=file honor profile.lang > request U
   // 1. Sign-up before profile exists with X-Ritual-Lang: en -> English verification email, link works
   const invEn = service.invites.issue("en-signup@example.com");
   const rEn = await authReq("sign-up/email", {
-    email: invEn.email, name: "Alex", password, invitation: invEn.token, callbackURL: "/login.html?verified=1"
+    email: invEn.email, name: "Alex", password, invitation: invEn.token, callbackURL: "/login.html?verified=1",
+    consentTerms: true, consentSensitiveCrossBorder: true
   }, { "x-ritual-lang": "en" });
   assert.equal(rEn.status, 200);
   let mail = readMailFiles(dataDir).find(m => m.to === invEn.email && m.kind === "verify");
@@ -163,13 +164,15 @@ test("Better Auth email hooks with MAIL_MODE=file honor profile.lang > request U
   // 4. Browser Accept-Language fallback (when X-Ritual-Lang is absent) and invalid X-Ritual-Lang validation -> 'zh'
   const invAccept = service.invites.issue("accept-en@example.com");
   assert.equal((await authReq("sign-up/email", {
-    email: invAccept.email, name: "Taylor", password, invitation: invAccept.token
+    email: invAccept.email, name: "Taylor", password, invitation: invAccept.token,
+    consentTerms: true, consentSensitiveCrossBorder: true
   }, { "accept-language": "en-US,en;q=0.9" })).status, 200);
   assert.equal(readMailFiles(dataDir).find(m => m.to === invAccept.email).lang, "en");
 
   const invInvalid = service.invites.issue("invalid-lang@example.com");
   assert.equal((await authReq("sign-up/email", {
-    email: invInvalid.email, name: "Jordan", password, invitation: invInvalid.token
+    email: invInvalid.email, name: "Jordan", password, invitation: invInvalid.token,
+    consentTerms: true, consentSensitiveCrossBorder: true
   }, { "x-ritual-lang": "fr", "accept-language": "en-US" })).status, 200);
   const invalidMail = readMailFiles(dataDir).find(m => m.to === invInvalid.email);
   assert.equal(invalidMail.lang, "zh");
@@ -221,7 +224,7 @@ test("server.js end-to-end email language uses request UI lang on sign-up and st
   const signupRes = await fetch(`${liveBase}/api/auth/sign-up/email`, {
     method: "POST",
     headers: { origin: originHeader, "Content-Type": "application/json", "X-Ritual-Lang": "en" },
-    body: JSON.stringify({ email: invite.email, name: "Alex", password, invitation: invite.token, callbackURL: "/login.html?verified=1" }),
+    body: JSON.stringify({ email: invite.email, name: "Alex", password, invitation: invite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true }),
   });
   assert.equal(signupRes.status, 200);
   const verifyMail = readMailFiles(dir).find(m => m.to === invite.email && m.kind === "verify");

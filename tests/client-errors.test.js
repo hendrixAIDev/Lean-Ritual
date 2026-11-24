@@ -423,7 +423,7 @@ test("HTTP integration: /api/client-error auth, CSRF, size cap, rate limits, san
   const reg = await fetch(base + "/api/auth/sign-up/email", {
     method: "POST",
     headers: { origin: base, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: inv.email, name: "Tester", password, invitation: inv.token, callbackURL: "/login.html" })
+    body: JSON.stringify({ email: inv.email, name: "Tester", password, invitation: inv.token, callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true })
   });
   assert.equal(reg.status, 200);
   const mail = fs.readdirSync(path.join(dir, "mail")).map(f => JSON.parse(fs.readFileSync(path.join(dir, "mail", f), "utf8"))).find(m => m.kind === "verify");
@@ -566,7 +566,7 @@ test("headless Chromium: client error reporting on login and app pages with zero
   assert.equal((await fetch(base + "/api/auth/sign-up/email", {
     method: "POST",
     headers: { origin: base, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: inv.email, name: "PW", password, invitation: inv.token, callbackURL: "/login.html" })
+    body: JSON.stringify({ email: inv.email, name: "PW", password, invitation: inv.token, callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true })
   })).status, 200);
   const mail = fs.readdirSync(path.join(dir, "mail")).map(f => JSON.parse(fs.readFileSync(path.join(dir, "mail", f), "utf8"))).find(m => m.kind === "verify");
   assert.equal((await fetch(mail.url, { redirect: "manual" })).status, 302);

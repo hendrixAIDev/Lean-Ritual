@@ -106,7 +106,7 @@ test('HTTP commit-then-response-loss retry returns same blob id with single disk
  const registerAndLogin=async inv=>{
   const password='strong-idempotency-password';
   const req=(route,body)=>fetch(serverOrigin+route,{method:'POST',headers:{origin:'http://127.0.0.1:18099','Content-Type':'application/json','X-Bojin':'1'},body:JSON.stringify(body)});
-  assert.equal((await req('/api/auth/sign-up/email',{email:inv.email,name:'User',password,invitation:inv.token,callbackURL:'/login.html'})).status,200);
+  assert.equal((await req('/api/auth/sign-up/email',{email:inv.email,name:'User',password,invitation:inv.token,callbackURL:'/login.html',consentTerms:true,consentSensitiveCrossBorder:true})).status,200);
   const mail=fs.readdirSync(path.join(dir,'mail')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'mail',f),'utf8'))).find(m=>m.to===inv.email&&m.kind==='verify');
   const verifyUrl=new URL(mail.url);verifyUrl.host=`127.0.0.1:${serverPort}`;
   assert.equal((await fetch(verifyUrl,{redirect:'manual'})).status,302);

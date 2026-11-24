@@ -54,6 +54,9 @@ function mountLogin({ search = "", pathname = "/login.html", hash = "", fetchImp
     "#ew": { hidden: false },
     "#pw": { hidden: false },
     "#iw": { hidden: true },
+    "#cw": { hidden: true },
+    "#c-terms": { checked: false },
+    "#c-sensitive": { checked: false },
     "#err": makeSafeTextElement({ textContent: "" }),
     "#go": { textContent: "登录", disabled: false },
     "#tabs": { onclick: null },
@@ -179,7 +182,7 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
     },
     {
       name: "register: missing invitation (lib/auth.js custom APIError without code)",
-      setup: ui => ui.els["#tabs"].onclick({ target: ui.tabRegister }),
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
       route: "/api/auth/sign-up/email",
       status: 400,
       body: { message: "Invitation required" },
@@ -187,7 +190,7 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
     },
     {
       name: "register: invalid/expired/used/mismatched invitation (lib/auth.js custom APIError without code)",
-      setup: ui => ui.els["#tabs"].onclick({ target: ui.tabRegister }),
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
       route: "/api/auth/sign-up/email",
       status: 400,
       body: { message: "Invitation is invalid, expired, used, or belongs to another email" },
@@ -195,7 +198,7 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
     },
     {
       name: "register: user already exists",
-      setup: ui => ui.els["#tabs"].onclick({ target: ui.tabRegister }),
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
       route: "/api/auth/sign-up/email",
       status: 422,
       body: { code: "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL", message: "User already exists. Use another email." },
@@ -203,11 +206,19 @@ test("login.html maps all locked Better Auth and lib/auth.js error codes/message
     },
     {
       name: "register: password too short",
-      setup: ui => ui.els["#tabs"].onclick({ target: ui.tabRegister }),
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
       route: "/api/auth/sign-up/email",
       status: 400,
       body: { code: "PASSWORD_TOO_SHORT", message: "Password too short" },
       expect: "密码太短，至少需要 8 位。"
+    },
+    {
+      name: "register: missing consent (lib/auth.js custom APIError without code)",
+      setup: ui => { ui.els["#tabs"].onclick({ target: ui.tabRegister }); ui.els["#c-terms"].checked = true; ui.els["#c-sensitive"].checked = true; },
+      route: "/api/auth/sign-up/email",
+      status: 400,
+      body: { message: "Consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required" },
+      expect: "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。"
     },
     {
       name: "resend: email validation error from better-call",

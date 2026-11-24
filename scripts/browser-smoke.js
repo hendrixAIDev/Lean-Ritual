@@ -135,6 +135,8 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     assert.equal(await page.locator('#e').inputValue(), email);
     await page.locator('#n').fill('小李 & "测试"');
     await page.locator('#p').fill(pw1);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
 
@@ -527,6 +529,8 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await page.goto(invite.url);
     await page.locator('#n').fill('Browser tester');
     await page.locator('#p').fill('browser strong password');
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
     const mail = readMails(srv.dir).find(m => m.kind === 'verify');
@@ -683,6 +687,11 @@ async function runEnglishJourney(browser, jpegFixture) {
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     await assertZeroChineseVisible(page, 'privacy.html (switched back to en)');
 
+    await page.goto(srv.base + '/terms.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.match(await page.locator('h1').textContent(), /Terms of Use/);
+    await assertZeroChineseVisible(page, 'terms.html (en)');
+
     await page.goto(srv.base + '/guide.html');
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     assert.match(await page.locator('h1').textContent(), /Lean Ritual Training & Nutrition Guide/);
@@ -693,6 +702,8 @@ async function runEnglishJourney(browser, jpegFixture) {
     await page.goto(inv.url);
     await page.locator('#n').fill('Alex Mercer');
     await page.locator('#p').fill(pw);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('Check your email and verify your address before signing in.', { exact: true }).waitFor();
 
