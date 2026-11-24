@@ -20,6 +20,15 @@ function committedDoc(response, matchesPath) {
   return request.postDataJSON().changes.some(change => change.after && matchesPath(change.path));
 }
 
+async function waitForSavedMeal(page, text, opts) {
+  await page.locator('.meal').getByText(text, { exact: true }).waitFor(opts);
+  await page.waitForFunction(() => (
+    !S.busy?.addMeal
+    && !document.querySelector('#m-photo')?.disabled
+    && !document.querySelector('[data-act="add-meal"]')?.disabled
+  ), undefined, opts);
+}
+
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -197,7 +206,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#mf-carbs').fill('65');
     await page.locator('#mf-fat').fill('10');
     await page.locator('[data-act="add-meal"]').click();
-    await page.getByText('鸡胸肉配米饭', { exact: true }).waitFor();
+    await waitForSavedMeal(page, '鸡胸肉配米饭');
 
     await page.locator('#m-photo').setInputFiles({ name: 'meal.jpg', mimeType: 'image/jpeg', buffer: jpegFixture });
     await page.locator('.previews img.preview').waitFor({ state: 'visible' });
@@ -205,7 +214,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#mf-kcal').fill('680');
     await page.locator('#mf-protein').fill('38');
     await page.locator('[data-act="add-meal"]').click();
-    await page.getByText('牛肉面配卤蛋', { exact: true }).waitFor();
+    await waitForSavedMeal(page, '牛肉面配卤蛋');
 
     await page.reload();
     await page.locator('#tabs').waitFor({ state: 'visible' });
@@ -345,7 +354,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
       btn.click();
       btn.click();
     });
-    await page.getByText(mealSpecial, { exact: true }).waitFor();
+    await waitForSavedMeal(page, mealSpecial);
     page.off('response', onResp);
     assert.equal(status429, 0);
     assert.equal(await page.locator('.meal').filter({ hasText: '燕麦 & 牛奶' }).count(), 1);
@@ -370,7 +379,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('[data-act="add-meal"]').click();
     await page.waitForTimeout(1100);
     await context.setOffline(false);
-    await page.getByText('断网恢复餐', { exact: true }).waitFor({ timeout: 12000 });
+    await waitForSavedMeal(page, '断网恢复餐', { timeout: 12000 });
 
     // Commit-then-response-loss on POST /api/assets: server commits blob, response drops, client retry reuses Idempotency-Key without creating an orphan copy.
     const blobsBeforeLoss = fs.readdirSync(path.join(srv.dir, 'blobs')).length;
@@ -393,7 +402,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#m-text').fill('幂等重传餐');
     await page.locator('#mf-kcal').fill('390');
     await page.locator('[data-act="add-meal"]').click();
-    await page.getByText('幂等重传餐', { exact: true }).waitFor({ timeout: 10000 });
+    await waitForSavedMeal(page, '幂等重传餐', { timeout: 10000 });
     await page.unroute('**/api/assets');
     guards.allowConsoleNetErr = false;
     assert.ok(firstIdemKey && firstIdemKey === retriedIdemKey);
@@ -563,7 +572,7 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await page.locator('#m-text').fill('Browser smoke test meal');
     await page.locator('#mf-kcal').fill('300');
     await page.locator('[data-act="add-meal"]').click();
-    await page.getByText('Browser smoke test meal', { exact: true }).waitFor();
+    await waitForSavedMeal(page, 'Browser smoke test meal');
     await page.reload();
     await page.getByText('Browser smoke test meal', { exact: true }).waitFor();
 
@@ -783,7 +792,7 @@ async function runEnglishJourney(browser, jpegFixture) {
     await page.locator('#mf-kcal').fill('620');
     await page.locator('#mf-protein').fill('46');
     await page.locator('[data-act="add-meal"]').click();
-    await page.getByText('Grilled salmon & rice', { exact: true }).waitFor();
+    await waitForSavedMeal(page, 'Grilled salmon & rice');
     await assertZeroChineseVisible(page, 'Meals tab');
 
     for (const tab of ['log', 'fb', 'me']) {
