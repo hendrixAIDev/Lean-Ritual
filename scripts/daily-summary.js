@@ -8,15 +8,16 @@ const {
   formatSummaryText
 } = require("../lib/daily-summary");
 
-async function main() {
+function main() {
   const opts = parseCliArgs(process.argv.slice(2), process.env);
   if (opts.help) {
     console.log(USAGE);
     return;
   }
-  const summary = await collectDailySummary({
+  const summary = collectDailySummary({
     sinceMs: opts.sinceMs,
     nowMs: opts.nowMs ?? undefined,
+    snapshotDir: opts.snapshotDir,
     journalFile: opts.journalFile,
     unit: opts.unit,
     backupRoot: opts.backupRoot,
@@ -28,7 +29,9 @@ async function main() {
   console.log(opts.json ? JSON.stringify(summary, null, 2) : formatSummaryText(summary));
 }
 
-main().catch((error) => {
+try {
+  main();
+} catch (error) {
   console.error(error.message);
   process.exitCode = 1;
-});
+}
