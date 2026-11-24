@@ -77,6 +77,9 @@ button.chip,a.chip,label.chip{min-height:44px;min-width:44px;padding:8px 12px;ju
 label,.lbl{font-size:13px;color:var(--muted)}
 label{display:flex;flex-direction:column;gap:4px;min-width:0}
 .checkline{flex-direction:row;align-items:center;gap:10px;min-height:44px;color:var(--ink);cursor:pointer}
+.checkline.top-align{align-items:flex-start}
+.checkline.top-align input{margin-top:2px}
+.checkline a{color:var(--accent);text-decoration:underline}
 .checkline input{width:24px;height:24px;margin:0;flex:none}
 input,select,textarea{font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 input:not([type=checkbox]):not([type=radio]):not([type=file]),select{min-height:44px}
@@ -187,6 +190,7 @@ details.how[open] > *:not(summary){margin-top:6px}
 // 独立部署版（window.ritual.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
 const HOSTED = true;
 const GUIDE_URL = "/guide.html";
+const CONSENT_DOC_VERSION = "2026-11-24";
 const ORDER = ["push","pull","legs"];
 function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
 const PROGRAM = {
@@ -535,6 +539,9 @@ const I18N = {
     "setup.eyebrow":"薄肌日课",
     "setup.editTitle":"修改我的资料", "setup.newTitle":"先花一分钟建档",
     "setup.intro":"填完后，每天按《薄肌训练与饮食纲领》给你排好训练和饮食目标。数字以后随时能改。",
+    "setup.disclaimerTitle":"健康与运动提示",
+    "setup.disclaimerBody":"本应用仅供一般健身与饮食记录参考，不构成医疗建议。开始训练或调整饮食前请先咨询医生——尤其在有伤病、孕期/产后、进食障碍史或任何基础疾病时。应用给出的热量与营养目标均为估算值。",
+    "ai.disclaimer":"提示：AI 建议与热量估算仅供参考，不构成医疗建议，请结合自身情况判断。",
     "setup.sec1":"身体指标", "setup.sex":"性别", "setup.male":"男", "setup.female":"女",
     "setup.age":"年龄", "setup.height":"身高 cm", "setup.weight":"体重 kg",
     "setup.bf":"体脂率 %（不知道可空）", "setup.bfPh":"例如 16",
@@ -814,7 +821,21 @@ const I18N = {
     "account.oldPw":"原密码", "account.newPw":"新密码（至少 8 位）", "account.newPw2":"再输一次新密码",
     "account.username":"用户名", "account.joined":"注册时间",
     "account.privateHint":"每个人的记录只存在自己账号下，别人看不到。",
-    "account.export":"导出我的记录和照片", "account.privacy":"隐私说明",
+    "account.export":"导出我的记录和照片", "account.terms":"使用条款", "account.privacy":"隐私说明",
+    "consent.title":"继续使用前请确认同意",
+    "consent.intro":"薄肌日课已更新使用条款与隐私说明（版本 {ver}）。为继续使用应用，请先阅读并完成以下两项单独勾选确认。",
+    "consent.termsPre":"我已满 18 周岁，阅读并同意",
+    "consent.termsMid":"和",
+    "consent.termsPost":"（版本 {ver}；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+    "consent.sensitive":"我单独同意按隐私说明（版本 {ver}）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
+    "consent.acceptBtn":"同意并继续使用",
+    "consent.saving":"提交中…",
+    "consent.errRequired":"请先勾选以上两项同意后再继续。",
+    "consent.errOutdated":"使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
+    "consent.reloadBtn":"刷新页面查看最新版本",
+    "consent.toastAccepted":"已记录你的同意，欢迎回来",
+    "consent.altTitle":"暂不同意？",
+    "consent.altHint":"在同意前你无法使用应用功能，但仍可随时导出全部个人数据、退出登录或永久删除账号。",
     "account.deleteSummary":"删除账号",
     "account.deleteWarn":"删除账号、记录和照片后无法恢复。请先导出需要保留的数据；备份保留规则见隐私说明。",
     "account.deletePw":"输入密码确认", "account.deleteConfirm":"我确认删除我的账号和全部记录",
@@ -824,6 +845,7 @@ const I18N = {
     "account.errDeleteConfirm":"请填写密码并确认删除", "account.deleteFail":"删除未完成，请重试或联系管理员",
     "account.errUsername":"用户名用 3–32 个字母、数字、下划线、点或减号", "account.usernameSaved":"用户名已保存",
     "account.unsyncedLogoutConfirm":"本机还有未同步或未保存的训练草稿，现在退出登录会丢失本机上的这些草稿。仍要退出登录吗？",
+    "account.unsyncedLogoutGatedConfirm":"本机有尚未同步到服务器的训练草稿；在确认同意条款前无法上传这些草稿，现在退出登录会清除本机上的这些草稿。如需保留并同步，请点「取消」后先同意继续。仍要退出登录并放弃本机草稿吗？",
     "me.eyebrow":"我的", "me.heroTitle":"{stage}阶段 · 每日 {kcal} kcal",
     "me.targetsTitle":"每日目标", "me.kcalUnit":"热量 kcal",
     "me.formula":"算法：BMR 用 {formula} 算得 {bmr} kcal，乘活动系数 {af} 得 TDEE {tdee} kcal，{mult}{adj}。体重用 {wSrc} {w} kg{bfPart}。",
@@ -923,6 +945,9 @@ const I18N = {
     "setup.eyebrow":"Lean Ritual",
     "setup.editTitle":"Edit My Profile", "setup.newTitle":"1-Minute Setup",
     "setup.intro":"Enter your baseline once to generate daily workouts and macro targets. You can adjust anything later.",
+    "setup.disclaimerTitle":"Health & Fitness Notice",
+    "setup.disclaimerBody":"For general fitness and nutrition tracking only — not medical advice. Consult a doctor before starting, especially if you have injuries, are pregnant or postpartum, have a history of eating disorders, or have any medical condition. Calorie and macro targets are estimates.",
+    "ai.disclaimer":"Note: AI coach advice and calorie estimates are for reference only, not medical advice.",
     "setup.sec1":"Body Metrics", "setup.sex":"Sex", "setup.male":"Male", "setup.female":"Female",
     "setup.age":"Age", "setup.height":"Height cm", "setup.weight":"Weight kg",
     "setup.bf":"Body fat % (optional)", "setup.bfPh":"e.g. 16",
@@ -1202,7 +1227,21 @@ const I18N = {
     "account.oldPw":"Current password", "account.newPw":"New password (8+ chars)", "account.newPw2":"Confirm new password",
     "account.username":"Username", "account.joined":"Joined",
     "account.privateHint":"Your logs are private to your account.",
-    "account.export":"Export my data & photos", "account.privacy":"Privacy Notice",
+    "account.export":"Export my data & photos", "account.terms":"Terms of Use", "account.privacy":"Privacy Notice",
+    "consent.title":"Please review and accept to continue",
+    "consent.intro":"Lean Ritual has updated its Terms of Use and Privacy Notice (version {ver}). Please review and check both boxes below to continue using the app.",
+    "consent.termsPre":"I am 18+ and agree to the ",
+    "consent.termsMid":" and ",
+    "consent.termsPost":" (version {ver}; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+    "consent.sensitive":"I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version {ver}) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
+    "consent.acceptBtn":"Agree and continue",
+    "consent.saving":"Saving…",
+    "consent.errRequired":"Please check both consent boxes before continuing.",
+    "consent.errOutdated":"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before accepting.",
+    "consent.reloadBtn":"Reload page to review latest version",
+    "consent.toastAccepted":"Consent recorded — welcome back",
+    "consent.altTitle":"Prefer not to agree?",
+    "consent.altHint":"You cannot use the app until you accept, but you can still export all your data, sign out, or permanently delete your account.",
     "account.deleteSummary":"Delete account",
     "account.deleteWarn":"Deleting your account, logs, and photos is permanent. Export anything you want to keep first; see Privacy Notice for backup retention.",
     "account.deletePw":"Enter password to confirm", "account.deleteConfirm":"I confirm deleting my account and all records",
@@ -1212,6 +1251,7 @@ const I18N = {
     "account.errDeleteConfirm":"Enter your password and check the confirmation box", "account.deleteFail":"Account deletion didn't complete. Retry or contact admin.",
     "account.errUsername":"Username must be 3–32 letters, numbers, _, ., or -", "account.usernameSaved":"Username saved",
     "account.unsyncedLogoutConfirm":"You have unsynced or unsaved workout drafts on this device. Signing out now will discard them. Sign out anyway?",
+    "account.unsyncedLogoutGatedConfirm":"You have unsynced workout drafts on this device that cannot be uploaded until you accept the updated consent. Signing out now will discard them on this device. Cancel to stay and accept consent so they sync, or confirm to sign out and discard them.",
     "me.eyebrow":"Me", "me.heroTitle":"{stage} · {kcal} kcal/day",
     "me.targetsTitle":"Daily Targets", "me.kcalUnit":"Calories kcal",
     "me.formula":"Formula: BMR via {formula} = {bmr} kcal × activity {af} = TDEE {tdee} kcal ({mult}{adj}). Using {wSrc} {w} kg{bfPart}.",
@@ -1299,6 +1339,8 @@ const API_ERR_EN = {
   message_too_long:"Feedback can be at most 2,000 characters.",
   storage_quota:"Photo storage limit reached. Delete unused photos or contact admin.",
   account_deleting:"Account deletion is in progress.",
+  consent_required:"Please agree to the Terms, Privacy Notice, and data processing consent to continue.",
+  consent_version_mismatch:"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version.",
   sampling_disabled:"AI is not enabled on this server.",
   ai_failed:"AI is temporarily unavailable. Try again later or enter manually.",
   truncated:"AI response was cut off. Try again or shorten your note.",
@@ -1358,6 +1400,8 @@ const API_ERR_ZH = {
   message_too_long:"意见反馈内容最多 2000 字",
   storage_quota:"照片存储空间已达上限，请删除不需要的照片或联系管理员",
   account_deleting:"账号删除处理中，不能再写入或读取记录",
+  consent_required:"请先同意使用条款、隐私说明及数据处理授权",
+  consent_version_mismatch:"使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
   sampling_disabled:"服务器没有配置 AI",
   ai_failed:"AI 服务暂时不可用，请稍后再试或手动填写",
   truncated:"AI 的回答太长被截断了",
@@ -1439,7 +1483,7 @@ async function setLang(next, { persistProfile = true } = {}){
   markExplicitLang(l);
   applyDocLang();
   if (S.ready) render();
-  if (persistProfile && S.profile && S.store && !S.loadError) {
+  if (persistProfile && S.profile && S.store && !S.loadError && !S.consentRequired) {
     if (S.profile.lang === l) {
       clearPendingLang();
     } else {
@@ -1983,6 +2027,7 @@ function render(){
   applyDocLang();
   const app = $("#app"), tabs = $("#tabs");
   if (!S.ready) return;
+  if (S.consentRequired) { tabs.hidden = true; app.innerHTML = viewConsentGate(); return; }
   if (S.loadError) { tabs.hidden = true; app.innerHTML = banner(); return; }
   if (!S.profile || S.editing) { tabs.hidden = true; app.innerHTML = banner() + viewSetup(); return; }
   const ae = typeof document !== "undefined" ? document.activeElement : null;
@@ -2023,6 +2068,29 @@ function dateBar(){
 }
 
 /* ---- 建档 ---- */
+function viewConsentGate(){
+  const ver = CONSENT_DOC_VERSION;
+  const outdated = !!(S.consentOutdated || (S.hostUser?.requiredConsentVersion && S.hostUser.requiredConsentVersion !== ver));
+  const d = S.consentDraft || {terms:false, sensitive:false};
+  const errText = outdated ? t("consent.errOutdated") : S.consentErr ? t(S.consentErr) : S.consentErrObj ? apiErrMsg(S.consentErrObj, t("consent.errRequired")) : "";
+  return `<div class="stack" id="consent-gate">
+  <div class="hero"><div class="row between"><span class="eyebrow">${esc(t("setup.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(t("consent.title"))}</h1>
+  <p class="muted">${esc(t("consent.intro", {ver}))}</p></div>
+  <section class="card">
+    <label class="checkline top-align" for="cg-terms"><input id="cg-terms" type="checkbox" ${d.terms?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.termsPre"))}<a href="/terms.html" target="_blank" rel="noopener">${esc(t("account.terms"))}</a>${esc(t("consent.termsMid"))}<a href="/privacy.html" target="_blank" rel="noopener">${esc(t("account.privacy"))}</a>${esc(t("consent.termsPost", {ver}))}</span></label>
+    <label class="checkline top-align" for="cg-sensitive"><input id="cg-sensitive" type="checkbox" ${d.sensitive?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.sensitive", {ver}))}</span></label>
+    ${errText ? `<p id="consent-err" class="small" role="alert" style="color:var(--bad)">${esc(errText)}</p>` : ""}
+    ${outdated ? `<button type="button" class="btn primary block" data-act="reload-data">${esc(t("consent.reloadBtn"))}</button>` : `<button type="button" class="btn primary block" data-act="consent-accept" ${S.busy.consent?"disabled":""}>${esc(S.busy.consent ? t("consent.saving") : t("consent.acceptBtn"))}</button>`}
+  </section>
+  <section class="card"><h2>${esc(t("consent.altTitle"))}</h2>
+    <p class="small muted">${esc(t("consent.altHint"))}</p>
+    <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><button type="button" class="btn" data-act="logout">${esc(t("account.logout"))}</button></div>
+    <details><summary>${esc(t("account.deleteSummary"))}</summary><p class="tip warn">${esc(t("account.deleteWarn"))}</p>
+    <label>${esc(t("account.deletePw"))}<input id="delete-password" type="password" autocomplete="current-password"></label>
+    <label class="checkline"><input id="delete-confirm" type="checkbox"><span>${esc(t("account.deleteConfirm"))}</span></label>
+    <button type="button" class="btn" data-act="delete-account">${esc(t("account.deleteBtn"))}</button></details>
+  </section></div>`;
+}
 function viewSetup(){
   const p = S.profile || {sex:"m", steps:9500, exp:"new", stage:"auto", trainDays:[1,3,5], slot:"eve", equipment:"gym", injuries:[], supps:["creatine","protein"]};
   const ck = (name, val, arr, label) => `<label><input type="checkbox" name="${name}" value="${val}" ${arr.includes(val)?"checked":""}><span>${esc(label)}</span></label>`;
@@ -2030,6 +2098,7 @@ function viewSetup(){
   return `<form id="setup" class="stack" novalidate>
   <div class="hero"><div class="row between"><span class="eyebrow">${esc(t("setup.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(S.profile ? t("setup.editTitle") : t("setup.newTitle"))}</h1>
   <p class="muted">${esc(t("setup.intro"))}</p></div>
+  <aside class="tip warn" id="setup-disclaimer" aria-label="${esc(t("setup.disclaimerTitle"))}"><b>${esc(t("setup.disclaimerTitle"))}</b><p class="small" style="margin-top:4px">${esc(t("setup.disclaimerBody"))}</p></aside>
   <section class="card"><div class="row"><span class="sec-n num">1</span><h2>${esc(t("setup.sec1"))}</h2></div>
     <div class="checks" role="radiogroup" aria-label="${esc(t("setup.sex"))}">${rd("sex","m",p.sex,t("setup.male"))}${rd("sex","f",p.sex,t("setup.female"))}</div>
     <div class="grid3">
@@ -2285,6 +2354,7 @@ function editor(e){
       <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${esc(ed.aiBusy ? t("ed.aiBusy") : t("ed.aiAsk"))}</button></div>
       ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${canonExName(ed.name)===canonExName(a.name)?"border-color:var(--accent)":""}"><b class="small">${esc(exName(a.name))} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
       ${ed.aiErr ? `<p class="small" role="alert" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
+      <p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>
     </div>` : ""}
     <div><span class="small muted">${esc(t("ed.scopeLabel"))}</span><div class="row" style="margin-top:4px">
       <button class="chip ${ed.scope==="once"?"on":""}" aria-pressed="${ed.scope==="once"}" data-act="ed-scope" data-v="once">${esc(ed.rec ? t("ed.scopeRecOnce") : t("ed.scopeToday"))}</button>
@@ -2422,6 +2492,7 @@ function viewFood(){
     ${mode === "manual" ? macroInputs({ idPrefix: "mf", dataAttr: "mf", values: S.mfill, format: false }) : ""}
     <button class="btn primary block" data-act="add-meal" data-v="${mode}" ${S.busy.addMeal?"disabled":""}>${esc(S.busy.addMeal ? t("food.saving") : mode === "ai" ? t("food.saveAndAi") : t("common.save"))}</button>
     <p class="small muted">${esc(mode === "ai" ? t("food.aiModeHint") : t("food.manualModeHint"))}</p>
+    ${mode === "ai" ? `<p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : ""}
     ${S.assets ? "" : `<p class="small muted">${esc(t("food.localPhotoHint"))}</p>`}
   </section>
   <section class="card"><h2>${esc(t("food.eatenTitle"))}</h2>
@@ -3052,7 +3123,7 @@ function viewFeedback(){
   <section class="card"><div class="row between"><h2>${esc(t("fb.aiTitle"))}</h2>${ai?.running?`<button class="chip" data-act="ai-stop">${esc(t("fb.stop"))}</button>`:""}</div>
     <p class="small muted">${esc(t("fb.aiIntro"))}</p>
     <label>${esc(t("fb.myNote"))}<textarea id="fb-text" rows="3" placeholder="${esc(t("fb.myNotePh"))}" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
-    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${esc(ai?.running ? t("fb.analyzing") : t("fb.submitAi"))}</button>` : `<p class="tip">${esc(t("fb.noAi"))}</p>`}
+    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${esc(ai?.running ? t("fb.analyzing") : t("fb.submitAi"))}</button><p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : `<p class="tip">${esc(t("fb.noAi"))}</p>`}
     ${ai?.running ? `<p class="small muted">${esc(ai.stream ? t("fb.writing") : t("fb.thinking"))}</p>` : ""}
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
@@ -3164,6 +3235,7 @@ function fbCard(f){
     ${f.good?.length ? `<div><b class="small">${esc(t("fb.good"))}</b><ul class="clean small">${f.good.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
     ${f.issues?.length ? `<div><b class="small">${esc(t("fb.issues"))}</b><ul class="clean small">${f.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
     ${f.adjustments?.length ? `<div class="stack" style="gap:8px"><b class="small">${esc(t("fb.suggestions"))}</b>${f.adjustments.map((a,i) => { const dec = !(f.applied||[]).includes(i) && (f.declined||[]).includes(i); return `<div class="ins ${dec?"declined":"info"}"><span class="s"></span><div class="b"><p class="small">${esc(a.text)}</p>${actionBtn(a, "ai", f.id, i)}</div></div>`; }).join("")}</div>` : ""}
+    <p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>
   </section>`;
 }
 function dataDigest(lang = getLang()){
@@ -3636,7 +3708,7 @@ function viewHostedAccount(){
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${esc(pw.busy ? t("food.saving") : t("common.save"))}</button><button class="btn" data-act="pw-cancel">${esc(t("common.cancel"))}</button></div></div>`
     : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span><span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
     <p class="small muted">${esc(t("account.privateHint"))}</p>
-    <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><a class="btn" href="/privacy.html">${esc(t("account.privacy"))}</a></div>
+    <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><a class="btn" href="/terms.html">${esc(t("account.terms"))}</a><a class="btn" href="/privacy.html">${esc(t("account.privacy"))}</a></div>
     <details><summary>${esc(t("account.deleteSummary"))}</summary><p class="tip warn">${esc(t("account.deleteWarn"))}</p>
     <label>${esc(t("account.deletePw"))}<input id="delete-password" type="password" autocomplete="current-password"></label>
     <label class="checkline"><input id="delete-confirm" type="checkbox"><span>${esc(t("account.deleteConfirm"))}</span></label>
@@ -3833,6 +3905,25 @@ document.addEventListener("click", async ev => {
   if (act !== "ex-del") S.exDel = null;
   switch (act) {
     case "lang": await setLang(v); break;
+    case "consent-accept": {
+      if (S.busy.consent) break;
+      const terms = !!$("#cg-terms")?.checked, sensitive = !!$("#cg-sensitive")?.checked;
+      S.consentDraft = {terms, sensitive};
+      if (!terms || !sensitive) { S.consentErr = "consent.errRequired"; S.consentErrObj = null; render(); break; }
+      S.busy.consent = true; S.consentErr = null; S.consentErrObj = null; render();
+      try {
+        const res = await window.ritual.acceptConsent({consentTerms: true, consentSensitiveCrossBorder: true, consentVersion: CONSENT_DOC_VERSION});
+        S.hostUser = {...(S.hostUser || {}), consentVersion: res.consentVersion, consentedAt: res.consentedAt, consentRequired: false};
+        S.consentRequired = false; S.consentOutdated = false; S.consentDraft = null; S.consentErr = null; S.consentErrObj = null;
+        await finishBootAfterConsent();
+        toast(t("consent.toastAccepted"));
+      } catch (e) {
+        if (e?.code === "consent_version_mismatch") { S.consentOutdated = true; S.consentErr = "consent.errOutdated"; S.consentErrObj = null; }
+        else { S.consentErr = null; S.consentErrObj = e || {}; }
+        render();
+      } finally { S.busy.consent = false; if (S.consentRequired) render(); }
+      break;
+    }
     case "reload-data": location.reload(); break;
     case "tab": S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
     case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
@@ -4136,22 +4227,27 @@ async function logout(btn){
     const id = S.uid || storageUser;
     let entries = localDraftEntries(id);
     if (entries.length) {
-      let verified = await runBoundedVerify(entries);
-      if (verified) {
-        clearTimeout(syncDraft.t);
-        const afterFirst = localDraftEntries(id);
-        if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
-          entries = afterFirst;
-          verified = entries.length ? await runBoundedVerify(entries) : true;
-          if (verified) {
-            clearTimeout(syncDraft.t);
-            if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+      if (S.consentRequired) {
+        const ask = typeof confirm === "function" ? confirm : window?.confirm;
+        if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutGatedConfirm")))) return;
+      } else {
+        let verified = await runBoundedVerify(entries);
+        if (verified) {
+          clearTimeout(syncDraft.t);
+          const afterFirst = localDraftEntries(id);
+          if (snapshotSig(afterFirst) !== snapshotSig(entries)) {
+            entries = afterFirst;
+            verified = entries.length ? await runBoundedVerify(entries) : true;
+            if (verified) {
+              clearTimeout(syncDraft.t);
+              if (snapshotSig(localDraftEntries(id)) !== snapshotSig(entries)) verified = false;
+            }
           }
         }
-      }
-      if (!verified) {
-        const ask = typeof confirm === "function" ? confirm : window?.confirm;
-        if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutConfirm")))) return;
+        if (!verified) {
+          const ask = typeof confirm === "function" ? confirm : window?.confirm;
+          if (!(typeof ask === "function" && ask(t("account.unsyncedLogoutConfirm")))) return;
+        }
       }
     }
     clearTimeout(syncDraft.t);
@@ -4194,6 +4290,11 @@ document.addEventListener("input", ev => {
 document.addEventListener("change", async ev => {
   const el = ev.target;
   if (el.id === "lift-sel") { S.liftSel = el.value; lsSet("bj-lift", el.value); render(); return; }
+  if (el.id === "cg-terms" || el.id === "cg-sensitive") {
+    S.consentDraft = { terms: !!$("#cg-terms")?.checked, sensitive: !!$("#cg-sensitive")?.checked };
+    if (S.consentDraft.terms && S.consentDraft.sensitive && S.consentErr) { S.consentErr = null; render(); }
+    return;
+  }
   if (el.name === "ufb-type" && S.ufb) { S.ufb.type = el.value; return; }
   if (el.id === "ufb-device" && S.ufb) { S.ufb.includeDeviceInfo = !!el.checked; return; }
   if (el.id === "ufb-file" && S.ufb && el.files?.[0]) {
@@ -4233,12 +4334,24 @@ document.addEventListener("toggle", ev => {
 document.addEventListener("submit", ev => { if (ev.target.id === "setup") { ev.preventDefault(); submitSetup(ev.target); } });
 if (typeof window !== "undefined" && window.ritualErrorReporter) {
   window.ritualErrorReporter.configure({
-    getPage: () => (!S.ready ? "boot" : !S.profile ? "setup" : (S.tab || "today")),
+    getPage: () => (!S.ready ? "boot" : S.consentRequired ? "consent" : !S.profile ? "setup" : (S.tab || "today")),
     getLang: () => getLang()
   });
 }
 
 /* ============ 启动 ============ */
+async function finishBootAfterConsent(){
+  let lim = null;
+  if (S.serverSample) { lim = await S.serverSample.limits().catch(e => ({err:String(e?.code||e)})); S.imgOK = lim?.images ? true : (lim && !lim.err ? false : null); }
+  S.serverImgOK = S.imgOK;
+  applyAI();
+  // 诊断：记下这次打开时平台给的能力，方便排查看图估算
+  if (S.cloud) { try { S.store.set("meta/diag", {at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!S.serverSample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!S.assets, comments:!!S.comments, owner:S.owner}).catch(()=>{}); } catch {} }
+  await loadAll();
+  if (S.cloud) { try { S.account = await S.store.get("meta/account"); } catch {} }
+  S.ready = true; render();
+  rescueDrafts();
+}
 (async function boot(){
   const use = n => (window.ritual?.use ? window.ritual.use(n).catch(() => null) : Promise.resolve(null));
   const [db, assets, sample, comments, user] = await Promise.all([use("db"), use("assets"), use("sample"), use("comments"), use("user")]);
@@ -4256,16 +4369,14 @@ if (typeof window !== "undefined" && window.ritualErrorReporter) {
   S.cloud = !!(db && S.uid); S.raw = S.cloud ? db : null; S.assets = assets; S.sample = sample;
   S.noId = !!db && !S.uid;
   S.store = mkCloud(db, `data/users/${S.uid}/app`);
-  let lim = null;
-  if (sample) { lim = await sample.limits().catch(e => ({err:String(e?.code||e)})); S.imgOK = lim?.images ? true : (lim && !lim.err ? false : null); }
-  S.serverSample = sample; S.serverImgOK = S.imgOK;
-  applyAI();
-  // 诊断：记下这次打开时平台给的能力，方便排查看图估算
-  if (S.cloud) { try { S.store.set("meta/diag", {at:new Date().toISOString(), ua:navigator.userAgent.slice(0,200), sample:!!sample, ai:S.aiProv, limits:lim ? JSON.parse(JSON.stringify(lim)) : null, assets:!!assets, comments:!!comments, owner:S.owner}).catch(()=>{}); } catch {} }
-  await loadAll();
-  if (S.cloud) { try { S.account = await S.store.get("meta/account"); } catch {} }
-  S.ready = true; render();
-  rescueDrafts();
+  S.serverSample = sample;
+  S.consentRequired = !!me.consentRequired;
+  if (S.consentRequired) {
+    S.consentDraft = {terms: false, sensitive: false};
+    S.ready = true; render();
+    return;
+  }
+  await finishBootAfterConsent();
 })();
 // 找回这台设备上填了但没点保存的训练
 function rescueDrafts(){

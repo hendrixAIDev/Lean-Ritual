@@ -9,8 +9,8 @@
   const MAX_PER_SESSION = 10;
   const SESSION_KEY = "bj-err-count";
   const ALLOWED_PAGES = new Set([
-    "today", "food", "log", "fb", "me", "setup", "boot",
-    "login", "app", "privacy", "guide", "unknown"
+    "today", "food", "log", "fb", "me", "setup", "boot", "consent",
+    "login", "app", "privacy", "terms", "guide", "unknown"
   ]);
 
   const ERROR_NAMES = new Set([
@@ -115,6 +115,7 @@
     if (p === "/login.html") return "login";
     if (p === "/" || p === "/index.html") return "app";
     if (p === "/privacy.html") return "privacy";
+    if (p === "/terms.html") return "terms";
     if (p === "/guide.html") return "guide";
     return "unknown";
   }

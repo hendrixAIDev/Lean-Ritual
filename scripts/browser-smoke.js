@@ -40,7 +40,7 @@ function readMails(dir) {
     .map(f => JSON.parse(fs.readFileSync(path.join(mailDir, f), 'utf8')));
 }
 
-async function startLocalServer(extraEnv = {}) {
+async function startLocalServer(extraEnv = {}, { nodeArgs = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-browser-'));
   const port = await getFreePort();
   const base = `http://127.0.0.1:${port}`;
@@ -55,9 +55,10 @@ async function startLocalServer(extraEnv = {}) {
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
     OPENROUTER_API_KEY: '',
+    GEMINI_API_KEY: '',
     ...extraEnv
   };
-  const server = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const server = spawn(process.execPath, [...nodeArgs, 'server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   server.stderr.on('data', d => { stderr += d.toString(); });
   await new Promise((resolve, reject) => {
@@ -135,6 +136,8 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     assert.equal(await page.locator('#e').inputValue(), email);
     await page.locator('#n').fill('小李 & "测试"');
     await page.locator('#p').fill(pw1);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
 
@@ -513,10 +516,21 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     }));
   });
   await new Promise(r => provider.listen(providerPort, '127.0.0.1', r));
+  const preloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-smoke-preload-'));
+  const preloadPath = path.join(preloadDir, 'mock-openrouter.cjs');
+  fs.writeFileSync(preloadPath, `'use strict';
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url;
+      if (url === 'https://openrouter.ai/api/v1/chat/completions') return origFetch('http://127.0.0.1:${providerPort}/v1/chat/completions', init);
+      return origFetch(input, init);
+    };
+  `);
   const srv = await startLocalServer({
-    OPENROUTER_API_KEY: 'local-test-provider-key',
-    OPENROUTER_BASE: `http://127.0.0.1:${providerPort}/v1`
-  });
+    OPENROUTER_API_KEY: 'local-test-provider-key'
+  }, { nodeArgs: ['--require', preloadPath] });
+  const origStop = srv.stop;
+  srv.stop = async () => { try { await origStop(); } finally { fs.rmSync(preloadDir, { recursive: true, force: true }); } };
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
@@ -527,6 +541,8 @@ async function runReadGuardOcrAndAiSmoke(browser) {
     await page.goto(invite.url);
     await page.locator('#n').fill('Browser tester');
     await page.locator('#p').fill('browser strong password');
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('请查收验证邮件，验证后再登录。', { exact: true }).waitFor();
     const mail = readMails(srv.dir).find(m => m.kind === 'verify');
@@ -683,6 +699,11 @@ async function runEnglishJourney(browser, jpegFixture) {
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     await assertZeroChineseVisible(page, 'privacy.html (switched back to en)');
 
+    await page.goto(srv.base + '/terms.html');
+    assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+    assert.match(await page.locator('h1').textContent(), /Terms of Use/);
+    await assertZeroChineseVisible(page, 'terms.html (en)');
+
     await page.goto(srv.base + '/guide.html');
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
     assert.match(await page.locator('h1').textContent(), /Lean Ritual Training & Nutrition Guide/);
@@ -693,6 +714,8 @@ async function runEnglishJourney(browser, jpegFixture) {
     await page.goto(inv.url);
     await page.locator('#n').fill('Alex Mercer');
     await page.locator('#p').fill(pw);
+    await page.locator('#c-terms').check();
+    await page.locator('#c-sensitive').check();
     await page.locator('#go').click();
     await page.getByText('Check your email and verify your address before signing in.', { exact: true }).waitFor();
 

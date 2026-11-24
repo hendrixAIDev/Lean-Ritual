@@ -38,6 +38,10 @@ p{margin:0 0 20px;color:var(--muted)}
 .tabs button.on{border-color:var(--accent);font-weight:700}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 input{font:inherit;font-size:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.consent-box{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.checkline{display:flex;flex-direction:row;align-items:flex-start;gap:10px;min-height:44px;padding:2px 0;font-size:13px;line-height:1.5;color:var(--ink);cursor:pointer}
+.checkline input[type="checkbox"]{width:20px;height:20px;min-height:0;padding:0;margin:2px 0 0;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
+.checkline a{color:var(--accent);text-decoration:underline}
 button{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
 button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;cursor:pointer}
 button.primary:disabled{opacity:.6}
@@ -65,17 +69,23 @@ button.primary:disabled{opacity:.6}
     <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" inputmode="email" autocomplete="email" required autocapitalize="off" spellcheck="false"></label>
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <div class="consent-box" id="cw" hidden>
+      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。</span></span></label>
+      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。</span></label>
+    </div>
     <p class="err" id="err" role="status" aria-live="polite"></p>
+    <button type="button" id="reload-policy" hidden>刷新页面查看最新版本</button>
     <button class="primary" id="go">登录</button>
     <button type="button" id="forgot">忘记密码</button>
     <button type="button" id="resend">重新发送验证邮件</button>
-    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><span class="hint-links"><a id="privacy-link" href="/privacy.html">隐私说明</a><a id="help-link" href="mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88">无法登录？发邮件反馈</a></span></p>
+    <p class="hint"><span id="hint-text">仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。</span><span class="hint-links"><a id="terms-link" href="/terms.html">使用条款</a><a id="privacy-link" href="/privacy.html">隐私说明</a><a id="help-link" href="mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88">无法登录？发邮件反馈</a></span></p>
   </form>
 </main>
 <script src="/client-errors.js" referrerpolicy="no-referrer"></script>
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
+  const DISPLAYED_CONSENT_VERSION = "2026-11-24";
   const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
   const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
@@ -131,9 +141,17 @@ button.primary:disabled{opacity:.6}
       "btn.forgot": "忘记密码",
       "btn.resend": "重新发送验证邮件",
       "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
+      "hint.terms": "使用条款",
       "hint.privacy": "隐私说明",
       "hint.help": "无法登录？发邮件反馈",
       "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88",
+      "consent.termsPre": "我已满 18 周岁，阅读并同意",
+      "consent.termsLink": "使用条款",
+      "consent.termsMid": "和",
+      "consent.privacyLink": "隐私说明",
+      "consent.termsPost": "（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
+      "btn.reloadPolicy": "刷新页面查看最新版本",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
       "msg.network": "连不上服务器。",
@@ -176,6 +194,8 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "提交的信息格式不正确，请刷新页面后重试。",
       "err.INVITE_REQUIRED": "需要有效邀请码才能注册。",
       "err.INVITE_INVALID": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
+      "err.CONSENT_REQUIRED": "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。",
+      "err.CONSENT_OUTDATED": "使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
       "err.CONFIRM_DELETE_PW": "请输入密码以确认删除账号。"
     },
     en: {
@@ -197,9 +217,17 @@ button.primary:disabled{opacity:.6}
       "btn.forgot": "Forgot password?",
       "btn.resend": "Resend verification email",
       "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
+      "hint.terms": "Terms of Use",
       "hint.privacy": "Privacy Notice",
       "hint.help": "Can't sign in? Email feedback",
       "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20Sign-in%20Feedback",
+      "consent.termsPre": "I am 18+ and agree to the ",
+      "consent.termsLink": "Terms of Use",
+      "consent.termsMid": " and ",
+      "consent.privacyLink": "Privacy Notice",
+      "consent.termsPost": " (version 2026-11-24; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-24) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
+      "btn.reloadPolicy": "Reload page to review latest version",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
       "msg.network": "Cannot reach server.",
@@ -242,6 +270,8 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "Invalid request format. Please refresh and try again.",
       "err.INVITE_REQUIRED": "A valid invite code is required to sign up.",
       "err.INVITE_INVALID": "Invite code is invalid, expired, already used, or for another email.",
+      "err.CONSENT_REQUIRED": "Please check both boxes to agree to the Terms & Privacy Notice and separately consent to sensitive data processing and cross-border transfer.",
+      "err.CONSENT_OUTDATED": "The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before signing up.",
       "err.CONFIRM_DELETE_PW": "Please enter your password to confirm account deletion."
     }
   };
@@ -308,6 +338,8 @@ button.primary:disabled{opacity:.6}
   const MSG_TO_KEY = {
     "invitation required": "err.INVITE_REQUIRED",
     "invitation is invalid, expired, used, or belongs to another email": "err.INVITE_INVALID",
+    "consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required": "err.CONSENT_REQUIRED",
+    "terms or privacy notice updated; refresh the page to review and accept the latest version": "err.CONSENT_OUTDATED",
     "email changes are unavailable": "err.EMAIL_CAN_NOT_BE_UPDATED",
     "confirm your password to delete the account": "err.CONFIRM_DELETE_PW",
     "too many requests": "err.TOO_MANY_REQUESTS",
@@ -349,7 +381,11 @@ button.primary:disabled{opacity:.6}
   function mapAuthError(j, status){ return t(authErrorKey(j, status)); }
 
   let bannerKey = null, errKey = null;
-  function setErr(key){ errKey = key; const el = $("#err"); if (el) el.textContent = key ? t(key) : ""; }
+  function setErr(key){
+    errKey = key;
+    const el = $("#err"); if (el) el.textContent = key ? t(key) : "";
+    const rb = $("#reload-policy"); if (rb) rb.hidden = key !== "err.CONSENT_OUTDATED";
+  }
   function setBanner(key){ bannerKey = key; if (!banner) return; banner.hidden = !key; banner.textContent = key ? t(key) : ""; }
   function clearBanner(){ setBanner(null); }
   const setTxt = (sel, key) => { const el = $(sel); if (el) el.textContent = t(key); };
@@ -379,8 +415,16 @@ button.primary:disabled{opacity:.6}
     setTxt("#forgot", "btn.forgot");
     setTxt("#resend", "btn.resend");
     setTxt("#hint-text", "hint.body");
+    setTxt("#terms-link", "hint.terms");
     setTxt("#privacy-link", "hint.privacy");
     setTxt("#help-link", "hint.help");
+    setTxt("#c-terms-pre", "consent.termsPre");
+    setTxt("#c-terms-link", "consent.termsLink");
+    setTxt("#c-terms-mid", "consent.termsMid");
+    setTxt("#c-privacy-link", "consent.privacyLink");
+    setTxt("#c-terms-post", "consent.termsPost");
+    setTxt("#lbl-c-sensitive", "consent.sensitive");
+    setTxt("#reload-policy", "btn.reloadPolicy");
     const helpLink = $("#help-link");
     if (helpLink) helpLink.href = t("hint.helpMailto");
     if ($("#go")) $("#go").textContent = t("go." + mode);
@@ -396,6 +440,8 @@ button.primary:disabled{opacity:.6}
   }
   function setMode(m){
     mode=m; $("#nw").hidden=m!=="register"; $("#iw").hidden=m!=="register";
+    const cw=$("#cw"); if(cw) cw.hidden=m!=="register";
+    if(m!=="register"){ if($("#c-terms")) $("#c-terms").checked=false; if($("#c-sensitive")) $("#c-sensitive").checked=false; }
     $("#pw").hidden=["forgot","resend"].includes(m); $("#p").required=!$("#pw").hidden;
     $("#ew").hidden=m==="reset"; $("#e").required=m!=="reset";
     $("#p").autocomplete=m==="login"?"current-password":"new-password";
@@ -406,6 +452,8 @@ button.primary:disabled{opacity:.6}
   if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
   $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
   $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
+  const reloadPolicyBtn = $("#reload-policy");
+  if (reloadPolicyBtn) reloadPolicyBtn.onclick = () => location.reload();
   applyLangUI();
   setMode(mode);
   if(params.has("error")) setErr(params.get("error")==="TOKEN_EXPIRED"?"err.TOKEN_EXPIRED":"err.INVALID_TOKEN");
@@ -427,7 +475,11 @@ button.primary:disabled{opacity:.6}
     const email=$("#e").value.trim(), password=$("#p").value;
     const routes={login:"sign-in/email",register:"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
     let body={email,password};
-    if(mode==="register")body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1"};
+    if(mode==="register"){
+      const cTerms=$("#c-terms"), cSens=$("#c-sensitive");
+      if((cTerms && !cTerms.checked) || (cSens && !cSens.checked)){ setErr("err.CONSENT_REQUIRED"); $("#go").disabled=false; return; }
+      body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+    }
     if(mode==="forgot")body={email,redirectTo:"/login.html"};
     if(mode==="reset")body={token:params.get("token"),newPassword:password};
     if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};
@@ -443,7 +495,7 @@ button.primary:disabled{opacity:.6}
     }catch{setErr("err.fallback")}finally{$("#go").disabled=false}
   };
   if (typeof window !== "undefined") {
-    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N };
+    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N, consentVersion: DISPLAYED_CONSENT_VERSION };
     if (window.ritualErrorReporter) window.ritualErrorReporter.configure({ getPage: () => "login", getLang: () => curLang });
   }
 })();
