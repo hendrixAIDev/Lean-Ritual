@@ -577,7 +577,7 @@ function verifyMp4(mp4Path, expectedW, expectedH) {
   assert.equal(info.video?.height, expectedH, `${mp4Path}: expected height ${expectedH}`);
   assert.ok(Math.abs(info.video.fps - FPS) < 0.5, `${mp4Path}: expected ${FPS}fps, got ${info.video.fps}`);
   assert.equal(info.audio?.codec, 'aac', `${mp4Path}: expected aac audio`);
-  assert.ok(info.duration >= 95 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 95-135s range`);
+  assert.ok(info.duration >= 80 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 80-135s range`);
   assert.ok(info.sizeBytes <= MAX_BYTES, `${mp4Path}: size ${(info.sizeBytes / 1048576).toFixed(2)} MB exceeds 25 MB`);
   return info;
 }

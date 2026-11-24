@@ -1,6 +1,6 @@
-# Lean Ritual Product Intro Video Generator (v5)
+# Lean Ritual Product Intro Video Generator (v7)
 
-Reproducible generator for the ~2-minute user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
+Reproducible generator for the ~1:30–1:45 user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
 
 See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
 
@@ -17,7 +17,7 @@ See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
   - **`say`** — local macOS `/usr/bin/say` fallback.
   - **`auto`** (default) — uses ElevenLabs when an API key is configured, falling back to free local Kokoro otherwise. Per-language overrides such as `--tts zh=elevenlabs,en=kokoro` are also supported.
 - Generates an original warm Rhodes/ambient background music bed + tactile UI taps, transition swooshes, confirmation chimes, and callout pops (`sound_design.py`, CC0 / original), mixing BGM through `sidechaincompress` so music ducks cleanly under narration.
-- Verifies duration (`95–135s`), resolution, codecs (`h264`/`aac`), and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
+- Verifies duration (`80–135s`), resolution, codecs (`h264`/`aac`), and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
 
 ## Prerequisites
 

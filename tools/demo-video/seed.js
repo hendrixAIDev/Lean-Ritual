@@ -342,6 +342,8 @@ async function registerAndLogin(browser, srv, sb, email) {
   await page.goto(invUrl);
   await page.locator('#n').fill(sb.userName);
   await page.locator('#p').fill(DEMO_PASSWORD);
+  await page.locator('#c-terms').check();
+  await page.locator('#c-sensitive').check();
   await page.locator('#go').click();
   const expectedVerifyMsg =
     sb.lang === 'zh'
