@@ -28,9 +28,9 @@ const STORYBOARDS = {
       eyebrow: 'LEAN RITUAL · 手机训练饮食本',
       title: '薄肌日课',
       tagline: '每天 5 分钟，科学练出薄肌',
-      pills: ['每日课表', '拍照估热量', 'AI 教练复盘'],
-      duration: 4.8,
-      narration: '薄肌日课，每天五分钟，把训练、饮食和体重装进一本随身计划。'
+      pills: ['1 分钟建档', '拍照估热量', 'AI 教练复盘'],
+      duration: 4.5,
+      narration: '薄肌日课，每天五分钟，训练饮食一步搞定。'
     },
     outroCard: {
       eyebrow: 'LEAN RITUAL · 薄肌日课',
@@ -38,125 +38,133 @@ const STORYBOARDS = {
       url: 'https://leanritual.app',
       badge: '邀请制内测',
       footnote: '浏览器打开即用 · 可添加到主屏幕',
-      duration: 6.2,
-      narration: '薄肌日课目前采用邀请制内测，欢迎访问 leanritual.app 了解详情。',
-      spoken: '薄肌日课目前采用邀请制内测，欢迎访问 lean ritual dot app 了解详情。'
+      duration: 5.5,
+      narration: '薄肌日课目前邀请制内测，欢迎访问 leanritual.app 了解详情。',
+      spoken: '薄肌日课目前邀请制内测，欢迎访问 lean ritual dot app 了解详情。'
     },
     poster: {
       eyebrow: '薄肌日课 · LEAN RITUAL',
       headline: '每天 5 分钟，科学练出薄肌',
-      subline: '训练计划 · 拍照估餐 · AI 教练 · 数据随你导出',
+      subline: '定制课表 · 拍照估餐 · AI 教练 · 数据随你导出',
       badge: '邀请制内测 · leanritual.app'
     },
     scenes: [
       {
-        id: 'hook',
-        label: '今日概览',
-        chapter: '薄肌日课 · 今天',
+        id: 'setup',
+        label: '1 分钟建档 · 定制个人计划',
+        chapter: '01 · 1 分钟建档',
         transition: 'circleopen',
-        minDuration: 5.2,
+        minDuration: 14.5,
         beats: [
           {
-            caption: '打开即看今日课表，练什么、吃多少一目了然',
-            narration: '打开就是今天的训练和热量目标，不用自己算，照着练就行。'
+            caption: '填好身体数据、目标与伤病，1 分钟建档',
+            callout: '60s 建档 · 身体数据 · 伤病保护',
+            narration: '先花一分钟填好身体数据、目标和伤病。'
+          },
+          {
+            caption: '立刻生成专属课表与热量目标，自动避开伤处',
+            callout: '专属课表 · 1930 kcal · 伤处自动替动作',
+            narration: '提交立刻生成每日课表和热量目标，还会自动替换伤处动作。'
           }
         ]
       },
       {
         id: 'checkin',
         label: '今天 · 每日打卡',
-        chapter: '01 · 每日打卡',
-        transition: 'smoothleft',
-        minDuration: 15.0,
+        chapter: '02 · 每日打卡',
+        transition: 'perspective_swing',
+        minDuration: 13.0,
         beats: [
           {
             caption: '每天 10 秒记下体重、步数与睡眠',
-            narration: '每天花十秒，记下晨起体重、步数和睡眠。'
+            narration: '每天十秒记下体重、步数和睡眠。'
           },
           {
             caption: '7 日均重自动平滑波动，看清真实趋势',
-            callout: '7 日均重平滑波动 · 看清真实减脂节奏',
-            narration: '点击保存打卡，系统用七日均重帮你过滤波动，看清真实变化。',
-            spoken: '点击保存打卡，系统用七天平均体重帮你过滤波动，看清真实变化。'
+            callout: '7 日均重 72.4 kg · 看清真实减脂节奏',
+            narration: '保存打卡，系统用七日均重帮你过滤波动。',
+            spoken: '保存打卡，系统用七天平均体重帮你过滤波动。'
           }
         ]
       },
       {
         id: 'workout_log',
         label: '记训练与记录趋势',
-        chapter: '02 · 记训练 & 记录',
-        transition: 'smoothleft',
-        minDuration: 26.5,
+        chapter: '03 · 记训练 & 记录',
+        transition: 'perspective_swing',
+        minDuration: 23.5,
         beats: [
           {
             caption: '根据历史自动推荐重量，填完组数一键保存',
-            callout: '智能渐进超负荷 · 自动推荐今日重量',
-            narration: '训练时每个动作都会按上次记录推荐重量，填好每组重量和次数，点击完成训练保存。'
+            callout: '渐进超负荷 · 自动推荐 60 kg',
+            narration: '训练时按历史自动推荐重量，填完组数一键保存。'
           },
           {
             caption: '体重曲线、热量收支与力量进步全自动生成',
-            callout: '体重曲线 · 热量收支 · 力量进步',
-            narration: '切到记录页，体重趋势、热量缺口和力量进步曲线一目了然，每一点进步都看得见。'
+            callout: '7 天均重 · 热量收支 · 力量进步',
+            narration: '切到记录页，体重、热量和力量曲线一目了然。'
           }
         ]
       },
       {
         id: 'meals',
         label: '饮食 · 拍照 AI 估算',
-        chapter: '03 · 饮食拍照估算',
-        transition: 'smoothup',
-        minDuration: 19.5,
+        chapter: '04 · 饮食拍照估算',
+        transition: 'perspective_swing',
+        minDuration: 18.0,
         beats: [
           {
             caption: '拍张餐食照，AI 自动估算热量与三大营养素',
-            narration: '吃饭也不用挨个称重。选一张餐食照片，简单写一句备注，点保存并 AI 估算。'
+            narration: '吃饭不用称重，拍张餐食照点 AI 估算。'
           },
           {
             caption: '热量与蛋白质秒出结果，今日进度条实时更新',
-            callout: '540 kcal · 46.5g 蛋白质 · 进度条实时更新',
-            narration: '几秒内自动算出热量和蛋白质，上方的营养进度条也会实时更新。'
+            callout: '540 kcal · 46.5g 蛋白质 · 实时更新',
+            narration: '几秒算出热量和蛋白质，进度条实时更新。'
           }
         ]
       },
       {
         id: 'coach',
         label: '反馈 · AI 教练与一键撤销',
-        chapter: '04 · AI 教练反馈',
-        transition: 'smoothleft',
-        minDuration: 22.0,
+        chapter: '05 · AI 教练反馈',
+        transition: 'perspective_swing',
+        minDuration: 19.0,
         beats: [
           {
             caption: 'AI 教练结合近 14 天记录，给出针对性调整建议',
-            narration: '练完觉得有紧绷或瓶颈，在反馈页写一句感受，让 AI 教练结合近十四天数据帮你复盘。'
+            callout: '14 天数据复盘 · 针对性调整建议',
+            narration: '训练有紧绷或瓶颈？写句感受，AI 教练结合近十四天数据帮你复盘。'
           },
           {
-            caption: '只改今天、长期调整或不采纳 — 随时一键撤销',
-            callout: '只改今天 · 长期调整 · 随时一键撤销',
-            narration: '每条建议都能选只改今天、长期调整或不采纳；改完不满意，还能随时一键撤销。'
+            caption: '建议一键采纳，不满意随时一键撤销',
+            callout: '一键采纳建议 · 随时一键撤销',
+            narration: '满意就一键采纳，不合适也能随时撤销。'
           }
         ]
       },
       {
         id: 'me',
         label: '我的 · 主屏幕、双语与导出',
-        chapter: '05 · 我的 & 数据主权',
-        transition: 'smoothleft',
-        minDuration: 16.0,
+        chapter: '06 · 我的 & 数据主权',
+        transition: 'perspective_swing',
+        minDuration: 14.5,
         beats: [
           {
             caption: '支持中英双语；Safari 分享即可「添加到主屏幕」',
-            callout: 'iPhone 分享 → 添加到主屏幕，像 App 一样打开',
-            narration: '在我的页面可以随时切换中英文，也能通过浏览器添加到主屏幕，像原生应用一样打开。'
+            callout: '中英双语 · 添加到主屏幕像 App 一样打开',
+            narration: '我的页面支持中英文切换，也能添加到主屏幕像原生应用一样打开。'
           },
           {
             caption: '一键导出全部记录与照片，你的数据完全属于你',
             callout: '一键导出完整记录与餐食照片',
-            narration: '所有训练记录和餐食照片都能随时一键导出，你的数据永远属于你。'
+            narration: '所有记录和照片都能一键导出，数据完全属于你。'
           }
         ]
       }
     ],
     mocks: {
+      setupInjNote: '右肩前侧卧推容易发紧',
       mealNote: '鸡胸肉糙米饭配西兰花和溏心蛋',
       mealEstimate: {
         items: [
@@ -232,7 +240,7 @@ const STORYBOARDS = {
       eyebrow: 'LEAN RITUAL · MOBILE TRAINING LOG',
       title: 'Lean Ritual',
       tagline: '5 minutes a day to a lean, strong physique',
-      pills: ['Daily Plan', 'Photo Macro AI', 'AI Coach'],
+      pills: ['1-Min Setup', 'Photo Macro AI', 'AI Coach'],
       duration: 4.8,
       narration: 'Lean Ritual. Five minutes a day to keep your workouts, meals, and progress on track.'
     },
@@ -242,36 +250,42 @@ const STORYBOARDS = {
       url: 'https://leanritual.app',
       badge: 'Invitation-only beta',
       footnote: 'Works right in your browser · Add to Home Screen',
-      duration: 6.2,
+      duration: 6.0,
       narration: 'Lean Ritual is currently in invitation-only beta. Visit leanritual.app to learn more.',
       spoken: 'Lean Ritual is currently in invitation-only beta. Visit lean ritual dot app to learn more.'
     },
     poster: {
       eyebrow: 'LEAN RITUAL',
       headline: '5 minutes a day to a lean, strong physique',
-      subline: 'Smart workouts · Photo macro AI · Reversible AI coaching',
+      subline: 'Tailored workouts · Photo macro AI · Reversible AI coaching',
       badge: 'Invitation-only · leanritual.app'
     },
     scenes: [
       {
-        id: 'hook',
-        label: 'Today Overview',
-        chapter: 'Lean Ritual · Today',
+        id: 'setup',
+        label: '1-Minute Profile Setup',
+        chapter: '01 · 1-Minute Setup',
         transition: 'circleopen',
-        minDuration: 5.2,
+        minDuration: 15.0,
         beats: [
           {
-            caption: 'Open the app to see today’s workout and macro targets at a glance',
-            narration: 'Open the app and see today’s workout and daily macro targets right away.'
+            caption: 'Enter your stats, goal, schedule, and injuries in 1 minute',
+            callout: '60s setup · Body metrics · Injury swaps',
+            narration: 'Start with a one-minute setup — enter your stats, goal, schedule, and any joint injuries.'
+          },
+          {
+            caption: 'Get a tailored workout plan, daily macros, and joint-safe swaps',
+            callout: 'Tailored plan · 1930 kcal · Joint-safe swaps',
+            narration: 'Lean Ritual immediately builds your daily workout plan, macro targets, and joint-friendly swaps.'
           }
         ]
       },
       {
         id: 'checkin',
         label: 'Today · Daily Check-in',
-        chapter: '01 · Daily Check-in',
-        transition: 'smoothleft',
-        minDuration: 15.0,
+        chapter: '02 · Daily Check-in',
+        transition: 'perspective_swing',
+        minDuration: 13.5,
         beats: [
           {
             caption: 'Log morning weight, steps, and sleep in 10 seconds',
@@ -279,7 +293,7 @@ const STORYBOARDS = {
           },
           {
             caption: '7-day rolling averages smooth out daily fluctuations',
-            callout: '7-day rolling average · Noise-free trend',
+            callout: '7-day avg 72.4 kg · Noise-free trend',
             narration: 'Tap save, and seven-day rolling averages filter out daily noise so you see real progress.'
           }
         ]
@@ -287,18 +301,18 @@ const STORYBOARDS = {
       {
         id: 'workout_log',
         label: 'Log Workout & Progress Charts',
-        chapter: '02 · Workouts & Log',
-        transition: 'smoothleft',
-        minDuration: 26.5,
+        chapter: '03 · Workouts & Log',
+        transition: 'perspective_swing',
+        minDuration: 24.0,
         beats: [
           {
             caption: 'Progressive load suggestions — log sets and reps in seconds',
-            callout: 'Smart progressive overload · Auto weight targets',
+            callout: 'Progressive overload · Auto 60 kg target',
             narration: 'During your workout, every lift suggests your next weight. Log your sets and tap finish and save.'
           },
           {
             caption: 'Weight trend, calorie balance, and strength charts update automatically',
-            callout: 'Weight trend · Calorie balance · Strength gains',
+            callout: '7-day trend · Calorie balance · Strength gains',
             narration: 'Switch to the Log tab to see your weight trend, calorie balance, and strength progress update automatically.'
           }
         ]
@@ -306,9 +320,9 @@ const STORYBOARDS = {
       {
         id: 'meals',
         label: 'Meals · Photo AI Estimate',
-        chapter: '03 · Photo Macro AI',
-        transition: 'smoothup',
-        minDuration: 19.5,
+        chapter: '04 · Photo Macro AI',
+        transition: 'perspective_swing',
+        minDuration: 18.5,
         beats: [
           {
             caption: 'Snap a meal photo — AI estimates calories and protein for you',
@@ -324,31 +338,32 @@ const STORYBOARDS = {
       {
         id: 'coach',
         label: 'Feedback · AI Coach & One-Tap Undo',
-        chapter: '04 · AI Coach Review',
-        transition: 'smoothleft',
-        minDuration: 22.0,
+        chapter: '05 · AI Coach Review',
+        transition: 'perspective_swing',
+        minDuration: 19.0,
         beats: [
           {
             caption: 'AI coach reviews your last 14 days and proposes concrete tweaks',
+            callout: '14-day review · Actionable tweaks',
             narration: 'Feel tightness or hit a plateau? Leave a quick note and let the AI coach review your last two weeks.'
           },
           {
-            caption: 'Apply for today only, long-term, or decline — undo anytime',
-            callout: 'Today only · Long-term · 1-tap undo',
-            narration: 'Choose today only, long-term, or decline on any suggestion — and undo with one tap anytime.'
+            caption: 'Apply any suggestion in one tap — undo anytime',
+            callout: '1-tap apply · Undo anytime',
+            narration: 'Apply any suggestion in one tap — and undo it anytime if you change your mind.'
           }
         ]
       },
       {
         id: 'me',
         label: 'Me · Home Screen, Language & Export',
-        chapter: '05 · Me & Your Data',
-        transition: 'smoothleft',
-        minDuration: 16.0,
+        chapter: '06 · Me & Your Data',
+        transition: 'perspective_swing',
+        minDuration: 15.0,
         beats: [
           {
             caption: 'Switch languages anytime · Add to Home Screen for app-like access',
-            callout: 'Safari Share → Add to Home Screen for instant access',
+            callout: 'EN / 中文 · Add to Home Screen like a native app',
             narration: 'In the Me tab, switch between English and Chinese anytime, or add Lean Ritual to your home screen like a native app.'
           },
           {
@@ -360,6 +375,7 @@ const STORYBOARDS = {
       }
     ],
     mocks: {
+      setupInjNote: 'Front right shoulder gets tight on flat bench',
       mealNote: 'Grilled chicken breast bowl with brown rice, broccoli, and soft-boiled egg',
       mealEstimate: {
         items: [
@@ -417,14 +433,14 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v3（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v3 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v5（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v5 (English)`
   );
   lines.push('');
   lines.push(
     isZh
-      ? `- 目标受众：真实健身用户（非测试说明）\n- 规格：1080×1920 竖屏 & 1920×1080 横屏 · 30fps · H.264 + AAC · 约 2 分钟\n- 配音引擎：${voiceDesc}\n- 音频设计：原创环境电钢背景乐（人声自动闪避）+ 交互点击、转场微风与成功提示音效`
-      : `- Audience: Everyday lifters & beta invitees\n- Formats: 1080×1920 vertical & 1920×1080 widescreen · 30fps · H.264 + AAC · ~2 minutes\n- Voiceover: ${voiceDesc}\n- Sound design: Original Rhodes/ambient BGM (sidechain-ducked under voice) + synced UI tap, transition swoosh & chime SFX`
+      ? `- 目标受众：真实健身用户（非测试说明）\n- 规格：1080×1920 竖屏 & 1920×1080 横屏 · 30fps · H.264 + AAC · 约 2 分钟\n- 配音引擎：${voiceDesc}\n- 音频设计：原创 116 BPM 活力电子电钢背景乐（人声自动闪避）+ 节拍转场冲击、交互点击与提示音效`
+      : `- Audience: Everyday lifters & beta invitees\n- Formats: 1080×1920 vertical & 1920×1080 widescreen · 30fps · H.264 + AAC · ~2 minutes\n- Voiceover: ${voiceDesc}\n- Sound design: Original upbeat 116 BPM synth-Rhodes BGM (sidechain-ducked under voice) + beat-synced transition impact, UI tap & chime SFX`
   );
   lines.push('');
   lines.push(isZh ? `## 分镜与文案` : `## Storyboard & Script`);

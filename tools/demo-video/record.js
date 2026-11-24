@@ -334,12 +334,16 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
 
   try {
     await page.goto(srv.base + '/', { waitUntil: 'networkidle' });
-    await page.locator('#tabs').waitFor({ state: 'visible' });
-    const activeTab = await page.locator('#tabs button.on').getAttribute('data-v');
-    if (activeTab !== startTab) {
-      await page.locator(`#tabs [data-act="tab"][data-v="${startTab}"]`).click();
+    if (startTab === 'setup') {
+      await page.locator('#setup').waitFor({ state: 'visible' });
+    } else {
+      await page.locator('#tabs').waitFor({ state: 'visible' });
+      const activeTab = await page.locator('#tabs button.on').getAttribute('data-v');
+      if (activeTab !== startTab) {
+        await page.locator(`#tabs [data-act="tab"][data-v="${startTab}"]`).click();
+      }
     }
-    await page.waitForTimeout(450);
+    await page.waitForTimeout(420);
 
     // Ensure no banner errors are visible before recording begins
     assert.equal(await page.locator('.banner').count(), 0, `[${sceneId}] Unexpected error/offline banner`);
@@ -405,7 +409,18 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
   }
 }
 
-async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, lunchPhotoPath, onlyScenes = null }) {
+async function recordAllScenes({
+  browser,
+  srv,
+  storageState,
+  uid,
+  setupStorageState = null,
+  setupUid = null,
+  sb,
+  workDir,
+  lunchPhotoPath,
+  onlyScenes = null
+}) {
   const rawDir = path.join(workDir, `raw-${sb.lang}`);
   fs.mkdirSync(rawDir, { recursive: true });
   const isZh = sb.lang === 'zh';
@@ -414,53 +429,86 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
   const scenes = [];
   const baseOpts = { browser, srv, storageState, uid, sb, rawDir };
 
-  // Scene 0: Hook — App Home (Today)
-  if (want('hook')) scenes.push(
+  // Scene 1: 1-Minute Setup — Real first-time profile setup (metrics, goals, injuries -> tailored plan)
+  if (want('setup')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
-      sceneId: 'hook',
-      startTab: 'today',
-      run: async page => {
-        const posterShotPath = path.join(rawDir, `poster-screen-${sb.lang}.png`);
-        await page.screenshot({ path: posterShotPath });
-        await page.waitForTimeout(1500);
-        await smoothScrollTo(page, 210, 1100);
+      storageState: setupStorageState || storageState,
+      uid: setupUid || uid,
+      sceneId: 'setup',
+      startTab: 'setup',
+      run: async (page, { markBeat, markEvent }) => {
+        await page.waitForTimeout(650);
+        await humanType(page, page.locator('#f-age'), '28', { delay: 70, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#f-height'), '176', { delay: 70, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#f-weight'), '74.4', { delay: 70, scroll: false, pauseAfter: 160 });
+        await humanType(page, page.locator('#f-bf'), '16.5', { delay: 70, scroll: false, pauseAfter: 280 });
+
+        // Scroll past Training Plan (goal, schedule, gym) to Injuries section
+        await smoothCenter(page, page.locator('#lbl-stage'), 750, 40);
+        await page.waitForTimeout(850);
+        await smoothCenter(page, page.locator('#lbl-inj'), 800, 60);
+        await page.waitForTimeout(350);
+
+        // Select Shoulder injury & add short note
+        const shoulderChip = page.locator('input[name="injuries"][value="shoulder"]').locator('xpath=following-sibling::span');
+        await humanTap(page, shoulderChip, { scroll: false, pauseBefore: 160, pauseAfter: 260, markEvent });
+        await humanType(page, page.locator('#f-injnote'), sb.mocks.setupInjNote, {
+          delay: isZh ? 55 : 32,
+          scroll: false,
+          pauseAfter: 350
+        });
+
+        // Beat 2: Submit "Build my plan" -> land on tailored Today workout & macros with shoulder-safe swap
+        markBeat();
+        const submitBtn = page.locator('#setup button[type="submit"]');
+        await smoothCenter(page, submitBtn, 650, -30);
+        await highlightEl(page, submitBtn, 5);
+        await humanTap(page, submitBtn, { scroll: false, pauseBefore: 200, pauseAfter: 300, markEvent });
+
+        await page.locator('#tabs').waitFor({ state: 'visible', timeout: 10000 });
+        markEvent('chime');
+        await page.waitForTimeout(1600);
+        // Scroll slightly to showcase joint-safe swapped exercise & calculated daily macros
+        await smoothScrollTo(page, 260, 800);
+        await page.waitForTimeout(1800);
+        await smoothScrollTo(page, 0, 700);
         await page.waitForTimeout(1200);
-        await smoothScrollTo(page, 0, 900);
-        await page.waitForTimeout(700);
-        return { posterShotPath };
       }
     })
   );
 
-  // Scene 1: Today — Daily Check-in
+  // Scene 2: Today — Daily Check-in (also captures rich Week 4 Today poster screenshot)
   if (want('checkin')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'checkin',
       startTab: 'today',
       run: async (page, { markBeat, markEvent }) => {
-        await page.waitForTimeout(500);
+        const posterShotPath = path.join(rawDir, `poster-screen-${sb.lang}.png`);
+        await page.screenshot({ path: posterShotPath });
+        await page.waitForTimeout(400);
         const checkinCard = page.locator('#c-weight').locator('xpath=ancestor::section[contains(@class,"card")]');
-        await smoothCenter(page, checkinCard, 1050, -10);
-        await page.waitForTimeout(550);
+        await smoothCenter(page, checkinCard, 850, -10);
+        await page.waitForTimeout(350);
 
-        await humanType(page, page.locator('#c-weight'), '72.4', { delay: 105, scroll: false, pauseAfter: 400 });
-        await humanType(page, page.locator('#c-steps'), '9600', { delay: 95, scroll: false, pauseAfter: 400 });
-        await humanType(page, page.locator('#c-sleep'), '7.5', { delay: 105, scroll: false, pauseAfter: 550 });
+        await humanType(page, page.locator('#c-weight'), '72.4', { delay: 80, scroll: false, pauseAfter: 260 });
+        await humanType(page, page.locator('#c-steps'), '9600', { delay: 75, scroll: false, pauseAfter: 260 });
+        await humanType(page, page.locator('#c-sleep'), '7.5', { delay: 80, scroll: false, pauseAfter: 360 });
 
         markBeat();
         await humanTap(page, page.locator('[data-act="save-checkin"]'), {
           scroll: false,
-          pauseBefore: 240,
-          pauseAfter: 350,
+          pauseBefore: 180,
+          pauseAfter: 280,
           markEvent
         });
         const loggedPill = page.getByText(isZh ? '已记录' : 'Logged', { exact: true });
         await loggedPill.waitFor({ state: 'visible' });
         markEvent('chime');
         await highlightEl(page, checkinCard, 4);
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(2400);
+        return { posterShotPath };
       }
     })
   );
@@ -623,28 +671,23 @@ async function recordAllScenes({ browser, srv, storageState, uid, sb, workDir, l
         await smoothCenter(page, fbSection, 850, -80);
         await page.waitForTimeout(2200);
 
-        // Beat 2: Open adoption chooser (Today only / Long-term / Decline) -> adopt Today only -> Undo!
+        // Beat 2: Adopt suggestion in one tap -> highlight Undo chip -> tap Undo to prove full reversibility!
         markBeat();
-        await smoothCenter(page, adoptChip, 650, 20);
-        await humanTap(page, adoptChip, { scroll: false, pauseBefore: 240, pauseAfter: 450, markEvent });
+        await smoothCenter(page, adoptChip, 550, 20);
+        await humanTap(page, adoptChip, { scroll: false, pauseBefore: 180, pauseAfter: 260, markEvent });
         await page.locator('.chooser').waitFor({ state: 'visible' });
-        await smoothCenter(page, page.locator('.chooser'), 480, 0);
-        await highlightEl(page, page.locator('.chooser'), 6);
-        await page.waitForTimeout(2400);
-
-        // Tap "只改今天" / "Today only"
-        const todayBtn = page.locator('[data-act="adopt-confirm"]').first();
-        await humanTap(page, todayBtn, { scroll: false, pauseBefore: 220, pauseAfter: 380, markEvent });
+        const confirmBtn = page.locator('[data-act="adopt-confirm"]').first();
+        await humanTap(page, confirmBtn, { scroll: false, pauseBefore: 160, pauseAfter: 300, markEvent });
         const undoChip = page.locator('[data-act="undo-adjust"]').first();
         await undoChip.waitFor({ state: 'visible' });
         markEvent('chime');
         await highlightEl(page, undoChip, 6);
-        await page.waitForTimeout(2200);
+        await page.waitForTimeout(1800);
 
-        // Tap "已采纳 · 撤销" / "Applied · Undo" to prove full reversibility!
-        await humanTap(page, undoChip, { scroll: false, pauseBefore: 240, pauseAfter: 420, markEvent });
+        // Tap "已采纳 · 撤销" / "Applied · Undo" to prove any change can be undone anytime!
+        await humanTap(page, undoChip, { scroll: false, pauseBefore: 200, pauseAfter: 350, markEvent });
         await adoptChip.waitFor({ state: 'visible' });
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1600);
       }
     })
   );

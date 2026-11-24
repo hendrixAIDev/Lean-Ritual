@@ -22,11 +22,13 @@ const {
   W16_PANEL_Y
 } = require('./assets');
 const elevenlabs = require('./tts_elevenlabs');
+const { renderTransitionBridge } = require('./transitions');
 
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
 const FFPROBE = process.env.FFPROBE_BIN || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe');
 const UV_BIN = process.env.UV_BIN || (fs.existsSync('/opt/homebrew/bin/uv') ? '/opt/homebrew/bin/uv' : 'uv');
 const TRANSITION_DUR = 0.48;
+const BRIDGE_DUR = 0.57; // 17 frames @ 30fps for 3D perspective_swing transition bridge
 const FPS = 30;
 const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -210,10 +212,10 @@ function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sce
   const inputIdx = {};
   let nextIdx = 3;
   beats.forEach((b, bi) => {
-    args.push('-loop', '1', '-i', b.capPath);
+    args.push('-framerate', String(FPS), '-i', b.capSeq.pattern);
     inputIdx[`cap${bi}`] = nextIdx++;
-    if (b.calloutPath) {
-      args.push('-loop', '1', '-i', b.calloutPath);
+    if (b.calloutSeq) {
+      args.push('-framerate', String(FPS), '-i', b.calloutSeq.pattern);
       inputIdx[`call${bi}`] = nextIdx++;
     }
   });
@@ -230,80 +232,60 @@ function renderScene9x16({ rawWebm, trimStart, sceneDur, splitAt, shellPath, sce
 
   let cur = 'framed';
 
-  // Top header chip choreography: chapter chip fades in gently; if a beat has a callout, swap cleanly in the top band!
-  const b0HasCall = Boolean(beats[0]?.calloutPath);
-  const b1HasCall = Boolean(beats[1]?.calloutPath);
-  const chapFadeOut = b0HasCall ? 1.8 : b1HasCall ? Math.max(1.5, splitAt - 0.15) : sceneDur - 0.25;
+  // Top header chip choreography: chapter chip fades in; kinetic count-up callout pills swap in cleanly!
+  const b0HasCall = Boolean(beats[0]?.calloutSeq);
+  const b1HasCall = Boolean(beats[1]?.calloutSeq);
+  const chapFadeOut = b0HasCall ? 1.55 : b1HasCall ? Math.max(1.4, splitAt - 0.15) : sceneDur - 0.25;
 
   filters.push(
     `[2:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-    `fade=t=in:st=0.08:d=0.30:alpha=1,fade=t=out:st=${chapFadeOut.toFixed(3)}:d=0.25:alpha=1[chap]`
+    `fade=t=in:st=0.06:d=0.26:alpha=1,fade=t=out:st=${chapFadeOut.toFixed(3)}:d=0.22:alpha=1[chap]`
   );
   filters.push(
-    `[${cur}][chap]overlay=x=0:y='-16*pow(1-min(1,max(0,(t-0.08)/0.30)),3)':shortest=1[top0]`
+    `[${cur}][chap]overlay=x=0:y='-14*pow(1-min(1,max(0,(t-0.06)/0.26)),3)':shortest=1[top0]`
   );
   cur = 'top0';
 
+  const addKineticSeqOverlay = (idx, seq, startSec, fadeOutSt, yPos, outLabel) => {
+    const endSec = Math.min(sceneDur, fadeOutSt + 0.26);
+    const holdDur = Math.max(0.5, endSec - startSec - seq.duration + 0.4);
+    const tag = `k_${outLabel}`;
+    filters.push(
+      `[${idx}:v]fps=${FPS},format=rgba,tpad=stop_mode=clone:stop_duration=${holdDur.toFixed(3)},` +
+      `setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,` +
+      `fade=t=out:st=${fadeOutSt.toFixed(3)}:d=0.22:alpha=1[${tag}]`
+    );
+    filters.push(
+      `[${cur}][${tag}]overlay=x=0:y=${yPos}:eof_action=pass:enable='between(t,${startSec.toFixed(3)},${endSec.toFixed(3)})'[${outLabel}]`
+    );
+    cur = outLabel;
+  };
+
   if (b0HasCall) {
-    const cStart = 2.0;
-    const cEnd = beats.length > 1 ? Math.max(cStart + 1.2, splitAt - 0.2) : sceneDur - 0.3;
-    const idx = inputIdx.call0;
-    filters.push(
-      `[${idx}:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=${cStart.toFixed(3)}:d=0.30:alpha=1,fade=t=out:st=${cEnd.toFixed(3)}:d=0.24:alpha=1[call0]`
-    );
-    filters.push(
-      `[${cur}][call0]overlay=x=0:y='-18*pow(1-min(1,max(0,(t-${cStart.toFixed(3)})/0.32)),3)':shortest=1[top1]`
-    );
-    cur = 'top1';
+    const cStart = 1.75;
+    const cEnd = beats.length > 1 ? Math.max(cStart + 1.1, splitAt - 0.22) : sceneDur - 0.28;
+    addKineticSeqOverlay(inputIdx.call0, beats[0].calloutSeq, cStart, cEnd, 0, 'top1');
   }
 
   if (b1HasCall) {
-    const cStart = Math.max(0.8, splitAt + 0.12);
-    const cEnd = Math.max(cStart + 1.0, sceneDur - 0.28);
-    const idx = inputIdx.call1;
-    filters.push(
-      `[${idx}:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=${cStart.toFixed(3)}:d=0.30:alpha=1,fade=t=out:st=${cEnd.toFixed(3)}:d=0.24:alpha=1[call1]`
-    );
-    filters.push(
-      `[${cur}][call1]overlay=x=0:y='-18*pow(1-min(1,max(0,(t-${cStart.toFixed(3)})/0.32)),3)':shortest=1[top2]`
-    );
-    cur = 'top2';
+    const cStart = Math.max(0.7, splitAt + 0.10);
+    const cEnd = Math.max(cStart + 0.9, sceneDur - 0.28);
+    addKineticSeqOverlay(inputIdx.call1, beats[1].calloutSeq, cStart, cEnd, 0, 'top2');
   }
 
-  // Bottom animated captions: smooth slide-up (+28px -> 0) + alpha fade-in/out!
+  // Bottom kinetic per-word/chunk captions
   if (beats.length === 1) {
-    const idx = inputIdx.cap0;
-    filters.push(
-      `[${idx}:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=0.12:d=0.32:alpha=1,fade=t=out:st=${Math.max(0.5, sceneDur - 0.28).toFixed(3)}:d=0.24:alpha=1[cap0]`
-    );
-    filters.push(
-      `[${cur}][cap0]overlay=x=0:y='${CAP_BAND_Y}+28*pow(1-min(1,max(0,(t-0.12)/0.34)),3)':shortest=1,format=yuv420p[outv]`
-    );
+    addKineticSeqOverlay(inputIdx.cap0, beats[0].capSeq, 0.08, Math.max(0.5, sceneDur - 0.28), CAP_BAND_Y, 'c0ov');
   } else {
     const sp = splitAt;
     const c0Out = Math.max(0.8, sp - 0.24);
     const c1In = sp;
     const c1Out = Math.max(c1In + 0.6, sceneDur - 0.28);
-
-    filters.push(
-      `[${inputIdx.cap0}:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=0.12:d=0.32:alpha=1,fade=t=out:st=${c0Out.toFixed(3)}:d=0.22:alpha=1[cap0]`
-    );
-    filters.push(
-      `[${cur}][cap0]overlay=x=0:y='${CAP_BAND_Y}+28*pow(1-min(1,max(0,(t-0.12)/0.34)),3)':shortest=1[c0ov]`
-    );
-
-    filters.push(
-      `[${inputIdx.cap1}:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=${c1In.toFixed(3)}:d=0.32:alpha=1,fade=t=out:st=${c1Out.toFixed(3)}:d=0.24:alpha=1[cap1]`
-    );
-    filters.push(
-      `[c0ov][cap1]overlay=x=0:y='${CAP_BAND_Y}+28*pow(1-min(1,max(0,(t-${c1In.toFixed(3)})/0.34)),3)':shortest=1,format=yuv420p[outv]`
-    );
+    addKineticSeqOverlay(inputIdx.cap0, beats[0].capSeq, 0.08, c0Out, CAP_BAND_Y, 'c0ov');
+    addKineticSeqOverlay(inputIdx.cap1, beats[1].capSeq, c1In, c1Out, CAP_BAND_Y, 'c1ov');
   }
+
+  filters.push(`[${cur}]format=yuv420p[outv]`);
 
   args.push(
     '-filter_complex', filters.join(';'),
@@ -331,7 +313,7 @@ function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path,
     '-i', rawWebm,
     '-loop', '1', '-i', shell16x9Path
   ];
-  panels.forEach(p => args.push('-loop', '1', '-i', p));
+  panels.forEach(seq => args.push('-framerate', String(FPS), '-i', seq.pattern));
 
   const filters = [];
   const phoneScale = buildStaticPhoneScaleFilter({ phoneW: W16_PHONE_W, phoneH: W16_PHONE_H });
@@ -343,34 +325,33 @@ function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path,
   filters.push(`[base][phone]overlay=${W16_PHONE_X}:${W16_PHONE_Y}:shortest=1[staged]`);
   filters.push(`[staged][1:v]overlay=0:0:shortest=1[framed]`);
 
+  let cur = 'framed';
+  const addPanelSeq = (idx, seq, startSec, fadeOutSt, outLabel) => {
+    const endSec = Math.min(sceneDur, fadeOutSt + 0.26);
+    const holdDur = Math.max(0.5, endSec - startSec - seq.duration + 0.4);
+    const tag = `kp_${outLabel}`;
+    filters.push(
+      `[${idx}:v]fps=${FPS},format=rgba,tpad=stop_mode=clone:stop_duration=${holdDur.toFixed(3)},` +
+      `setpts=PTS-STARTPTS+${startSec.toFixed(3)}/TB,` +
+      `fade=t=out:st=${fadeOutSt.toFixed(3)}:d=0.22:alpha=1[${tag}]`
+    );
+    filters.push(
+      `[${cur}][${tag}]overlay=x=${W16_PANEL_X}:y=${W16_PANEL_Y}:eof_action=pass:enable='between(t,${startSec.toFixed(3)},${endSec.toFixed(3)})'[${outLabel}]`
+    );
+    cur = outLabel;
+  };
+
   if (panels.length === 1) {
-    filters.push(
-      `[2:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=0.14:d=0.34:alpha=1,fade=t=out:st=${Math.max(0.5, sceneDur - 0.28).toFixed(3)}:d=0.24:alpha=1[p0]`
-    );
-    filters.push(
-      `[framed][p0]overlay=x=${W16_PANEL_X}:y='${W16_PANEL_Y}+30*pow(1-min(1,max(0,(t-0.14)/0.36)),3)':shortest=1,format=yuv420p[outv]`
-    );
+    addPanelSeq(2, panels[0], 0.08, Math.max(0.5, sceneDur - 0.28), 'ov0');
   } else {
     const c0Out = Math.max(0.8, splitAt - 0.24);
     const c1In = splitAt;
     const c1Out = Math.max(c1In + 0.6, sceneDur - 0.28);
-
-    filters.push(
-      `[2:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=0.14:d=0.34:alpha=1,fade=t=out:st=${c0Out.toFixed(3)}:d=0.22:alpha=1[p0]`
-    );
-    filters.push(
-      `[framed][p0]overlay=x=${W16_PANEL_X}:y='${W16_PANEL_Y}+30*pow(1-min(1,max(0,(t-0.14)/0.36)),3)':shortest=1[ov0]`
-    );
-    filters.push(
-      `[3:v]fps=${FPS},trim=duration=${sceneDur.toFixed(3)},setpts=PTS-STARTPTS,format=rgba,` +
-      `fade=t=in:st=${c1In.toFixed(3)}:d=0.34:alpha=1,fade=t=out:st=${c1Out.toFixed(3)}:d=0.24:alpha=1[p1]`
-    );
-    filters.push(
-      `[ov0][p1]overlay=x=${W16_PANEL_X}:y='${W16_PANEL_Y}+30*pow(1-min(1,max(0,(t-${c1In.toFixed(3)})/0.36)),3)':shortest=1,format=yuv420p[outv]`
-    );
+    addPanelSeq(2, panels[0], 0.08, c0Out, 'ov0');
+    addPanelSeq(3, panels[1], c1In, c1Out, 'ov1');
   }
+
+  filters.push(`[${cur}]format=yuv420p[outv]`);
 
   args.push(
     '-filter_complex', filters.join(';'),
@@ -387,33 +368,68 @@ function renderScene16x9({ rawWebm, trimStart, sceneDur, splitAt, shell16x9Path,
   runBin(FFMPEG, args);
 }
 
-function concatWithTransitions({ segments, width, outVideoOnly }) {
-  const args = ['-y'];
-  segments.forEach(seg => args.push('-i', seg.mp4));
+function extractPhoneFrame({ sceneMp4, tsSec, phoneW, phoneH, phoneX, phoneY, outPng }) {
+  runBin(FFMPEG, [
+    '-y',
+    '-ss', Math.max(0, tsSec).toFixed(3),
+    '-i', sceneMp4,
+    '-frames:v', '1',
+    '-vf', `crop=${phoneW}:${phoneH}:${phoneX}:${phoneY}`,
+    outPng
+  ]);
+}
 
-  const filters = [];
-  let accDur = segments[0].duration;
-  let prevLabel = '0:v';
-
-  for (let i = 1; i < segments.length; i++) {
-    const offset = Math.max(0.1, accDur - TRANSITION_DUR);
-    const trans = segments[i].transition || 'smoothleft';
-    const outLabel = i === segments.length - 1 ? 'merged' : `xf${i}`;
-    filters.push(
-      `[${prevLabel}][${i}:v]xfade=transition=${trans}:duration=${TRANSITION_DUR.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
-    );
-    accDur = offset + segments[i].duration;
-    prevLabel = outLabel;
+function assembleFinalVideo({ segments, bridges, width, outVideoOnly, segDir }) {
+  // segments = [title, scene0, scene1, ..., sceneN, outro]
+  // bridges = Map(segIdx -> { mp4, duration }) for 3D perspective_swing bridges placed BEFORE segIdx
+  const bodyItems = [];
+  let bodyDur = 0;
+  for (let i = 1; i < segments.length - 1; i++) {
+    const br = bridges.get(i);
+    if (br) {
+      bodyItems.push(br.mp4);
+      bodyDur += br.duration;
+    }
+    bodyItems.push(segments[i].mp4);
+    bodyDur += segments[i].duration;
   }
 
-  // Sleek animated emerald hairline progress bar along top edge across the full video
-  const totalDur = accDur;
-  filters.push(`color=c=#34D399@0.92:s=${width}x6:r=${FPS}:d=${totalDur.toFixed(3)}[pbar]`);
-  filters.push(
-    `[merged][pbar]overlay=x='-${width}+${width}*min(1,t/${totalDur.toFixed(3)})':y=0:shortest=1,format=yuv420p[vout]`
-  );
+  const listPath = path.join(segDir, 'body-concat.txt');
+  fs.writeFileSync(listPath, bodyItems.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n') + '\n', 'utf8');
+  const bodyMp4 = path.join(segDir, 'body-merged.mp4');
+  runBin(FFMPEG, [
+    '-y',
+    '-f', 'concat',
+    '-safe', '0',
+    '-i', listPath,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '16',
+    '-r', String(FPS),
+    '-pix_fmt', 'yuv420p',
+    '-an',
+    bodyMp4
+  ]);
 
-  args.push(
+  const titleSeg = segments[0];
+  const outroSeg = segments[segments.length - 1];
+  const off1 = Math.max(0.1, titleSeg.duration - TRANSITION_DUR);
+  const afterBody = off1 + bodyDur;
+  const off2 = Math.max(off1 + 0.5, afterBody - TRANSITION_DUR);
+  const totalDur = off2 + outroSeg.duration;
+
+  const filters = [
+    `[0:v][1:v]xfade=transition=circleopen:duration=${TRANSITION_DUR.toFixed(3)}:offset=${off1.toFixed(3)}[xf1]`,
+    `[xf1][2:v]xfade=transition=fade:duration=${TRANSITION_DUR.toFixed(3)}:offset=${off2.toFixed(3)}[merged]`,
+    `color=c=#34D399@0.92:s=${width}x6:r=${FPS}:d=${totalDur.toFixed(3)}[pbar]`,
+    `[merged][pbar]overlay=x='-${width}+${width}*min(1,t/${totalDur.toFixed(3)})':y=0:shortest=1,format=yuv420p[vout]`
+  ];
+
+  runBin(FFMPEG, [
+    '-y',
+    '-i', titleSeg.mp4,
+    '-i', bodyMp4,
+    '-i', outroSeg.mp4,
     '-filter_complex', filters.join(';'),
     '-map', '[vout]',
     '-r', String(FPS),
@@ -428,9 +444,8 @@ function concatWithTransitions({ segments, width, outVideoOnly }) {
     '-movflags', '+faststart',
     '-an',
     outVideoOnly
-  );
+  ]);
 
-  runBin(FFMPEG, args);
   return totalDur;
 }
 
@@ -486,8 +501,8 @@ function buildMasterAudioMix({ voiceCues, sfxCues, bgmWav, totalDur, outWav }) {
     '-filter_complex',
     [
       `[0:a]asplit=2[vmain][vsc]`,
-      `[1:a]atrim=0:${totalDur.toFixed(3)},volume=0.24[bgm0]`,
-      `[bgm0][vsc]sidechaincompress=threshold=0.022:ratio=6.5:attack=35:release=460:makeup=1[bgm_duck]`,
+      `[1:a]atrim=0:${totalDur.toFixed(3)},volume=0.27[bgm0]`,
+      `[bgm0][vsc]sidechaincompress=threshold=0.020:ratio=6.8:attack=30:release=420:makeup=1[bgm_duck]`,
       `[vmain][bgm_duck][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.89,atrim=0:${totalDur.toFixed(3)}[aout]`
     ].join(';'),
     '-map', '[aout]',
@@ -643,13 +658,20 @@ function planLanguageTimeline({ sb, recordedScenes, voiceCuesMap }) {
   plan.push({ id: 'outro', duration: outroDur, transition: 'fade' });
   voicePlan.push({ segIdx: outroSegIdx, localOffset: 0.48, wav: outroVo.wav });
 
-  // Compute global timeline start/end accounting for xfade overlaps
+  // Compute global timeline start/end accounting for xfade overlaps & 3D perspective_swing bridges
   const timeline = [];
   let cursor = 0;
   plan.forEach((seg, i) => {
-    const start = i === 0 ? 0 : cursor - TRANSITION_DUR;
+    let start;
+    if (i === 0) {
+      start = 0;
+    } else if (seg.transition === 'perspective_swing') {
+      start = cursor + BRIDGE_DUR;
+    } else {
+      start = cursor - TRANSITION_DUR;
+    }
     const end = start + seg.duration;
-    timeline.push({ id: seg.id, start, end, duration: seg.duration });
+    timeline.push({ id: seg.id, start, end, duration: seg.duration, transition: seg.transition });
     cursor = end;
   });
 
@@ -662,6 +684,7 @@ async function composeLanguageVideo({
   recordedScenes,
   langAssets,
   sharedAssets,
+  assetBrowser,
   workDir,
   outDir,
   formats = ['9x16', '16x9'],
@@ -680,7 +703,7 @@ async function composeLanguageVideo({
     voiceCuesMap: synth.cues
   });
 
-  // Generate tailored original BGM + UI SFX
+  // Generate tailored original upbeat 116 BPM BGM + UI & transition impact SFX
   const soundDir = path.join(compDir, 'sound');
   const sound = generateSoundAssets({ totalDur, soundDir });
 
@@ -691,15 +714,24 @@ async function composeLanguageVideo({
   }));
 
   const sfxCues = [];
-  // Add silky transition swoosh at every xfade boundary
+  // Add beat-synced impact/swoosh at every section boundary
   for (let i = 1; i < timeline.length; i++) {
-    sfxCues.push({
-      wav: sound.sfx.swoosh,
-      startSec: Math.max(0.05, timeline[i].start - 0.04),
-      gain: 0.42
-    });
+    const prevEnd = timeline[i - 1].end;
+    if (timeline[i].transition === 'perspective_swing' && sound.sfx.impact) {
+      sfxCues.push({
+        wav: sound.sfx.impact,
+        startSec: Math.max(0.05, prevEnd + 0.08),
+        gain: 0.52
+      });
+    } else {
+      sfxCues.push({
+        wav: sound.sfx.swoosh,
+        startSec: Math.max(0.05, timeline[i].start - 0.04),
+        gain: 0.44
+      });
+    }
   }
-  const sfxGain = { tap: 0.42, chime: 0.44, pop: 0.34 };
+  const sfxGain = { tap: 0.40, chime: 0.44, pop: 0.36 };
   for (const ev of sfxPlan) {
     const wav = sound.sfx[ev.kind];
     if (!wav) continue;
@@ -727,6 +759,10 @@ async function composeLanguageVideo({
     const isWide = fmt === '16x9';
     const w = isWide ? W16_CANVAS_W : CANVAS_W;
     const h = isWide ? W16_CANVAS_H : CANVAS_H;
+    const phW = isWide ? W16_PHONE_W : PHONE_W;
+    const phH = isWide ? W16_PHONE_H : PHONE_H;
+    const phX = isWide ? W16_PHONE_X : PHONE_X;
+    const phY = isWide ? W16_PHONE_Y : PHONE_Y;
     const segDir = path.join(compDir, `segs-${fmt}`);
     fs.mkdirSync(segDir, { recursive: true });
 
@@ -778,8 +814,46 @@ async function composeLanguageVideo({
       segments.push({ id: p.id, mp4: segMp4, duration: p.duration, transition: p.transition });
     }
 
+    // Render 3D perspective_swing bridges between consecutive app scenes using exact boundary phone frames
+    const bridges = new Map();
+    for (let i = 2; i < segments.length - 1; i++) {
+      if (segments[i].transition !== 'perspective_swing') continue;
+      const outPng = path.join(segDir, `edge-out-${i - 1}.png`);
+      const inPng = path.join(segDir, `edge-in-${i}.png`);
+      extractPhoneFrame({
+        sceneMp4: segments[i - 1].mp4,
+        tsSec: Math.max(0.05, segments[i - 1].duration - 0.08),
+        phoneW: phW,
+        phoneH: phH,
+        phoneX: phX,
+        phoneY: phY,
+        outPng
+      });
+      extractPhoneFrame({
+        sceneMp4: segments[i].mp4,
+        tsSec: 0.04,
+        phoneW: phW,
+        phoneH: phH,
+        phoneX: phX,
+        phoneY: phY,
+        outPng: inPng
+      });
+      const brMp4 = path.join(segDir, `bridge-${i - 1}-to-${i}.mp4`);
+      const br = await renderTransitionBridge({
+        browser: assetBrowser,
+        style: 'perspective_swing',
+        outFramePath: outPng,
+        inFramePath: inPng,
+        wide: isWide,
+        durationSec: BRIDGE_DUR,
+        outMp4: brMp4,
+        workDir: segDir
+      });
+      bridges.set(i, br);
+    }
+
     const videoOnlyMp4 = path.join(compDir, `video-only-${sb.lang}-${fmt}.mp4`);
-    const finalDur = concatWithTransitions({ segments, width: w, outVideoOnly: videoOnlyMp4 });
+    const finalDur = assembleFinalVideo({ segments, bridges, width: w, outVideoOnly: videoOnlyMp4, segDir });
 
     const baseName = isWide ? `lean-ritual-intro-${sb.lang}-16x9` : `lean-ritual-intro-${sb.lang}`;
     const finalMp4 = path.join(outDir, `${baseName}.mp4`);

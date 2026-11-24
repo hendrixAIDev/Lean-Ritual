@@ -1,6 +1,6 @@
-# Lean Ritual Product Intro Video Generator (v3)
+# Lean Ritual Product Intro Video Generator (v5)
 
-Reproducible generator for the ~2-minute user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, stable fixed-frame mobile recordings, motion graphics, voice-ducked background music, and synced UI sound effects.
+Reproducible generator for the ~2-minute user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
 
 See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
 
@@ -59,8 +59,9 @@ npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 - `storyboard.js` — Chinese & English copy, captions, callouts, narration scripts, voice configs, and AI mock responses
 - `seed.js` — disposable local server + 3-week synthetic account seeder
 - `assets.js` — Chromium-rendered animated title/outro cards, 9:16 & 16:9 frame shells, modular overlays, posters, and meal photos
-- `record.js` — Playwright mobile recorder with tap ripples, focus highlights, cubic-eased scrolling, UI event timestamps, and AI route mocks
-- `tts_elevenlabs.js` — ElevenLabs REST API client (`eleven_multilingual_v2`) with env-file key loader and per-line SHA-256 WAV cache
+- `record.js` — Playwright lossless CDP PNG mobile recorder (1-Minute Setup + 5 seeded walkthrough scenes) with tap ripples, focus highlights, cubic-eased scrolling, UI event timestamps, and AI route mocks
+- `transitions.js` — 3D perspective swing / whip-blur / depth-parallax transition bridges, kinetic per-word captions, and live number count-up callout sequences
+- `tts_elevenlabs.js` — ElevenLabs REST API client (`eleven_v3` / `eleven_multilingual_v2`) with env-file key loader and per-line SHA-256 WAV cache
 - `tts_kokoro.py` — local Kokoro-82M neural TTS batch synthesizer (via `sherpa-onnx`)
 - `sound_design.py` — procedural studio BGM & UI foley SFX synthesizer
 - `compose.js` — fixed-frame `ffmpeg` compositing, animated overlays, `xfade` transitions, sidechain-ducked audio mastering, verification, and contact sheet generation

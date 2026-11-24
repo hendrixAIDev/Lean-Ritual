@@ -1010,27 +1010,38 @@ async function generateLangAssets(browser, sb, workDir, { formats = ['9x16', '16
 
     for (let bi = 0; bi < sc.beats.length; bi++) {
       const beat = sc.beats[bi];
+      const {
+        renderKineticCaptionSeq,
+        renderKineticCalloutSeq,
+        renderKineticPanel16x9Seq
+      } = require('./transitions');
       if (formats.includes('9x16')) {
-        const capPath = path.join(dir, `cap-${sc.id}-${bi}.png`);
-        await renderCaptionStrip9x16(browser, { caption: beat.caption, outPath: capPath });
-        let calloutPath = null;
+        const capSeq = await renderKineticCaptionSeq(browser, {
+          text: beat.caption,
+          outDir: path.join(dir, `kcap-${sc.id}-${bi}`),
+          durationSec: 0.50
+        });
+        let calloutSeq = null;
         if (beat.callout) {
-          calloutPath = path.join(dir, `top-callout-${sc.id}-${bi}.png`);
-          await renderTopChip9x16(browser, { text: beat.callout, variant: 'callout', outPath: calloutPath });
+          calloutSeq = await renderKineticCalloutSeq(browser, {
+            text: beat.callout,
+            outDir: path.join(dir, `kcall-${sc.id}-${bi}`),
+            durationSec: 0.60
+          });
         }
-        overlays9x16[sc.id].beats.push({ capPath, calloutPath });
+        overlays9x16[sc.id].beats.push({ capSeq, calloutSeq });
       }
       if (formats.includes('16x9')) {
-        const pPath = path.join(dir, `panel16-${sc.id}-${bi}.png`);
-        await renderPanel16x9(browser, {
+        const panelSeq = await renderKineticPanel16x9Seq(browser, {
           sceneIdx: si,
           totalScenes,
           chapter: sc.chapter,
           caption: beat.caption,
           callout: beat.callout,
-          outPath: pPath
+          outDir: path.join(dir, `kpanel16-${sc.id}-${bi}`),
+          durationSec: 0.60
         });
-        panels16x9[sc.id].push(pPath);
+        panels16x9[sc.id].push(panelSeq);
       }
     }
   }
@@ -1045,6 +1056,7 @@ module.exports = {
   PHONE_H,
   PHONE_X,
   PHONE_Y,
+  PHONE_R,
   TOP_BAND_H,
   CAP_BAND_H,
   CAP_BAND_Y,
@@ -1054,6 +1066,7 @@ module.exports = {
   W16_PHONE_H,
   W16_PHONE_X,
   W16_PHONE_Y,
+  W16_PHONE_R,
   W16_PANEL_X,
   W16_PANEL_Y,
   W16_PANEL_W,

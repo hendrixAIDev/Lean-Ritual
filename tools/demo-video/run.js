@@ -172,24 +172,26 @@ async function main() {
 
       try {
         if (opts.dryRun) {
-          console.log(`=== [${lang}] Dry run: recording hook scene only ===`);
+          console.log(`=== [${lang}] Dry run: recording setup scene only ===`);
           const recorded = await recordAllScenes({
             browser: recordBrowser,
             srv: seeded.srv,
             storageState: seeded.storageState,
             uid: seeded.uid,
+            setupStorageState: seeded.setupStorageState,
+            setupUid: seeded.setupUid,
             sb,
             workDir,
             lunchPhotoPath: shared.lunchPhoto,
-            onlyScenes: ['hook']
+            onlyScenes: ['setup']
           });
-          const hookInfo = probeMedia(recorded[0].videoPath);
+          const setupInfo = probeMedia(recorded[0].videoPath);
           summary.push({
-            file: `[dry-run] ${lang}/hook.webm`,
-            duration: `${hookInfo.duration.toFixed(1)}s`,
-            resolution: `${hookInfo.video.width}x${hookInfo.video.height}`,
-            codecs: hookInfo.video.codec,
-            sizeMB: `${(hookInfo.sizeBytes / 1048576).toFixed(2)} MB`
+            file: `[dry-run] ${lang}/setup.mp4`,
+            duration: `${setupInfo.duration.toFixed(1)}s`,
+            resolution: `${setupInfo.video.width}x${setupInfo.video.height}`,
+            codecs: setupInfo.video.codec,
+            sizeMB: `${(setupInfo.sizeBytes / 1048576).toFixed(2)} MB`
           });
           continue;
         }
@@ -200,17 +202,19 @@ async function main() {
           srv: seeded.srv,
           storageState: seeded.storageState,
           uid: seeded.uid,
+          setupStorageState: seeded.setupStorageState,
+          setupUid: seeded.setupUid,
           sb,
           workDir,
           lunchPhotoPath: shared.lunchPhoto
         });
 
-        const hookScene = recorded.find(r => r.id === 'hook');
-        if (opts.formats.includes('9x16')) {
+        const posterScene = recorded.find(r => r.posterShotPath) || recorded[0];
+        if (opts.formats.includes('9x16') && posterScene?.posterShotPath) {
           const posterPath = path.join(opts.outDir, `poster-${lang}.jpg`);
           await renderPoster(assetBrowser, {
             poster: sb.poster,
-            screenshotPath: hookScene.posterShotPath,
+            screenshotPath: posterScene.posterShotPath,
             outPath: posterPath,
             wide: false
           });
@@ -222,11 +226,11 @@ async function main() {
             sizeMB: `${(fs.statSync(posterPath).size / 1048576).toFixed(2)} MB`
           });
         }
-        if (opts.formats.includes('16x9')) {
+        if (opts.formats.includes('16x9') && posterScene?.posterShotPath) {
           const posterWidePath = path.join(opts.outDir, `poster-${lang}-16x9.jpg`);
           await renderPoster(assetBrowser, {
             poster: sb.poster,
-            screenshotPath: hookScene.posterShotPath,
+            screenshotPath: posterScene.posterShotPath,
             outPath: posterWidePath,
             wide: true
           });
@@ -239,12 +243,13 @@ async function main() {
           });
         }
 
-        console.log(`=== [${lang}] Composing final MP4s (${opts.formats.join(', ')}) + ducked BGM/SFX + contact sheets ===`);
+        console.log(`=== [${lang}] Composing final MP4s (${opts.formats.join(', ')}) + 3D transitions + ducked upbeat BGM/SFX ===`);
         const composed = await composeLanguageVideo({
           sb,
           recordedScenes: recorded,
           langAssets,
           sharedAssets: shared,
+          assetBrowser,
           workDir,
           outDir: opts.outDir,
           formats: opts.formats,

@@ -328,8 +328,7 @@ function buildSyntheticData(lang, breakfastBlobId) {
   return { profile, days, today };
 }
 
-async function seedDemoAccount(browser, sb, breakfastPhotoPath) {
-  const srv = await startLocalServer();
+async function registerAndLogin(browser, srv, sb, email) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
     locale: sb.locale,
@@ -338,38 +337,61 @@ async function seedDemoAccount(browser, sb, breakfastPhotoPath) {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
 
+  const inv = srv.invite(email);
+  const invUrl = `${inv.url}&lang=${sb.lang}`;
+  await page.goto(invUrl);
+  await page.locator('#n').fill(sb.userName);
+  await page.locator('#p').fill(DEMO_PASSWORD);
+  await page.locator('#go').click();
+  const expectedVerifyMsg =
+    sb.lang === 'zh'
+      ? '请查收验证邮件，验证后再登录。'
+      : 'Check your email and verify your address before signing in.';
+  await page.getByText(expectedVerifyMsg, { exact: true }).waitFor();
+
+  const verifyMail = readMails(srv.dir).find(m => m.kind === 'verify' && m.to === email);
+  assert.ok(verifyMail, `Expected verification email for ${email} in local file mail dir`);
+  await page.goto(verifyMail.url);
+  await page.waitForURL(u => u.pathname === '/login.html');
+
+  await page.locator('#e').fill(email);
+  await page.locator('#p').fill(DEMO_PASSWORD);
+  await page.locator('#go').click();
+  await page.locator('#setup').waitFor({ state: 'visible' });
+
+  const me = await page.evaluate(async () => {
+    const r = await fetch('/api/me', { credentials: 'same-origin', headers: { 'X-Bojin': '1' } });
+    if (!r.ok) throw new Error('/api/me failed: ' + r.status);
+    return r.json();
+  });
+  await page.evaluate(lang => {
+    localStorage.setItem('bj-lang', lang);
+  }, sb.lang);
+
+  return { context, page, uid: me.id };
+}
+
+async function seedDemoAccount(browser, sb, breakfastPhotoPath) {
+  const srv = await startLocalServer();
+  let mainCtx = null;
+  let setupCtx = null;
+
   try {
-    // 1. Invite -> register -> verify email -> log in
-    const inv = srv.invite(DEMO_EMAIL);
-    const invUrl = `${inv.url}&lang=${sb.lang}`;
-    await page.goto(invUrl);
-    await page.locator('#n').fill(sb.userName);
-    await page.locator('#p').fill(DEMO_PASSWORD);
-    await page.locator('#go').click();
-    const expectedVerifyMsg =
-      sb.lang === 'zh'
-        ? '请查收验证邮件，验证后再登录。'
-        : 'Check your email and verify your address before signing in.';
-    await page.getByText(expectedVerifyMsg, { exact: true }).waitFor();
+    // 1. Fresh un-profiled synthetic account for the real 1-Minute Setup onboarding scene
+    const setupAcc = await registerAndLogin(browser, srv, sb, 'setup-demo@example.com');
+    setupCtx = setupAcc.context;
+    const setupStorageState = await setupCtx.storageState();
+    const setupUid = setupAcc.uid;
+    await setupCtx.close();
+    setupCtx = null;
 
-    const verifyMail = readMails(srv.dir).find(m => m.kind === 'verify' && m.to === DEMO_EMAIL);
-    assert.ok(verifyMail, 'Expected verification email in local file mail dir');
-    await page.goto(verifyMail.url);
-    await page.waitForURL(u => u.pathname === '/login.html');
+    // 2. Main synthetic account seeded with 3 weeks of realistic logs for walkthrough scenes
+    const mainAcc = await registerAndLogin(browser, srv, sb, DEMO_EMAIL);
+    mainCtx = mainAcc.context;
+    const page = mainAcc.page;
+    const uid = mainAcc.uid;
 
-    await page.locator('#e').fill(DEMO_EMAIL);
-    await page.locator('#p').fill(DEMO_PASSWORD);
-    await page.locator('#go').click();
-    await page.locator('#setup').waitFor({ state: 'visible' });
-
-    // 2. Upload generated breakfast photo and write 3 weeks of synthetic data via authenticated APIs
     const breakfastB64 = breakfastPhotoPath ? fs.readFileSync(breakfastPhotoPath).toString('base64') : null;
-    const me = await page.evaluate(async () => {
-      const r = await fetch('/api/me', { credentials: 'same-origin', headers: { 'X-Bojin': '1' } });
-      if (!r.ok) throw new Error('/api/me failed: ' + r.status);
-      return r.json();
-    });
-
     let breakfastBlobId = null;
     if (breakfastB64) {
       breakfastBlobId = await page.evaluate(async b64 => {
@@ -388,9 +410,9 @@ async function seedDemoAccount(browser, sb, breakfastPhotoPath) {
 
     const { profile, days, today } = buildSyntheticData(sb.lang, breakfastBlobId);
 
-    await page.evaluate(async ({ uid, profileDoc, dayDocs }) => {
+    await page.evaluate(async ({ uid: userId, profileDoc, dayDocs }) => {
       const put = async (relPath, data) => {
-        const p = `data/users/${uid}/app/${relPath}`;
+        const p = `data/users/${userId}/app/${relPath}`;
         const res = await fetch('/api/doc?path=' + encodeURIComponent(p), {
           method: 'PUT',
           credentials: 'same-origin',
@@ -406,20 +428,21 @@ async function seedDemoAccount(browser, sb, breakfastPhotoPath) {
       localStorage.setItem('bj-lang', profileDoc.lang);
       localStorage.setItem('bj-tab', 'today');
       localStorage.setItem('bj-mmode', 'ai');
-    }, { uid: me.id, profileDoc: profile, dayDocs: days });
+    }, { uid, profileDoc: profile, dayDocs: days });
 
     // Reload once to verify seeded state renders cleanly with zero setup screen
     await page.reload();
     await page.locator('#tabs').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#setup').count(), 0);
 
-    const storageState = await context.storageState();
-    return { srv, storageState, today, uid: me.id };
+    const storageState = await mainCtx.storageState();
+    return { srv, storageState, today, uid, setupStorageState, setupUid };
   } catch (err) {
     await srv.stop().catch(() => {});
     throw err;
   } finally {
-    await context.close();
+    if (setupCtx) await setupCtx.close().catch(() => {});
+    if (mainCtx) await mainCtx.close().catch(() => {});
   }
 }
 
