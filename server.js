@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 薄肌日课 · 独立部署服务器
 // Node + Better Auth；运行前 npm ci。
-// 功能：账号密码登录、每人私有的数据存储（与 Claude 页面版同样的路径结构）、照片存储、AI 代理（OpenRouter，密钥只在服务器上）。
+// 功能：账号密码登录、每人私有的数据存储（与 Claude 页面版同样的路径结构）、照片存储、AI 代理（Google Gemini API / OpenRouter，密钥只在服务器上）。
 "use strict";
 const http = require("node:http");
 const fs = require("node:fs");
@@ -24,9 +24,13 @@ const CFG = {
   publicDir: path.join(ROOT, "public"),
   authBaseURL: process.env.AUTH_BASE_URL || "http://127.0.0.1:8080",
   authSecret: process.env.AUTH_SECRET || "",
+  aiProvider: process.env.AI_PROVIDER,
   orKey: process.env.OPENROUTER_API_KEY || "",
   orBase: process.env.OPENROUTER_BASE || "https://openrouter.ai/api/v1",
   orModel: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
+  geminiKey: process.env.GEMINI_API_KEY || "",
+  geminiBase: process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta/openai",
+  geminiModel: process.env.GEMINI_MODEL || "gemini-3.8-flash",
   aiGlobalDaily: +(process.env.AI_GLOBAL_DAILY_LIMIT ?? 300),
   aiMaxTokens: +(process.env.AI_MAX_OUTPUT_TOKENS ?? 2000),
   aiDaily: +(process.env.AI_DAILY_LIMIT ?? 60),            // 每人每天 AI 次数上限
@@ -193,7 +197,7 @@ async function handle(req, res){
     db.prepare("SELECT 1").get();
     return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
   }
-  if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: !!CFG.orKey });
+  if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: aiProxy.enabled });
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
     throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");
@@ -215,7 +219,7 @@ async function handle(req, res){
       } finally { exportingUsers.delete(user.id); feedback.sweep(); }
       return;
     }
-    if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: !!CFG.orKey, aiModel: CFG.orModel });
+    if (p === "/api/me" && m === "GET") return send(res, 200, { id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange, ai: aiProxy.enabled, aiModel: aiProxy.model });
     if (p === "/api/doc-commit" && m === "POST") {
       docQuota.throttle(user.id, res);
       const body = await readJSON(req, 12e6);
@@ -367,7 +371,7 @@ async function cli(args){
   // lets Node close a socket Caddy is about to reuse, which surfaces as a random 502.
   server.keepAliveTimeout = 125000;
   server.headersTimeout = 126000;
-  server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${server.address().port}  （AI ${CFG.orKey ? "已配置 " + CFG.orModel : "未配置"}）`));
+  server.listen(CFG.port, CFG.host, () => console.log(`薄肌日课已启动：http://${CFG.host}:${server.address().port}  （AI ${aiProxy.enabled ? `已配置 ${aiProxy.provider}/${aiProxy.model}${aiProxy.hasFallback ? "，备用 openrouter/" + aiProxy.fallbackModel : ""}` : "未配置"}）`));
   let stopping = false, exitCode = 0;
   const closeDatabases = () => {
     try { authentication.close(); } catch {}
