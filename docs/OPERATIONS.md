@@ -425,6 +425,32 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js show <feedback-id>
 ```
 
+### Daily trial activity summary
+
+`scripts/daily-summary.js` prints a read-only activity summary covering both the **last 24 hours** and **trial to date** (all records by default, or filtered with `--since <YYYY-MM-DD|ISO>` / `TRIAL_START`):
+
+- **Metrics included:** new sign-ups and verified accounts (`auth.sqlite`), active users (deduplicated across sessions, docs, photos, AI usage, and feedback), check-ins / workouts / meals logged (`bojin.db`), AI calls split by provider (`gemini` vs `openrouter`, distinguishing `provider_fallback=true` fallbacks) with prompt/completion/reasoning token totals and estimated USD cost, feedback counts by type (`bug`, `idea`, `other`) plus the 3 newest entries (type, anonymized user ID, first 80 characters, terminal-escaped with email addresses redacted), client error counts (`client-error` journal entries), filesystem disk usage and photo bytes (`blobs`), and the last backup/snapshot time.
+- **Privacy & read-only guarantees:** opens `bojin.db` and `auth.sqlite` strictly read-only while holding the shared data-access reader lease (`lib/data-access.js`, failing closed if a maintenance lock is active), never modifies or creates `DATA_DIR`, and never prints emails, usernames, raw user IDs, secrets, or meal/workout contents.
+- **Data sources & host permissions:** AI provider/token breakdowns and client error counts come from existing `bojin.service` journal lines (`^ai ` and `^client-error `); if `bojin` cannot read the system journal directly, the script degrades gracefully to `bojin.db`'s `ai_usage` counts (or you can pipe `journalctl` into `--journal-file -` without running Node as root). Because `/var/backups/bojin` is `0710 root:bojin`, the script falls back to `systemctl show` for `bojin-backup.service` (only accepting `Result=success` with `ExecMainStatus=0`) and `bojin-backup.timer` when snapshot directories are unreadable by `bojin`.
+- **Configurable AI pricing (USD per 1M tokens):** defaults to `gemini-3.8-flash` rates (`$0.75` prompt / `$3.75` completion, where completion includes reasoning tokens). Override with `AI_INPUT_PRICE_PER_1M`, `AI_OUTPUT_PRICE_PER_1M`, or per-provider `AI_GEMINI_INPUT_PRICE_PER_1M`, `AI_GEMINI_OUTPUT_PRICE_PER_1M`, `AI_OPENROUTER_INPUT_PRICE_PER_1M`, `AI_OPENROUTER_OUTPUT_PRICE_PER_1M`.
+
+```sh
+# Plain-text (zh-friendly) summary as the service user
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/daily-summary.js
+
+# JSON output (for scripts or archiving)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/daily-summary.js --json
+
+# Pipe systemd journal explicitly if bojin cannot read system journal files directly (keeps Node unprivileged)
+journalctl -u bojin.service -o short-iso --no-pager \
+  | sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/daily-summary.js --journal-file -
+
+# Filter trial-to-date totals from a trial start date and override per-1M-token prices
+sudo -u bojin env DATA_DIR=/var/lib/bojin TRIAL_START=2026-11-18 \
+  AI_INPUT_PRICE_PER_1M=0.75 AI_OUTPUT_PRICE_PER_1M=3.75 \
+  /usr/bin/node /opt/bojin/scripts/daily-summary.js
+```
+
 ## Local evidence
 
 Tests cover writer exclusion, checksums, refusing overwrites, snapshots with both databases/photos, pre-auth migration and rollback, and replaying a newer deletion ledger onto an older snapshot. These tests do not replace a restore drill and offsite access verification on the purchased host.
