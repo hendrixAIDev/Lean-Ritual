@@ -57,9 +57,11 @@ async function startLocalServer(extraEnv = {}) {
     COOKIE_SECURE: '0',
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
-    // Enable AI UI controls while ensuring no real upstream request can ever succeed.
+    // Enable AI UI controls with a non-functional mock key (Playwright intercepts all /api/ai calls).
+    AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: 'demo-mock-key',
-    OPENROUTER_BASE: 'http://127.0.0.1:1',
+    OPENROUTER_BASE: 'https://openrouter.ai/api/v1',
+    GEMINI_API_KEY: '',
     ...extraEnv
   };
 
