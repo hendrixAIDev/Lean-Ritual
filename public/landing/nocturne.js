@@ -1,5 +1,6 @@
 // Landing page behaviour: zh/en copy swap without reload, the intro video when the
-// server includes it (fetched only on play), scroll reveals and count-ups.
+// server includes it (fetched only on play), scroll reveals and count-ups, and the
+// scroll story. Links are left alone, and everything reads fine without this file.
 // boot.js has already chosen the language and set html.js.
 (() => {
   "use strict";
@@ -7,13 +8,12 @@
   const MEDIA = "/media/intro-";                 // stable paths; the files live in MEDIA_DIR on the host
   const I18N = {
     zh: {
-      title: "薄肌日课 · 一个 App，助你更瘦、更强、更好", brand: "薄肌日课", brand2: "LEAN RITUAL", "lang.aria": "语言",
+      title: "薄肌日课 · 一个 App，助你更瘦、更强、更好", brand: "薄肌日课", "lang.aria": "语言",
       "nav.signin": "登录", beta: "邀请制内测", "h.full": "一个 App，助你更瘦、更强、更好", "h.pre": "一个 App，助你",
-      "h.w1": "更瘦", "h.w2": "更强", "h.w3": "更好",
+      "h.l2": "更瘦、更强、更好",
       lede: "训练、饮食、体重，需要的都在这里。计划按你的目标定制，AI 帮你估餐和复盘。",
       "cta.invite": "用邀请码注册", "cta.signin": "登录", "cta.ask": "还没有邀请码？发邮件申请",
-      "st1.k": "今天建议", "st2.k": "7 天平均",
-      t1: "每天快速打卡", t2: "7 天平均", t3: "今天建议 60 kg", t4: "拍照估热量", t5: "AI 教练复盘", t6: "采纳可撤销", t7: "数据导出",
+      "st1.k": "今天建议", "st2.k": "7 天平均", "st3.k": "AI 估算",
       "video.t": "看看薄肌日课怎么用", "video.d": "从建档到复盘，一次看完一天怎么用。", "video.play": "播放介绍视频", "video.meta": "中文配音",
       "video.error": "视频暂时无法播放，请稍后再试。",
       "setup.unit": "分钟", "setup.t1": "1 分钟，填好目标和身体状况", "setup.t2": "为你定制，需要时问 AI 教练",
@@ -33,13 +33,12 @@
       "alt.workout": "训练页：按上次记录建议今天的重量"
     },
     en: {
-      title: "Lean Ritual · One app to get leaner, stronger, better", brand: "Lean Ritual", brand2: "薄肌日课", "lang.aria": "Language",
+      title: "Lean Ritual · One app to get leaner, stronger, better", brand: "Lean Ritual", "lang.aria": "Language",
       "nav.signin": "Sign in", beta: "Invite-only beta", "h.full": "One app to get leaner, stronger, better", "h.pre": "One app to get",
-      "h.w1": "Leaner", "h.w2": "Stronger", "h.w3": "Better",
+      "h.l2": "leaner, stronger, better",
       lede: "Workouts, meals and weight, all in one place. A plan built around your goal, with AI help for meals and reviews.",
       "cta.invite": "Use your invite", "cta.signin": "Sign in", "cta.ask": "No invite yet? Ask for one",
-      "st1.k": "Today", "st2.k": "7-day avg",
-      t1: "Quick daily check-in", t2: "7-day average", t3: "Today: 60 kg", t4: "Snap a meal", t5: "AI coach review", t6: "Apply or undo", t7: "Data export",
+      "st1.k": "Today", "st2.k": "7-day avg", "st3.k": "AI estimate",
       "video.t": "See Lean Ritual in action", "video.d": "From setup to coach review: one day with the app.", "video.play": "Play the intro video", "video.meta": "English voiceover",
       "video.error": "The video can't play right now. Please try again later.",
       "setup.unit": "min", "setup.t1": "1 minute: your goal and body", "setup.t2": "Made for you. Ask the AI coach when you need it.",
@@ -141,13 +140,50 @@
     };
     requestAnimationFrame(step);
   }
+  // From here on CSS may hide things below the fold, because this script will show them again.
+  root.classList.add("live");
+  const seen = "IntersectionObserver" in window;
   const reveals = document.querySelectorAll(".reveal");
   const show = el => { el.classList.add("in"); for (const n of el.querySelectorAll("[data-count]")) countUp(n); };
-  if (reduce || !("IntersectionObserver" in window)) { for (const el of reveals) el.classList.add("in"); }
+  if (reduce || !seen) { for (const el of reveals) el.classList.add("in"); }
   else {
     const io = new IntersectionObserver(entries => {
       for (const e of entries) if (e.isIntersecting) { show(e.target); io.unobserve(e.target); }
     }, { rootMargin: "0px 0px -8% 0px", threshold: 0.05 });
     for (const el of reveals) io.observe(el);
+  }
+
+  // Scroll story: the step at mid-screen picks what the pinned phone shows. Scrolling itself is never taken over.
+  const steps = [...document.querySelectorAll(".step")];
+  const screens = [...document.querySelectorAll("#pin img")];
+  const activate = id => {
+    for (const el of steps) el.classList.toggle("active", el.dataset.step === id);
+    for (const el of screens) el.classList.toggle("on", el.dataset.step === id);
+  };
+  activate("0");
+  const top = document.getElementById("top"), hero = document.getElementById("hero");
+  if (seen) {
+    const story = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) activate(e.target.dataset.step);
+    }, { rootMargin: "-48% 0px -48% 0px" });
+    for (const el of steps) story.observe(el);
+    // With the story observed, wide and tall enough windows may pin one phone instead of showing five (see nocturne.css).
+    root.classList.add("pins");
+    // Ambient animation rests while its section is off screen; the header is see-through only at the very top.
+    const ambient = new IntersectionObserver(entries => { for (const e of entries) e.target.classList.toggle("asleep", !e.isIntersecting); });
+    for (const el of [hero, document.getElementById("finale")]) ambient.observe(el);
+    const mark = document.createElement("div");
+    mark.className = "top-mark";
+    hero.prepend(mark);
+    new IntersectionObserver(([e]) => top.classList.toggle("clear", e.isIntersecting)).observe(mark);
+  }
+
+  // The hero phone leans toward a mouse.
+  const rig = document.getElementById("rig");
+  if (!reduce && matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    let frame = 0;
+    const lean = (x, y) => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => { rig.style.transform = "rotateY(" + (x * 10).toFixed(2) + "deg) rotateX(" + (-y * 8).toFixed(2) + "deg)"; }); };
+    hero.addEventListener("pointermove", e => lean(e.clientX / innerWidth - 0.5, e.clientY / innerHeight - 0.5));
+    hero.addEventListener("pointerleave", () => lean(0, 0));
   }
 })();

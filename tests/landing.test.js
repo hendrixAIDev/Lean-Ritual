@@ -18,9 +18,9 @@ const PAGE = read('public/landing.html');          // as shipped: video hidden
 const FILM = read('lib/landing-film.html');
 const HTML = PAGE.replace(MARKER, () => FILM);      // with the video section
 
-const JS = read('public/landing/landing.js');
+const JS = read('public/landing/nocturne.js');
 const BOOT = read('public/landing/boot.js');
-const CSS = read('public/landing/landing.css');
+const CSS = read('public/landing/nocturne.css');
 
 function loadI18N() {
   const start = JS.indexOf('const I18N = ');
@@ -73,7 +73,7 @@ test('zh and en copy have the same keys and cover every data-i hook', () => {
     assert.ok(key in zh, 'zh has ' + key);
     assert.ok(key in en, 'en has ' + key);
   }
-  for (const [key, value] of Object.entries(en)) if (key !== 'brand2') assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
+  for (const [key, value] of Object.entries(en)) assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
 });
 
 test('the video section is absent by default and inserted only when the videos are available', async () => {
@@ -144,6 +144,77 @@ test('AI copy matches the AI features the app actually ships', () => {
     assert.doesNotMatch(all, banned);
 });
 
+test('Nocturne is dark only, and leaves every link to the browser', () => {
+  assert.deepEqual([...PAGE.matchAll(/<meta name="(color-scheme|theme-color)" content="([^"]+)"([^>]*)>/g)].map(m => [m[1], m[2], m[3]]), [['color-scheme', 'dark', ''], ['theme-color', '#050A08', '']]);
+  assert.match(CSS, /--bg:#050A08;/);
+  assert.match(CSS, /html\{[^}]*background:var\(--bg\)/);
+  assert.match(CSS, /color-scheme:dark/);
+  assert.doesNotMatch(CSS, /prefers-color-scheme/);
+  // Sign-in must start at once: no script may cancel, delay or replace a navigation.
+  assert.doesNotMatch(JS, /preventDefault|stopPropagation|setTimeout|setInterval|location\.|\.href\s*=\s*["'`]\/|window\.open/);
+  assert.doesNotMatch(JS, /addEventListener\("(pointerdown|mousedown|touchstart|submit|beforeunload|pagehide)"/);
+  assert.equal((JS.match(/addEventListener\("click"/g) || []).length, 2, 'clicks are handled on the play and language buttons only');
+});
+
+/** Copyright strings (name ID 0) embedded in a woff2 file, read with Node's own Brotli. */
+function embeddedCopyright(file) {
+  const buf = fs.readFileSync(file);
+  assert.equal(buf.toString('latin1', 0, 4), 'wOF2');
+  const numTables = buf.readUInt16BE(12), compressed = buf.readUInt32BE(20);
+  const TAGS = ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf', 'loca'];
+  let at = 48;
+  const base128 = () => { let v = 0, byte; do { byte = buf[at++]; v = v * 128 + (byte & 127); } while (byte & 128); return v; };
+  let offset = 0, name = null;
+  for (let i = 0; i < numTables; i++) {
+    const flags = buf[at++], index = flags & 63, version = flags >> 6;
+    let tag = TAGS[index];
+    if (index === 63) { tag = buf.toString('latin1', at, at + 4); at += 4; }
+    const original = base128();
+    const transformed = (tag === 'glyf' || tag === 'loca') ? version !== 3 : version !== 0;
+    const length = transformed ? base128() : original;
+    if (tag === 'name') name = [offset, length];
+    offset += length;
+  }
+  const table = require('node:zlib').brotliDecompressSync(buf.subarray(at, at + compressed)).subarray(name[0], name[0] + name[1]);
+  const strings = table.readUInt16BE(4), found = new Set();
+  for (let i = 0; i < table.readUInt16BE(2); i++) {
+    const r = 6 + i * 12;
+    if (table.readUInt16BE(r + 6) !== 0) continue;
+    const raw = Buffer.from(table.subarray(strings + table.readUInt16BE(r + 10), strings + table.readUInt16BE(r + 10) + table.readUInt16BE(r + 8)));
+    found.add(table.readUInt16BE(r) === 1 ? raw.toString('latin1') : raw.swap16().toString('utf16le'));
+  }
+  return [...found];
+}
+
+test('each shipped font travels with the OFL and the copyright notice embedded in it', () => {
+  const dir = path.join(ROOT, 'public/landing/fonts');
+  for (const [font, licence] of [['serif-display.woff2', 'OFL-NotoSerifSC.txt'], ['num-medium.woff2', 'OFL-BarlowCondensed.txt']]) {
+    const text = fs.readFileSync(path.join(dir, licence), 'utf8'), notices = embeddedCopyright(path.join(dir, font));
+    assert.ok(notices.length >= 1, font + ' embeds a copyright');
+    for (const notice of notices) assert.ok(text.includes(notice), `${licence} records "${notice}"`);
+    assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
+  }
+  assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.woff2')).sort(), ['num-medium.woff2', 'serif-display.woff2']);
+});
+
+test('public/landing ships only files the page uses, under names Scoreboard never cached', () => {
+  const used = new Set(['fonts/serif-display.chars.txt', 'fonts/OFL-BarlowCondensed.txt', 'fonts/OFL-NotoSerifSC.txt']);
+  for (const [, file] of (HTML + CSS).matchAll(/\/landing\/([\w./-]+)/g)) used.add(file);
+  for (const [, shot] of HTML.matchAll(/data-shot="(\w+)"/g)) for (const lang of ['zh', 'en']) used.add(`img/${lang}-${shot}.webp`);
+  const shipped = fs.readdirSync(path.join(ROOT, 'public/landing'), { recursive: true, withFileTypes: true }).filter(e => e.isFile())
+    .map(e => path.relative(path.join(ROOT, 'public/landing'), path.join(e.parentPath, e.name)));
+  assert.deepEqual(shipped.sort(), [...used].sort());
+  // Those URLs were served with a day-long cache, so reusing them would mix old code with the new page.
+  for (const old of ['landing.css', 'landing.js', 'fonts/display-cjk.woff2', 'fonts/cond-semibold.woff2', 'fonts/cond-black-italic.woff2']) assert.ok(!shipped.includes(old), old);
+});
+
+test('content never depends on script: CSS hides things only under .live, which nocturne.js sets last', () => {
+  for (const [, selector] of CSS.replace(/@keyframes[^{]+\{(?:[^{}]*\{[^}]*\})*\s*\}/g, '').matchAll(/([^{}]+)\{[^}]*opacity:0/g))
+    assert.match(selector, /\.live|\.top\.clear::before|\.pin /, selector.trim());
+  assert.ok(JS.indexOf('classList.add("live")') > JS.indexOf('apply(lang);'));
+  assert.equal((JS.match(/addEventListener\("(scroll|wheel|touchmove|keydown)"/g) || []).length, 0, 'scrolling and keys are never taken over');
+});
+
 test('the no-JS fallback copy in landing.html is the zh copy', () => {
   const { zh } = loadI18N();
   for (const [, key, text] of HTML.matchAll(/data-i="([^"]+)"[^>]*>([^<]*)</g)) assert.equal(text, zh[key], key);
@@ -182,9 +253,9 @@ test('language choice follows login.html: ?lang, then saved bj-lang, then browse
 });
 
 test('the display font subset covers every Chinese character on the page', () => {
-  const chars = new Set([...read('public/landing/fonts/display-cjk.chars.txt')]);
+  const chars = new Set([...read('public/landing/fonts/serif-display.chars.txt')]);
   const missing = [...new Set([...HTML + JS].filter(c => /[　-〿㐀-鿿＀-￯]/.test(c) && !chars.has(c)))];
-  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/display-cjk.woff2 for the new copy');
+  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/serif-display.woff2 for the new copy');
 });
 
 test('the video is attached only on play and points at the stable /media paths', () => {
@@ -270,12 +341,14 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
     assert.equal(r.headers.get('location'), '/login.html', spelling);
   }
   for (const route of ['/login.html', '/login.html?invite=abc123', '/privacy.html', '/terms.html', '/landing.html']) assert.equal((await get(route)).status, 200, route);
-  for (const [route, type] of [['/landing/landing.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
-    ['/landing/landing.css', 'text/css; charset=utf-8'], ['/landing/fonts/display-cjk.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
+  for (const [route, type] of [['/landing/nocturne.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
+    ['/landing/nocturne.css', 'text/css; charset=utf-8'], ['/landing/fonts/serif-display.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
     const r = await get(route);
     assert.equal(r.status, 200, route);
     assert.equal(r.headers.get('content-type'), type);
     assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
+    // Page code is revalidated with the page; fonts and images keep their day-long cache.
+    assert.equal(r.headers.get('cache-control'), /\.(js|css)$/.test(route) ? 'no-cache' : 'public, max-age=86400', route);
   }
 
   // Signed-in users go straight to the app, as before.

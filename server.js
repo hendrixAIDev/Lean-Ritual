@@ -159,7 +159,7 @@ function serveStatic(req, res, user){
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
     streamFile(f, res, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
-      "Cache-Control": (ext === ".html" || rel === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
+      "Cache-Control": (ext === ".html" || rel === "/client-errors.js" || /^\/landing\/[a-z]+\.(css|js)$/.test(rel)) ? "no-cache" : "public, max-age=86400" });
   });
 }
 
