@@ -7,7 +7,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn, spawnSync } = require("node:child_process");
 const { DatabaseSync } = require("node:sqlite");
-const { createAuth, CONSENT_VERSION } = require("../lib/auth");
+const { createAuth, CONSENT_VERSION, isConsentSatisfied } = require("../lib/auth");
 const { normalizePhone, isValidE164, syntheticPhoneEmail, isSyntheticPhoneEmail } = require("../lib/phone");
 const { createSnapshot, restoreSnapshot } = require("../lib/snapshots");
 const { readLedger } = require("../lib/deletion-ledger");
@@ -466,12 +466,15 @@ test("HTTP integration: CLI phone invite, export, admin reset-password (24h one-
   assert.equal(expLines[0].user.email, null);
   assert.equal(expLines.find(x => x.kind === "document").data.weight, 62);
 
-  // Admin reset-password --phone prints a 24h one-time reset link (never a password)
+  // Admin reset-password --phone prints a 24h one-time reset link (never a password) + out-of-band verification reminder
   const badReset = runAdmin(["reset-password", "--phone", "+8613800138999"]);
   assert.equal(badReset.status, 1);
 
   const resetRes1 = runAdmin(["reset-password", "--phone", "13800138111"]);
   assert.equal(resetRes1.status, 0, resetRes1.stderr);
+  assert.match(resetRes1.stderr, /out-of-band/i);
+  assert.match(resetRes1.stderr, /call back the registered phone number|original inviter/i);
+  assert.match(resetRes1.stderr, /Deny recovery if identity cannot be verified/i);
   const reset1 = JSON.parse(resetRes1.stdout);
   assert.equal(reset1.phone, "+8613800138111");
   assert.equal(reset1.userId, invA.userId);
@@ -479,6 +482,12 @@ test("HTTP integration: CLI phone invite, export, admin reset-password (24h one-
   assert.match(reset1.url, /\/login\.html\?token=.*&method=phone/);
   const ttlHours = (Date.parse(reset1.expiresAt) - Date.now()) / 3600000;
   assert.ok(ttlHours > 23.9 && ttlHours <= 24.05, `expected ~24h TTL, got ${ttlHours}h`);
+
+  // Runbook documents mandatory out-of-band verification, delivery channel, and denial rules
+  const authDoc = fs.readFileSync(path.join(ROOT, "docs/authentication.md"), "utf8");
+  assert.match(authDoc, /out-of-band/i);
+  assert.match(authDoc, /voice callback directly to the registered phone number/i);
+  assert.match(authDoc, /When to deny recovery/i);
 
   // Issuing a second reset link invalidates the first one
   const resetRes2 = runAdmin(["reset-password", "--phone", "+8613800138111"]);
@@ -572,6 +581,206 @@ test("HTTP integration: CLI phone invite, export, admin reset-password (24h one-
   } finally { restoredAuth.close(); }
 });
 
+test("reissuing a phone invite preserves a stable UID so deletion-ledger replay erases pre-reissue snapshots", { timeout: 45000 }, async t => {
+  const srv = await startTestServer(t);
+  const runAdmin = (args, stdin) => spawnSync(process.execPath, ["scripts/auth-admin.js", ...args], {
+    cwd: ROOT, env: srv.env, encoding: "utf8", timeout: 8000, ...(stdin !== undefined ? { input: stdin } : {}),
+  });
+  const api = (route, body, cookie, method) => fetch(srv.base + route, {
+    method: method || (body ? "POST" : "GET"),
+    redirect: "manual",
+    headers: { origin: srv.origin, "Content-Type": "application/json", "X-Bojin": "1", ...(cookie ? { cookie } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const stopServer = async child => {
+    if (child.exitCode === null) {
+      const done = new Promise(r => child.once("exit", r));
+      child.kill();
+      await done;
+    }
+  };
+  const startAgain = async () => {
+    const child = spawn(process.execPath, ["server.js"], { cwd: ROOT, env: srv.env, stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    child.stderr.on("data", d => { err += d; });
+    t.after(() => stopServer(child));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("restart timeout " + err)), 8000);
+      child.stdout.once("data", () => { clearTimeout(timer); resolve(); });
+      child.once("exit", () => { clearTimeout(timer); reject(new Error(err)); });
+    });
+    return child;
+  };
+
+  // 1. Issue initial phone invite (no user exists yet) and capture a pre-reissue snapshot
+  const inv1Res = runAdmin(["invite", "--phone", "13800138333"]);
+  assert.equal(inv1Res.status, 0, inv1Res.stderr);
+  const inv1 = JSON.parse(inv1Res.stdout);
+
+  await stopServer(srv.child);
+  const snapRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-prereissue-snap-"));
+  t.after(() => fs.rmSync(snapRoot, { recursive: true, force: true }));
+  const preReissueSnap = path.join(snapRoot, "pre-reissue");
+  await createSnapshot(srv.dir, preReissueSnap);
+
+  // 2. Restart server, revoke initial invite, and reissue WITHOUT --legacy-user -> UID stays stable
+  const child2 = await startAgain();
+  assert.equal(runAdmin(["revoke"], inv1.token).status, 0);
+  const inv2Res = runAdmin(["invite", "--phone", "+86 138-0013-8333"]);
+  assert.equal(inv2Res.status, 0, inv2Res.stderr);
+  const inv2 = JSON.parse(inv2Res.stdout);
+  assert.equal(inv2.userId, inv1.userId, "reissued phone invite must preserve the original UID");
+  assert.notEqual(inv2.token, inv1.token);
+
+  // 3. Enroll with reissued invite, then delete account
+  const pw = "prereissue-strong-pass";
+  const signUp = await api("/api/auth/sign-up/phone-number", {
+    phoneNumber: "+8613800138333", name: "Reissued User", password: pw, invitation: inv2.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION,
+  });
+  assert.equal(signUp.status, 200, await signUp.clone().text());
+  const cookie = signUp.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  assert.equal((await api("/api/auth/delete-user", { password: pw }, cookie)).status, 200);
+  await stopServer(child2);
+
+  // 4. Replay deletion ledger against the OLD pre-reissue snapshot (which only had inv1, no user row!)
+  const ledger = readLedger(srv.dir);
+  const restoredDir = path.join(snapRoot, "restored-pre-reissue");
+  restoreSnapshot(preReissueSnap, restoredDir, ledger);
+
+  const restoredAuth = new DatabaseSync(path.join(restoredDir, "auth.sqlite"));
+  try {
+    for (const { name } of restoredAuth.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()) {
+      const dump = JSON.stringify(restoredAuth.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all());
+      assert.ok(!dump.includes("13800138333"), `pre-reissue snapshot table ${name} retained phone after ledger replay`);
+      assert.ok(!dump.includes(inv1.userId), `pre-reissue snapshot table ${name} retained UID after ledger replay`);
+    }
+  } finally { restoredAuth.close(); }
+
+  // 5. Re-inviting the same phone AFTER deletion creates a brand new UID (never collides with deleted tombstone)
+  const invAfterDelRes = runAdmin(["invite", "--phone", "13800138333"]);
+  assert.equal(invAfterDelRes.status, 0, invAfterDelRes.stderr);
+  const invAfterDel = JSON.parse(invAfterDelRes.stdout);
+  assert.notEqual(invAfterDel.userId, inv1.userId);
+});
+
+test("cold-start unknown phone login performs equivalent lookup and single password verification without lazy hash overhead", { timeout: 30000 }, async t => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-phone-timing-"));
+  const svc = await createAuth({
+    dataDir, baseURL: "http://localhost:8080",
+    secret: "phone-timing-test-secret-at-least-32!!", cookieSecure: false,
+    sendEmail: async () => {},
+  });
+  t.after(() => { svc.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+
+  const post = (route, ip, body) => svc.auth.handler(new Request("http://localhost:8080/api/auth/" + route, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-ritual-client-ip": ip, origin: "http://localhost:8080" },
+    body: JSON.stringify(body),
+  }));
+
+  // Enroll one real phone user
+  const inv = svc.invites.issuePhone("+8613800138444");
+  assert.equal((await post("sign-up/phone-number", "192.0.2.1", {
+    phoneNumber: inv.phone, name: "Timing", password: "correct-password-123", invitation: inv.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION,
+  })).status, 200);
+
+  // Instrument password.hash, password.verify, and findCredentialAccount on the live Better Auth context
+  const authCtx = await svc.auth.$context;
+  const counts = { hash: 0, verify: 0, credLookup: 0 };
+  const origHash = authCtx.password.hash.bind(authCtx.password);
+  const origVerify = authCtx.password.verify.bind(authCtx.password);
+  const origFindCred = authCtx.internalAdapter.findCredentialAccount.bind(authCtx.internalAdapter);
+  authCtx.password.hash = async (...args) => { counts.hash++; return origHash(...args); };
+  authCtx.password.verify = async (...args) => { counts.verify++; return origVerify(...args); };
+  authCtx.internalAdapter.findCredentialAccount = async (...args) => { counts.credLookup++; return origFindCred(...args); };
+
+  // First-ever unknown-number login (cold start): 0 hashes, 1 credential lookup, 1 password verify
+  const unknownRes = await post("sign-in/phone-number", "192.0.2.2", { phoneNumber: "+8613800138999", password: "wrong-password-123" });
+  assert.equal(unknownRes.status, 401);
+  assert.deepEqual(counts, { hash: 0, verify: 1, credLookup: 1 });
+
+  // Reset counters and compare against wrong-password login on existing account: identical work
+  counts.hash = 0; counts.verify = 0; counts.credLookup = 0;
+  const wrongPwRes = await post("sign-in/phone-number", "192.0.2.3", { phoneNumber: "+8613800138444", password: "wrong-password-123" });
+  assert.equal(wrongPwRes.status, 401);
+  assert.deepEqual(counts, { hash: 0, verify: 1, credLookup: 1 });
+});
+
+test("consent revision 2026-11-25 is required for new sign-ups and phone accounts while grandfathered 2026-11-24 email accounts stay unlocked", { timeout: 30000 }, async t => {
+  assert.equal(CONSENT_VERSION, "2026-11-25");
+  assert.equal(isConsentSatisfied({ consentVersion: "2026-11-25", phoneNumber: null }), true);
+  assert.equal(isConsentSatisfied({ consentVersion: "2026-11-25", phoneNumber: "+8613800138000" }), true);
+  assert.equal(isConsentSatisfied({ consentVersion: "2026-11-24", phoneNumber: null }), true);
+  assert.equal(isConsentSatisfied({ consentVersion: "2026-11-24", phoneNumber: "+8613800138000" }), false);
+  assert.equal(isConsentSatisfied({ consentVersion: null, phoneNumber: null }), false);
+
+  const srv = await startTestServer(t);
+  const runAdmin = args => {
+    const r = spawnSync(process.execPath, ["scripts/auth-admin.js", ...args], {
+      cwd: ROOT, env: srv.env, encoding: "utf8", timeout: 8000,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const api = (route, body, cookie) => fetch(srv.base + route, {
+    method: body ? "POST" : "GET",
+    redirect: "manual",
+    headers: { origin: srv.origin, "Content-Type": "application/json", "X-Bojin": "1", ...(cookie ? { cookie } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  const emailInv = runAdmin(["invite", "grandfathered@example.com"]);
+  const phoneInv = runAdmin(["invite", "--phone", "13800138555"]);
+  const pw = "consent-rev-strong-pass";
+
+  // Both new email AND new phone signups reject the previous 2026-11-24 revision (409) without consuming invites
+  assert.equal((await api("/api/auth/sign-up/email", {
+    email: emailInv.email, name: "GF", password: pw, invitation: emailInv.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24",
+  })).status, 409);
+  assert.equal((await api("/api/auth/sign-up/phone-number", {
+    phoneNumber: phoneInv.phone, name: "PH", password: pw, invitation: phoneInv.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24",
+  })).status, 409);
+
+  // Sign up both with 2026-11-25
+  assert.equal((await api("/api/auth/sign-up/email", {
+    email: emailInv.email, name: "GF", password: pw, invitation: emailInv.token,
+    callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25",
+  })).status, 200);
+  const mail = fs.readdirSync(path.join(srv.dir, "mail"))
+    .map(f => JSON.parse(fs.readFileSync(path.join(srv.dir, "mail", f), "utf8")))
+    .find(m => m.to === emailInv.email && m.kind === "verify");
+  await fetch(mail.url, { redirect: "manual" });
+  const emailLogin = await api("/api/auth/sign-in/email", { email: emailInv.email, password: pw });
+  const emailCookie = emailLogin.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+
+  const phoneSign = await api("/api/auth/sign-up/phone-number", {
+    phoneNumber: phoneInv.phone, name: "PH", password: pw, invitation: phoneInv.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25",
+  });
+  assert.equal(phoneSign.status, 200);
+  const phoneCookie = phoneSign.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+
+  // Simulate both users having previously recorded 2026-11-24:
+  // Email-only user stays unlocked with recorded 2026-11-24; phone user IS gated!
+  const authDb = new DatabaseSync(path.join(srv.dir, "auth.sqlite"));
+  authDb.prepare("UPDATE user SET consentVersion = '2026-11-24' WHERE id IN (?, ?)").run(emailInv.userId, phoneInv.userId);
+  authDb.close();
+
+  const meEmail = await (await api("/api/me", null, emailCookie)).json();
+  assert.equal(meEmail.consentVersion, "2026-11-24");
+  assert.equal(meEmail.consentRequired, false);
+  assert.equal((await api(`/api/doc?path=data/users/${emailInv.userId}/app/app/profile`, null, emailCookie)).status, 200);
+
+  const mePhone = await (await api("/api/me", null, phoneCookie)).json();
+  assert.equal(mePhone.consentVersion, "2026-11-24");
+  assert.equal(mePhone.consentRequired, true);
+  assert.equal((await api(`/api/doc?path=data/users/${phoneInv.userId}/app/app/profile`, null, phoneCookie)).status, 403);
+});
+
 test("headless Chromium browser smoke: phone path in zh and en at phone width (390x844), axe-core clean", { timeout: 90000 }, async t => {
   const pw = loadPlaywright();
   if (!pw) {
@@ -631,11 +840,15 @@ test("headless Chromium browser smoke: phone path in zh and en at phone width (3
     const pass1 = "zh-phone-pass-1234";
     const pass2 = "zh-phone-pass-5678";
 
-    // 1. Open phone invite link -> prefilled phone & invite, consent checkboxes unticked, resend hidden
+    // 1. Open phone invite link -> prefilled phone & invite, consent checkboxes unticked, resend hidden, phone-specific consent text
     await page.goto(invZh.url);
     assert.equal(await page.locator("#ph").inputValue(), "+8613800138201");
     assert.equal(await page.locator("#i").inputValue(), invZh.token);
     assert.equal(await page.locator("#resend").isVisible(), false);
+    const zhPhoneConsent = await page.locator("#c-terms-post").textContent();
+    assert.match(zhPhoneConsent, /2026-11-25/);
+    assert.match(zhPhoneConsent, /受邀资格绑定.*独立渠道/);
+    assert.ok(!zhPhoneConsent.includes("接收你的邮箱地址"), "phone signup must not show Resend email-receiving disclosure");
     await assertAxeClean(context, page, "phone-signup-zh");
     await snap(page, "phone-signup-zh");
 
@@ -721,6 +934,10 @@ test("headless Chromium browser smoke: phone path in zh and en at phone width (3
     assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
     assert.equal(await page.locator("#ph").inputValue(), "+14155552699");
     assert.equal(await page.locator("#resend").isVisible(), false);
+    const enPhoneConsent = await page.locator("#c-terms-post").textContent();
+    assert.match(enPhoneConsent, /2026-11-25/);
+    assert.match(enPhoneConsent, /operator-assisted one-time password recovery after out-of-band identity verification/i);
+    assert.ok(!enPhoneConsent.includes("receives your email address"), "EN phone signup must not show Resend email-receiving disclosure");
     assert.doesNotMatch(await textExcludingLangToggle(), CJK_RE);
     await assertAxeClean(context, page, "phone-signup-en");
     await snap(page, "phone-signup-en");

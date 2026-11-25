@@ -118,7 +118,7 @@ async function createAuthAccount(dataDir, email, { verify = true } = {}) {
         'x-ritual-client-ip': clientIp,
         origin: 'http://localhost:8080',
       },
-      body: JSON.stringify({ email: invite.email, name: 'Owner', password, invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: '2026-11-24' }),
+      body: JSON.stringify({ email: invite.email, name: 'Owner', password, invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: '2026-11-25' }),
     }));
     assert.equal(res.status, 200, await res.clone().text());
     if (verify) {

@@ -125,7 +125,7 @@ test("Better Auth email hooks with MAIL_MODE=file honor profile.lang > request U
   const invEn = service.invites.issue("en-signup@example.com");
   const rEn = await authReq("sign-up/email", {
     email: invEn.email, name: "Alex", password, invitation: invEn.token, callbackURL: "/login.html?verified=1",
-    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24"
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25"
   }, { "x-ritual-lang": "en" });
   assert.equal(rEn.status, 200);
   let mail = readMailFiles(dataDir).find(m => m.to === invEn.email && m.kind === "verify");
@@ -169,14 +169,14 @@ test("Better Auth email hooks with MAIL_MODE=file honor profile.lang > request U
   const invAccept = service.invites.issue("accept-en@example.com");
   assert.equal((await authReq("sign-up/email", {
     email: invAccept.email, name: "Taylor", password, invitation: invAccept.token,
-    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24"
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25"
   }, { "accept-language": "en-US,en;q=0.9" })).status, 200);
   assert.equal(readMailFiles(dataDir).find(m => m.to === invAccept.email).lang, "en");
 
   const invInvalid = service.invites.issue("invalid-lang@example.com");
   assert.equal((await authReq("sign-up/email", {
     email: invInvalid.email, name: "Jordan", password, invitation: invInvalid.token,
-    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24"
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25"
   }, { "x-ritual-lang": "fr", "accept-language": "en-US" })).status, 200);
   const invalidMail = readMailFiles(dataDir).find(m => m.to === invInvalid.email);
   assert.equal(invalidMail.lang, "zh");
@@ -228,7 +228,7 @@ test("server.js end-to-end email language uses request UI lang on sign-up and st
   const signupRes = await fetch(`${liveBase}/api/auth/sign-up/email`, {
     method: "POST",
     headers: { origin: originHeader, "Content-Type": "application/json", "X-Ritual-Lang": "en" },
-    body: JSON.stringify({ email: invite.email, name: "Alex", password, invitation: invite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" }),
+    body: JSON.stringify({ email: invite.email, name: "Alex", password, invitation: invite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" }),
   });
   assert.equal(signupRes.status, 200);
   const verifyMail = readMailFiles(dir).find(m => m.to === invite.email && m.kind === "verify");
@@ -650,7 +650,7 @@ test("SMTP logging records only local Message-ID and metadata, redacts addresses
         callbackURL: "/login.html?verified=1",
         consentTerms: true,
         consentSensitiveCrossBorder: true,
-        agreedConsentVersion: "2026-11-24",
+        agreedConsentVersion: "2026-11-25",
       }),
     }));
   } finally {

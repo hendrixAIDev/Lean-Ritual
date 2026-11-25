@@ -22,6 +22,16 @@ Phone accounts do not use email verification or self-service password reset (SMS
 node scripts/auth-admin.js reset-password --phone +8613800138000
 ```
 
+#### Phone password recovery verification procedure (mandatory)
+
+Because SMS ownership verification is not enabled yet and the reset link is a bearer credential that replaces the password and revokes all active sessions, operators **must** authenticate every phone recovery request out-of-band before issuing or delivering a link:
+
+1. **Verify requester identity out-of-band**: Knowing the registered phone number or sending a message from an unfamiliar/new chat account is **never** sufficient proof of identity. Before running `reset-password --phone`, confirm the requester is the original invitee via an independently established channel:
+   - Place a **voice callback directly to the registered phone number** and confirm with the account holder that they requested the reset, **or**
+   - Confirm **in person or via a previously established private channel with the original inviter** who personally knows the invitee and vouches for the request.
+2. **Delivery channel**: Send the one-time reset link **only** through a pre-established, trusted private channel directly to the verified invitee (e.g., their existing known WeChat/messaging conversation with the inviter, or handed directly in person). Never deliver a reset link to an unfamiliar/unverified account, a group chat, or an unverified third party, and remind the user never to forward the link.
+3. **When to deny recovery**: Refuse the request (do not issue a link, and do not share one if already generated) whenever out-of-band verification fails—for example, if the registered number cannot be reached or the speaker is not recognized, the original inviter cannot confirm the request, the requester asks for delivery to a new/unverified account, or there is any doubt about ownership or coercion.
+
 To retain an existing user's app data, the operator must explicitly associate the verified email with the existing username:
 
 ```sh

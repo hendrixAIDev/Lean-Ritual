@@ -77,8 +77,8 @@ button.primary:disabled{opacity:.6}
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <div class="consent-box" id="cw" hidden>
-      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。</span></span></label>
-      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。</span></label>
+      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-25；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。</span></span></label>
+      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-25）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。</span></label>
     </div>
     <p class="info-box" id="phone-forgot-msg" role="status" aria-live="polite" hidden>请联系邀请你的人重置密码</p>
     <p class="err" id="err" role="status" aria-live="polite"></p>
@@ -93,7 +93,7 @@ button.primary:disabled{opacity:.6}
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
-  const DISPLAYED_CONSENT_VERSION = "2026-11-24";
+  const DISPLAYED_CONSENT_VERSION = "2026-11-25";
   const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
   const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
@@ -165,8 +165,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "使用条款",
       "consent.termsMid": "和",
       "consent.privacyLink": "隐私说明",
-      "consent.termsPost": "（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
-      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
+      "consent.termsPost": "（版本 2026-11-25；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+      "consent.termsPostPhone": "（版本 2026-11-25；你的手机号仅用于受邀资格绑定、密码登录，以及运营者经独立渠道如回拨注册手机号或向原邀请人核实身份后协助发放一次性密码重置链接；当前不发送短信，也不向 Resend 或短信服务商传输你的手机号）。",
+      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-25）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
       "btn.reloadPolicy": "刷新页面查看最新版本",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
@@ -255,8 +256,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "Terms of Use",
       "consent.termsMid": " and ",
       "consent.privacyLink": "Privacy Notice",
-      "consent.termsPost": " (version 2026-11-24; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
-      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-24) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
+      "consent.termsPost": " (version 2026-11-25; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+      "consent.termsPostPhone": " (version 2026-11-25; your phone number is used only for invitation binding, password sign-in, and operator-assisted one-time password recovery after out-of-band identity verification such as calling back your registered number or confirming with your inviter; SMS is not used yet and your phone number is not sent to Resend or any SMS provider).",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-25) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
       "btn.reloadPolicy": "Reload page to review latest version",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
@@ -465,6 +467,7 @@ button.primary:disabled{opacity:.6}
     if (phInput) phInput.placeholder = t("field.phonePlaceholder");
     setTxt("#phone-forgot-msg", "forgot.phoneMsg");
     setTxt("#hint-text", isPhone ? "hint.bodyPhone" : "hint.body");
+    setTxt("#c-terms-post", isPhone ? "consent.termsPostPhone" : "consent.termsPost");
     if ($("#go")) $("#go").textContent = (mode === "register" && isPhone) ? t("go.registerPhone") : t("go." + mode);
   }
   function applyLangUI(){
@@ -495,7 +498,6 @@ button.primary:disabled{opacity:.6}
     setTxt("#c-terms-link", "consent.termsLink");
     setTxt("#c-terms-mid", "consent.termsMid");
     setTxt("#c-privacy-link", "consent.privacyLink");
-    setTxt("#c-terms-post", "consent.termsPost");
     setTxt("#lbl-c-sensitive", "consent.sensitive");
     setTxt("#reload-policy", "btn.reloadPolicy");
     const helpLink = $("#help-link");

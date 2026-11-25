@@ -140,6 +140,12 @@ function main() {
         url.searchParams.set("method", "phone");
         out.url = url.href;
       }
+      console.error(
+        "OPERATOR REMINDER: Confirm the requester's identity out-of-band before sharing this reset link " +
+        "(call back the registered phone number or confirm directly with the original inviter). " +
+        "Send the link only via a previously established private channel—never to an unverified account or group chat. " +
+        "Deny recovery if identity cannot be verified."
+      );
       console.log(JSON.stringify(out));
       return;
     }

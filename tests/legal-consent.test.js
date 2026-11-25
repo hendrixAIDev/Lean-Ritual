@@ -106,11 +106,11 @@ test("privacy.html has no draft wording, covers all current disclosures, and lin
     assert.ok(!html.includes(forbidden), `privacy.html must not contain draft wording: ${forbidden}`);
   }
 
-  for (const term of ["2026-11-24", "杰瑞智能技术服务部", "受邀免费试用", "阿里云美国西部", "Google Gemini API", "OpenRouter", "Resend", "意见反馈", "最小化的错误报告", "同意版本号及时间戳", "假名化标识", "不会在未提示的情况下静默清除", "手机号（手机号当前仅用于受邀账号登录，暂不用于发送短信", 'href="/terms.html"']) {
+  for (const term of ["2026-11-25", "杰瑞智能技术服务部", "受邀免费试用", "阿里云美国西部", "Google Gemini API", "OpenRouter", "Resend", "意见反馈", "最小化的错误报告", "同意版本号及时间戳", "假名化标识", "不会在未提示的情况下静默清除", "手机号（手机号当前仅用于受邀资格绑定、账号密码登录", "独立渠道", 'href="/terms.html"']) {
     assert.ok(zh.includes(term), `privacy.html zh missing: ${term}`);
   }
   assert.ok(!zh.includes("匿名标识"), "privacy.html zh must describe HMAC identifier as 假名化标识, not 匿名标识");
-  for (const term of ["November 24, 2026", "2026-11-24", "Jierui Intelligent Technology Service Department", "invitation-only free trial", "Alibaba Cloud US West", "Google Gemini API", "OpenRouter", "Resend", "Send feedback", "minimal error reports", "consent version and timestamp", "HMAC-derived pseudonymous", "rather than discarding them silently", "phone numbers are used for invited account sign-in only and are not used for SMS verification or text messages yet", 'href="/terms.html"']) {
+  for (const term of ["November 25, 2026", "2026-11-25", "Jierui Intelligent Technology Service Department", "invitation-only free trial", "Alibaba Cloud US West", "Google Gemini API", "OpenRouter", "Resend", "Send feedback", "minimal error reports", "consent version and timestamp", "HMAC-derived pseudonymous", "rather than discarding them silently", "phone numbers are used only for invitation binding, invited account sign-in, and operator-assisted account recovery", "out-of-band", 'href="/terms.html"']) {
     assert.ok(en.includes(term), `privacy.html en missing: ${term}`);
   }
   assert.doesNotMatch(en, CJK_RE, "privacy.html #doc-en must have zero CJK characters");
@@ -152,10 +152,10 @@ test("terms.html covers all required trial terms, health disclaimer, zh/en parit
   }
   assert.doesNotMatch(en, CJK_RE, "terms.html #doc-en must have zero CJK characters");
 
-  for (const term of ["2026-11-24", "仅限受邀的免费试用", "不收取任何费用", "年满 18 周岁", "非医疗建议", "伤病", "孕期", "进食障碍", "基础疾病", "估算值", "合理使用", "用户内容", "责任限制", "杰瑞智能技术服务部", "hendrix.ai.dev@gmail.com", 'href="/privacy.html"']) {
+  for (const term of ["2026-11-25", "仅限受邀的免费试用", "不收取任何费用", "年满 18 周岁", "非医疗建议", "伤病", "孕期", "进食障碍", "基础疾病", "估算值", "合理使用", "用户内容", "责任限制", "杰瑞智能技术服务部", "hendrix.ai.dev@gmail.com", 'href="/privacy.html"']) {
     assert.ok(zh.includes(term), `terms.html zh missing: ${term}`);
   }
-  for (const term of ["November 24, 2026", "invitation-only free trial", "no fee", "at least 18 years old", "Not medical advice", "injuries", "pregnant", "eating disorders", "medical condition", "approximations", "Acceptable Use", "User Content", "Limitation of Liability", "Jierui Intelligent Technology Service Department", "hendrix.ai.dev@gmail.com", 'href="/privacy.html"']) {
+  for (const term of ["November 25, 2026", "invitation-only free trial", "no fee", "at least 18 years old", "Not medical advice", "injuries", "pregnant", "eating disorders", "medical condition", "approximations", "Acceptable Use", "User Content", "Limitation of Liability", "Jierui Intelligent Technology Service Department", "hendrix.ai.dev@gmail.com", 'href="/privacy.html"']) {
     assert.ok(en.includes(term), `terms.html en missing: ${term}`);
   }
 

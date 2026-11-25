@@ -206,8 +206,8 @@ async function handle(req, res){
   if (p.startsWith("/api/")) {
     if (!user) throw httpErr(401, "session_expired", "请先登录");
     accountData.ensureActive(user.id);
-    const { CONSENT_VERSION } = require("./lib/auth");
-    const consentRequired = user.consentVersion !== CONSENT_VERSION;
+    const { CONSENT_VERSION, isConsentSatisfied } = require("./lib/auth");
+    const consentRequired = !isConsentSatisfied(user);
     if (p === "/api/account/export" && m === "GET") {
       if (exportingUsers.has(user.id)) throw httpErr(429, "export_busy", "已有导出正在进行");
       exportingUsers.add(user.id);
@@ -321,8 +321,8 @@ async function handle(req, res){
   if (bm) {
     if (user) {
       accountData.ensureActive(user.id);
-      const { CONSENT_VERSION } = require("./lib/auth");
-      if (user.consentVersion !== CONSENT_VERSION) throw httpErr(403, "consent_required", "请先同意使用条款、隐私说明及数据处理授权");
+      const { isConsentSatisfied } = require("./lib/auth");
+      if (!isConsentSatisfied(user)) throw httpErr(403, "consent_required", "请先同意使用条款、隐私说明及数据处理授权");
     }
     const b = user && db.prepare("SELECT uid, type, size FROM blobs WHERE id = ?").get(bm[1]);
     if (!b || b.uid !== user.id) { res.writeHead(404); return res.end(); }

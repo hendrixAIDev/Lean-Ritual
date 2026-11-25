@@ -15,7 +15,7 @@ test("invitation signup, verified access, password reset and revocation", { time
     method: body ? "POST" : "GET", headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.1", origin: "http://localhost:8080", ...(cookie ? { cookie } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}),
   }));
   const password = "correct horse battery staple";
-  const signup = invitation => ({ email: "person@example.com", name: "Person", password, invitation, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" });
+  const signup = invitation => ({ email: "person@example.com", name: "Person", password, invitation, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" });
   assert.equal((await request("sign-up/email", signup())).status, 400);
   const invite = service.invites.issue("person@example.com", { userId: "u_existing_data_owner" });
   assert.equal((await request("sign-up/email", { ...signup(invite.token), email: "other@example.com" })).status, 400);
@@ -67,7 +67,7 @@ test("concurrent signup creates one account; expired/revoked invitations and int
   const { DatabaseSync } = require("node:sqlite");
   const inspector = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
   t.after(() => inspector.close());
-  const register = (email, invitation) => service.auth.handler(new Request("http://localhost:8080/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.3", origin: "http://localhost:8080" }, body: JSON.stringify({ email, invitation, name: "Concurrent", password: "strong concurrent password", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" }) }));
+  const register = (email, invitation) => service.auth.handler(new Request("http://localhost:8080/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.3", origin: "http://localhost:8080" }, body: JSON.stringify({ email, invitation, name: "Concurrent", password: "strong concurrent password", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" }) }));
   const invite = service.invites.issue("concurrent@example.com");
   const responses = await Promise.all([register(invite.email, invite.token), register(invite.email, invite.token)]);
   assert.ok(responses.every(r => r.status === 200)); // Duplicate response deliberately hides account existence.
@@ -98,7 +98,7 @@ test("failed account creation rolls back invitation and user creation", { timeou
   const service = await createAuth({ dataDir, baseURL: "http://localhost:8080", secret: "another-test-secret-long-enough-123456", cookieSecure: false, sendEmail: async () => {} });
   t.after(() => { service.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
   const invitation = service.invites.issue("retry@example.com");
-  const signup = () => service.auth.handler(new Request("http://localhost:8080/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.2", origin: "http://localhost:8080" }, body: JSON.stringify({ name: "Retry", email: invitation.email, password: "strong password for retry", invitation: invitation.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" }) }));
+  const signup = () => service.auth.handler(new Request("http://localhost:8080/api/auth/sign-up/email", { method: "POST", headers: { "content-type": "application/json", "x-ritual-client-ip": "192.0.2.2", origin: "http://localhost:8080" }, body: JSON.stringify({ name: "Retry", email: invitation.email, password: "strong password for retry", invitation: invitation.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" }) }));
   const { DatabaseSync } = require("node:sqlite");
   const inspector = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
   inspector.exec("CREATE TRIGGER fail_account BEFORE INSERT ON account BEGIN SELECT RAISE(ABORT, 'test account failure'); END;");
@@ -133,7 +133,7 @@ test("deletion purges reissued invitation emails and retries after auth user rem
     method:"POST", headers:{"content-type":"application/json", origin:"http://localhost:8080", ...(cookie ? {cookie} : {})}, body:JSON.stringify(body)
   }));
   const password = "strong deletion test password";
-  assert.equal((await request("sign-up/email", {email, name:"Delete", password, invitation:invite.token, consentTerms:true, consentSensitiveCrossBorder:true, agreedConsentVersion:"2026-11-24"})).status, 200);
+  assert.equal((await request("sign-up/email", {email, name:"Delete", password, invitation:invite.token, consentTerms:true, consentSensitiveCrossBorder:true, agreedConsentVersion:"2026-11-25"})).status, 200);
   await service.auth.handler(new Request(mails[0].url));
   const login = await request("sign-in/email", {email,password});
   const cookie = login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ");
@@ -159,11 +159,11 @@ test("minimum password length is 8 characters across sign-up, password change, a
   const invite = service.invites.issue("min8@example.com");
 
   // Sign-up rejects 7 characters and accepts 8 characters without wasting the invitation.
-  const tooShortSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "7chars!", invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" });
+  const tooShortSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "7chars!", invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" });
   assert.equal(tooShortSignup.status, 400);
   assert.equal((await tooShortSignup.json()).code, "PASSWORD_TOO_SHORT");
 
-  const okSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "8chars!a", invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" });
+  const okSignup = await request("sign-up/email", { email: invite.email, name: "Min8", password: "8chars!a", invitation: invite.token, consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" });
   assert.equal(okSignup.status, 200, await okSignup.clone().text());
 
   const verify = mails.find(m => m.kind === "verify");
@@ -216,7 +216,7 @@ test("verification link from a deleted account cannot verify a re-invited user o
   const email = "recycled@example.com";
   const pw = "recycled-strong-password";
   const firstInvite = service.invites.issue(email, { userId: "u_first_owner" });
-  assert.equal((await request("sign-up/email", { email, name: "First", password: pw, invitation: firstInvite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" })).status, 200);
+  assert.equal((await request("sign-up/email", { email, name: "First", password: pw, invitation: firstInvite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" })).status, 200);
   const firstVerifyUrl = mails.at(-1).url;
   assert.equal((await service.auth.handler(new Request(firstVerifyUrl))).status, 302);
   const firstLogin = await request("sign-in/email", { email, password: pw });
@@ -226,7 +226,7 @@ test("verification link from a deleted account cannot verify a re-invited user o
   assert.ok(delRes.headers.getSetCookie().some(c => c.includes("session_token=") && /Max-Age=0/i.test(c)));
 
   const secondInvite = service.invites.issue(email, { userId: "u_second_owner" });
-  assert.equal((await request("sign-up/email", { email, name: "Second", password: pw, invitation: secondInvite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-24" })).status, 200);
+  assert.equal((await request("sign-up/email", { email, name: "Second", password: pw, invitation: secondInvite.token, callbackURL: "/login.html?verified=1", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: "2026-11-25" })).status, 200);
   const secondVerifyUrl = mails.at(-1).url;
 
   // Stale link minted for u_first_owner must be rejected with INVALID_TOKEN and leave u_second_owner unverified.
