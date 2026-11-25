@@ -199,7 +199,7 @@ details.how[open] > *:not(summary){margin-top:6px}
 // 独立部署版（window.ritual.hosted）：登录、存储、AI 都由自己的服务器提供，纲领用服务器上的公开页
 const HOSTED = true;
 const GUIDE_URL = "/guide.html";
-const CONSENT_DOC_VERSION = "2026-11-24";
+const CONSENT_DOC_VERSION = "2026-11-25";
 const ORDER = ["push","pull","legs"];
 function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
 const PROGRAM = {
@@ -829,7 +829,7 @@ const I18N = {
     "account.title":"账号", "account.changePw":"改密码", "account.logout":"退出登录",
     "account.mustChange":"这个账号还在用初始密码，请先改一个只有你知道的密码。",
     "account.oldPw":"原密码", "account.newPw":"新密码（至少 8 位）", "account.newPw2":"再输一次新密码",
-    "account.username":"用户名", "account.joined":"注册时间",
+    "account.username":"用户名", "account.phone":"手机号", "account.joined":"注册时间",
     "account.privateHint":"每个人的记录只存在自己账号下，别人看不到。",
     "account.export":"导出我的记录和照片", "account.terms":"使用条款", "account.privacy":"隐私说明",
     "consent.title":"继续使用前请确认同意",
@@ -837,6 +837,7 @@ const I18N = {
     "consent.termsPre":"我已满 18 周岁，阅读并同意",
     "consent.termsMid":"和",
     "consent.termsPost":"（版本 {ver}；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+    "consent.termsPostPhone":"（版本 {ver}；你的手机号仅用于受邀资格绑定、密码登录，以及运营者经独立渠道如回拨注册手机号或向原邀请人核实身份后协助发放一次性密码重置链接；当前不发送短信，也不向 Resend 或短信服务商传输你的手机号）。",
     "consent.sensitive":"我单独同意按隐私说明（版本 {ver}）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
     "consent.acceptBtn":"同意并继续使用",
     "consent.saving":"提交中…",
@@ -1237,7 +1238,7 @@ const I18N = {
     "account.title":"Account", "account.changePw":"Change password", "account.logout":"Sign out",
     "account.mustChange":"This account still uses a temporary password — please set a new password.",
     "account.oldPw":"Current password", "account.newPw":"New password (8+ chars)", "account.newPw2":"Confirm new password",
-    "account.username":"Username", "account.joined":"Joined",
+    "account.username":"Username", "account.phone":"Phone", "account.joined":"Joined",
     "account.privateHint":"Your logs are private to your account.",
     "account.export":"Export my data & photos", "account.terms":"Terms of Use", "account.privacy":"Privacy Notice",
     "consent.title":"Please review and accept to continue",
@@ -1245,6 +1246,7 @@ const I18N = {
     "consent.termsPre":"I am 18+ and agree to the ",
     "consent.termsMid":" and ",
     "consent.termsPost":" (version {ver}; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+    "consent.termsPostPhone":" (version {ver}; your phone number is used only for invitation binding, password sign-in, and operator-assisted one-time password recovery after out-of-band identity verification such as calling back your registered number or confirming with your inviter; SMS is not used yet and your phone number is not sent to Resend or any SMS provider).",
     "consent.sensitive":"I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version {ver}) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
     "consent.acceptBtn":"Agree and continue",
     "consent.saving":"Saving…",
@@ -2098,7 +2100,7 @@ function viewConsentGate(){
   <div class="hero"><div class="row between"><span class="eyebrow">${esc(t("setup.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(t("consent.title"))}</h1>
   <p class="muted">${esc(t("consent.intro", {ver}))}</p></div>
   <section class="card">
-    <label class="checkline top-align" for="cg-terms"><input id="cg-terms" type="checkbox" ${d.terms?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.termsPre"))}<a href="/terms.html" target="_blank" rel="noopener">${esc(t("account.terms"))}</a>${esc(t("consent.termsMid"))}<a href="/privacy.html" target="_blank" rel="noopener">${esc(t("account.privacy"))}</a>${esc(t("consent.termsPost", {ver}))}</span></label>
+    <label class="checkline top-align" for="cg-terms"><input id="cg-terms" type="checkbox" ${d.terms?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.termsPre"))}<a href="/terms.html" target="_blank" rel="noopener">${esc(t("account.terms"))}</a>${esc(t("consent.termsMid"))}<a href="/privacy.html" target="_blank" rel="noopener">${esc(t("account.privacy"))}</a>${esc(t(S.hostUser?.phoneNumber ? "consent.termsPostPhone" : "consent.termsPost", {ver}))}</span></label>
     <label class="checkline top-align" for="cg-sensitive"><input id="cg-sensitive" type="checkbox" ${d.sensitive?"checked":""} ${S.busy.consent?"disabled":""}><span>${esc(t("consent.sensitive", {ver}))}</span></label>
     ${errText ? `<p id="consent-err" class="small" role="alert" style="color:var(--bad)">${esc(errText)}</p>` : ""}
     ${outdated ? `<button type="button" class="btn primary block" data-act="reload-data">${esc(t("consent.reloadBtn"))}</button>` : `<button type="button" class="btn primary block" data-act="consent-accept" ${S.busy.consent?"disabled":""}>${esc(S.busy.consent ? t("consent.saving") : t("consent.acceptBtn"))}</button>`}
@@ -3764,7 +3766,7 @@ function viewHostedAccount(){
       <label>${esc(t("account.newPw2"))}<input id="pw-new2" type="password" autocomplete="new-password"></label>
       ${pw.msg ? `<p class="small" role="alert" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${esc(pw.busy ? t("food.saving") : t("common.save"))}</button><button class="btn" data-act="pw-cancel">${esc(t("common.cancel"))}</button></div></div>`
-    : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span><span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
+    : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span>${u.phoneNumber ? `<span class="muted">${esc(t("account.phone"))}</span><span>${esc(u.phoneNumber)}</span>` : ""}<span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
     <p class="small muted">${esc(t("account.privateHint"))}</p>
     <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><a class="btn" href="/terms.html">${esc(t("account.terms"))}</a><a class="btn" href="/privacy.html">${esc(t("account.privacy"))}</a></div>
     <details><summary>${esc(t("account.deleteSummary"))}</summary><p class="tip warn">${esc(t("account.deleteWarn"))}</p>

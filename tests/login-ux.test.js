@@ -373,6 +373,95 @@ test("?verified=1 and ?deleted=1 banners render Chinese text once via textConten
   assert.equal(verified.els["#banner"].hidden, true);
 });
 
+test("login.html phone toggle, non-self-service forgot password message, and phone error mapping in zh and en", async () => {
+  const mountPhone = ({ search = "", fetchImpl } = {}) => {
+    const replaceStateCalls = [];
+    let replacedHref = null;
+    const location = { pathname: "/login.html", search, hash: "", replace(u) { replacedHref = u; } };
+    const history = {
+      replaceState(s, t, u) {
+        replaceStateCalls.push({ s, t, u });
+        const parsed = new URL(u, "http://localhost");
+        location.pathname = parsed.pathname; location.search = parsed.search; location.hash = parsed.hash;
+      }
+    };
+    const mkBtn = (ds) => {
+      const b = { dataset: ds, textContent: "", attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, classList: { toggle() {} }, closest(sel) { return sel === "button" ? b : null; } };
+      return b;
+    };
+    const tabLogin = mkBtn({ m: "login" }), tabRegister = mkBtn({ m: "register" });
+    const mEmail = mkBtn({ method: "email" }), mPhone = mkBtn({ method: "phone" });
+    const els = {
+      "#banner": makeSafeTextElement({ hidden: true }),
+      "#n": { value: "" },
+      "#e": { value: "", required: true },
+      "#ph": { value: "", required: false, placeholder: "" },
+      "#p": { value: "strong-password-1234", required: true, autocomplete: "" },
+      "#i": { value: "" },
+      "#nw": { hidden: true }, "#ew": { hidden: false }, "#phw": { hidden: true },
+      "#pw": { hidden: false }, "#iw": { hidden: true }, "#cw": { hidden: true },
+      "#c-terms": { checked: false }, "#c-sensitive": { checked: false },
+      "#phone-forgot-msg": makeSafeTextElement({ hidden: true }),
+      "#err": makeSafeTextElement({ textContent: "" }),
+      "#go": { textContent: "", disabled: false, hidden: false },
+      "#tabs": { onclick: null },
+      "#method-tabs": { hidden: false, onclick: null, setAttribute() {} },
+      "#forgot": { onclick: null },
+      "#resend": { onclick: null, hidden: false },
+      "#hint-text": makeSafeTextElement({ textContent: "" }),
+      "#f": { onsubmit: null }
+    };
+    const requests = [];
+    const win = {};
+    const ctx = vm.createContext({
+      window: win, location, history, URLSearchParams, Object, Error,
+      fetch: fetchImpl || (async (url, opts) => { requests.push({ url, opts }); return { ok: true, status: 200, json: async () => ({}) }; }),
+      document: {
+        documentElement: { lang: "zh-CN" }, title: "",
+        querySelector: s => els[s] || null,
+        querySelectorAll: s => s === "#tabs button" ? [tabLogin, tabRegister] : s === "#method-tabs button" ? [mEmail, mPhone] : []
+      }
+    });
+    vm.runInContext(loginScript, ctx);
+    return { els, win, requests, mEmail, mPhone, tabLogin, tabRegister, getReplacedHref: () => replacedHref, submit: () => els["#f"].onsubmit({ preventDefault() {} }) };
+  };
+
+  // Phone invite link opens directly in phone register mode with prefilled phone + invite, hides resend email
+  const reg = mountPhone({ search: "?invite=tok123&phone=%2B8613800138000" });
+  assert.equal(reg.win.ritualLoginI18n.getMethod(), "phone");
+  assert.equal(reg.els["#ph"].value, "+8613800138000");
+  assert.equal(reg.els["#i"].value, "tok123");
+  assert.equal(reg.els["#phw"].hidden, false);
+  assert.equal(reg.els["#ew"].hidden, true);
+  assert.equal(reg.els["#resend"].hidden, true);
+  assert.equal(reg.els["#go"].textContent, "注册并登录");
+
+  // Phone forgot password shows clear non-self-service message in zh and en and hides submit button
+  reg.els["#forgot"].onclick();
+  assert.equal(reg.els["#phone-forgot-msg"].hidden, false);
+  assert.equal(reg.els["#phone-forgot-msg"].textContent, "请联系邀请你的人重置密码");
+  assert.equal(reg.els["#go"].hidden, true);
+  await reg.submit();
+  assert.equal(reg.requests.length, 0);
+
+  reg.win.ritualLoginI18n.setLang("en");
+  assert.equal(reg.els["#phone-forgot-msg"].textContent, "Ask the person who invited you to reset your password");
+
+  // Phone sign-in routes to /api/auth/sign-in/phone-number and maps phone errors cleanly
+  let nextResp = { ok: false, status: 401, json: async () => ({ code: "INVALID_PHONE_NUMBER_OR_PASSWORD", message: "Invalid phone number or password" }) };
+  const login = mountPhone({ search: "?method=phone", fetchImpl: async (url, opts) => { login.requests.push({ url, opts }); return nextResp; } });
+  login.els["#ph"].value = "13800138000";
+  await login.submit();
+  assert.equal(login.requests[0].url, "/api/auth/sign-in/phone-number");
+  assert.equal(login.els["#err"].textContent, "手机号或密码错误。");
+  login.win.ritualLoginI18n.setLang("en");
+  assert.equal(login.els["#err"].textContent, "Incorrect phone number or password.");
+
+  nextResp = { ok: false, status: 400, json: async () => ({ code: "INVALID_PHONE_NUMBER", message: "Invalid phone number" }) };
+  await login.submit();
+  assert.match(login.els["#err"].textContent, /valid phone number/i);
+});
+
 test("HOST-UPGRADE-2026-11.zh-CN.md bash blocks pass bash -n and preserve rollback precision & gates", () => {
   const doc = fs.readFileSync(path.join(ROOT, "docs/HOST-UPGRADE-2026-11.zh-CN.md"), "utf8");
   const blocks = [...doc.matchAll(/```bash\n([\s\S]*?)```/g)].map(m => m[1]);

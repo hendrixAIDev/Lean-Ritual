@@ -36,6 +36,11 @@ p{margin:0 0 20px;color:var(--muted)}
 .tabs{display:flex;gap:8px}
 .tabs button{flex:1;min-height:44px;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
 .tabs button.on{border-color:var(--accent);font-weight:700}
+.method-sw{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.method-sw button{flex:1;min-height:44px;padding:8px;border:none;border-radius:0;background:none;color:var(--muted);font:inherit;font-size:14px;cursor:pointer}
+.method-sw button:focus-visible{outline-offset:-2px}
+.method-sw button.on{background:var(--accent);color:var(--on-accent);font-weight:700}
+.info-box{margin:0;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 input{font:inherit;font-size:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .consent-box{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
@@ -65,14 +70,17 @@ button.primary:disabled{opacity:.6}
   <p class="banner" id="banner" role="status" aria-live="polite" hidden></p>
   <form class="card" id="f">
     <div class="tabs" id="tabs"><button type="button" data-m="login">登录</button><button type="button" data-m="register">凭邀请注册</button></div>
+    <div class="method-sw" id="method-tabs" role="group" aria-label="登录方式"><button type="button" data-method="email" class="on" aria-pressed="true">邮箱</button><button type="button" data-method="phone" aria-pressed="false">手机号</button></div>
     <label id="nw" hidden><span id="lbl-n">称呼</span><input id="n" maxlength="80" autocomplete="nickname"></label>
     <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" inputmode="email" autocomplete="email" required autocapitalize="off" spellcheck="false"></label>
+    <label id="phw" hidden><span id="lbl-ph">手机号</span><input id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="138 0013 8000 或 +国家代码" autocapitalize="off" spellcheck="false"></label>
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <div class="consent-box" id="cw" hidden>
-      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。</span></span></label>
-      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。</span></label>
+      <label class="checkline" for="c-terms"><input id="c-terms" type="checkbox"><span><span id="c-terms-pre">我已满 18 周岁，阅读并同意</span><a id="c-terms-link" href="/terms.html" target="_blank" rel="noopener">使用条款</a><span id="c-terms-mid">和</span><a id="c-privacy-link" href="/privacy.html" target="_blank" rel="noopener">隐私说明</a><span id="c-terms-post">（版本 2026-11-25；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。</span></span></label>
+      <label class="checkline" for="c-sensitive"><input id="c-sensitive" type="checkbox"><span id="lbl-c-sensitive">我单独同意按隐私说明（版本 2026-11-25）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。</span></label>
     </div>
+    <p class="info-box" id="phone-forgot-msg" role="status" aria-live="polite" hidden>请联系邀请你的人重置密码</p>
     <p class="err" id="err" role="status" aria-live="polite"></p>
     <button type="button" id="reload-policy" hidden>刷新页面查看最新版本</button>
     <button class="primary" id="go">登录</button>
@@ -85,7 +93,7 @@ button.primary:disabled{opacity:.6}
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
-  const DISPLAYED_CONSENT_VERSION = "2026-11-24";
+  const DISPLAYED_CONSENT_VERSION = "2026-11-25";
   const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
   const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
@@ -129,18 +137,26 @@ button.primary:disabled{opacity:.6}
       "lang.aria": "语言",
       "tab.login": "登录",
       "tab.register": "凭邀请注册",
+      "method.aria": "登录方式",
+      "method.email": "邮箱",
+      "method.phone": "手机号",
       "field.name": "称呼",
       "field.email": "邮箱",
+      "field.phone": "手机号",
+      "field.phonePlaceholder": "138 0013 8000 或 +国家代码",
       "field.password": "密码",
       "field.invite": "邀请码",
       "go.login": "登录",
       "go.register": "注册并发送验证邮件",
+      "go.registerPhone": "注册并登录",
       "go.reset": "设置新密码",
       "go.forgot": "发送密码重置邮件",
       "go.resend": "发送验证邮件",
       "btn.forgot": "忘记密码",
       "btn.resend": "重新发送验证邮件",
+      "forgot.phoneMsg": "请联系邀请你的人重置密码",
       "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
+      "hint.bodyPhone": "仅受邀手机号可以注册。中国大陆 11 位手机号默认 +86，其他地区请加 +国家代码。密码至少 8 位，无需邮箱验证。",
       "hint.terms": "使用条款",
       "hint.privacy": "隐私说明",
       "hint.help": "无法登录？发邮件反馈",
@@ -149,8 +165,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "使用条款",
       "consent.termsMid": "和",
       "consent.privacyLink": "隐私说明",
-      "consent.termsPost": "（版本 2026-11-24；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
-      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-24）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
+      "consent.termsPost": "（版本 2026-11-25；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+      "consent.termsPostPhone": "（版本 2026-11-25；你的手机号仅用于受邀资格绑定、密码登录，以及运营者经独立渠道如回拨注册手机号或向原邀请人核实身份后协助发放一次性密码重置链接；当前不发送短信，也不向 Resend 或短信服务商传输你的手机号）。",
+      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-25）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
       "btn.reloadPolicy": "刷新页面查看最新版本",
       "banner.verified": "邮箱已验证，请登录。",
       "banner.deleted": "账号已删除。",
@@ -194,6 +211,12 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "提交的信息格式不正确，请刷新页面后重试。",
       "err.INVITE_REQUIRED": "需要有效邀请码才能注册。",
       "err.INVITE_INVALID": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
+      "err.INVITE_INVALID_PHONE": "邀请码无效、已过期、已使用，或与填写的手机号不匹配。",
+      "err.INVALID_PHONE_NUMBER": "请输入有效的手机号（中国大陆 11 位或以 + 开头的国际号码）。",
+      "err.INVALID_PHONE_NUMBER_OR_PASSWORD": "手机号或密码错误。",
+      "err.PHONE_CAN_NOT_BE_UPDATED": "暂不支持修改手机号。",
+      "err.INVALID_TOKEN_PHONE": "链接无效或已过期，请联系邀请你的人重新获取。",
+      "err.TOKEN_EXPIRED_PHONE": "链接已过期，请联系邀请你的人重新获取。",
       "err.CONSENT_REQUIRED": "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。",
       "err.CONSENT_OUTDATED": "使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
       "err.CONFIRM_DELETE_PW": "请输入密码以确认删除账号。"
@@ -205,18 +228,26 @@ button.primary:disabled{opacity:.6}
       "lang.aria": "Language",
       "tab.login": "Sign in",
       "tab.register": "Sign up with invite",
+      "method.aria": "Sign-in method",
+      "method.email": "Email",
+      "method.phone": "Phone",
       "field.name": "Name",
       "field.email": "Email",
+      "field.phone": "Phone number",
+      "field.phonePlaceholder": "+1 415 555 2671 or 138 0013 8000",
       "field.password": "Password",
       "field.invite": "Invite code",
       "go.login": "Sign in",
       "go.register": "Sign up & send verification email",
+      "go.registerPhone": "Sign up & sign in",
       "go.reset": "Set new password",
       "go.forgot": "Send password reset email",
       "go.resend": "Send verification email",
       "btn.forgot": "Forgot password?",
       "btn.resend": "Resend verification email",
+      "forgot.phoneMsg": "Ask the person who invited you to reset your password",
       "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
+      "hint.bodyPhone": "Invite-only registration. 11-digit mainland China numbers default to +86; include +country code for other regions. Passwords must be at least 8 characters; no email verification needed. ",
       "hint.terms": "Terms of Use",
       "hint.privacy": "Privacy Notice",
       "hint.help": "Can't sign in? Email feedback",
@@ -225,8 +256,9 @@ button.primary:disabled{opacity:.6}
       "consent.termsLink": "Terms of Use",
       "consent.termsMid": " and ",
       "consent.privacyLink": "Privacy Notice",
-      "consent.termsPost": " (version 2026-11-24; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
-      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-24) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
+      "consent.termsPost": " (version 2026-11-25; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+      "consent.termsPostPhone": " (version 2026-11-25; your phone number is used only for invitation binding, password sign-in, and operator-assisted one-time password recovery after out-of-band identity verification such as calling back your registered number or confirming with your inviter; SMS is not used yet and your phone number is not sent to Resend or any SMS provider).",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-25) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
       "btn.reloadPolicy": "Reload page to review latest version",
       "banner.verified": "Email verified. Please sign in.",
       "banner.deleted": "Account deleted.",
@@ -270,6 +302,12 @@ button.primary:disabled{opacity:.6}
       "err.FIELD_NOT_ALLOWED": "Invalid request format. Please refresh and try again.",
       "err.INVITE_REQUIRED": "A valid invite code is required to sign up.",
       "err.INVITE_INVALID": "Invite code is invalid, expired, already used, or for another email.",
+      "err.INVITE_INVALID_PHONE": "Invite code is invalid, expired, already used, or for another phone number.",
+      "err.INVALID_PHONE_NUMBER": "Please enter a valid phone number (11-digit mainland China number or +country code).",
+      "err.INVALID_PHONE_NUMBER_OR_PASSWORD": "Incorrect phone number or password.",
+      "err.PHONE_CAN_NOT_BE_UPDATED": "Phone number changes are not supported.",
+      "err.INVALID_TOKEN_PHONE": "Invalid or expired link. Ask the person who invited you for a new one.",
+      "err.TOKEN_EXPIRED_PHONE": "This link has expired. Ask the person who invited you for a new one.",
       "err.CONSENT_REQUIRED": "Please check both boxes to agree to the Terms & Privacy Notice and separately consent to sensitive data processing and cross-border transfer.",
       "err.CONSENT_OUTDATED": "The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before signing up.",
       "err.CONFIRM_DELETE_PW": "Please enter your password to confirm account deletion."
@@ -291,6 +329,10 @@ button.primary:disabled{opacity:.6}
 
   const CODE_TO_KEY = {
     INVALID_EMAIL_OR_PASSWORD: "err.INVALID_EMAIL_OR_PASSWORD",
+    INVALID_PHONE_NUMBER: "err.INVALID_PHONE_NUMBER",
+    INVALID_PHONE_NUMBER_OR_PASSWORD: "err.INVALID_PHONE_NUMBER_OR_PASSWORD",
+    PHONE_NUMBER_CANNOT_BE_UPDATED: "err.PHONE_CAN_NOT_BE_UPDATED",
+    INVALID_INVITATION: "err.INVITE_INVALID_PHONE",
     INVALID_PASSWORD: "err.INVALID_PASSWORD",
     INVALID_EMAIL: "err.INVALID_EMAIL",
     EMAIL_NOT_VERIFIED: "err.EMAIL_NOT_VERIFIED",
@@ -338,13 +380,17 @@ button.primary:disabled{opacity:.6}
   const MSG_TO_KEY = {
     "invitation required": "err.INVITE_REQUIRED",
     "invitation is invalid, expired, used, or belongs to another email": "err.INVITE_INVALID",
+    "invitation is invalid, expired, used, or belongs to another phone number": "err.INVITE_INVALID_PHONE",
     "consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required": "err.CONSENT_REQUIRED",
     "terms or privacy notice updated; refresh the page to review and accept the latest version": "err.CONSENT_OUTDATED",
     "email changes are unavailable": "err.EMAIL_CAN_NOT_BE_UPDATED",
+    "phone number changes are unavailable": "err.PHONE_CAN_NOT_BE_UPDATED",
     "confirm your password to delete the account": "err.CONFIRM_DELETE_PW",
     "too many requests": "err.TOO_MANY_REQUESTS",
     "too many requests. please try again later": "err.TOO_MANY_REQUESTS",
     "invalid email or password": "err.INVALID_EMAIL_OR_PASSWORD",
+    "invalid phone number": "err.INVALID_PHONE_NUMBER",
+    "invalid phone number or password": "err.INVALID_PHONE_NUMBER_OR_PASSWORD",
     "invalid password": "err.INVALID_PASSWORD",
     "invalid email": "err.INVALID_EMAIL",
     "email not verified": "err.EMAIL_NOT_VERIFIED",
@@ -367,15 +413,24 @@ button.primary:disabled{opacity:.6}
     const code = j && typeof j.code === "string" ? j.code.trim() : "";
     const rawMsg = j && typeof j.message === "string" ? j.message.trim() : "";
     if(code === "VALIDATION_ERROR"){
+      if(/phone/i.test(rawMsg)) return "err.INVALID_PHONE_NUMBER";
       if(/\bemail\b/i.test(rawMsg)) return "err.INVALID_EMAIL";
       if(/password/i.test(rawMsg)) return "err.val_password";
       if(/invitation/i.test(rawMsg)) return "err.INVITE_REQUIRED";
       return "err.val_general";
     }
-    if(code && hasOwn(CODE_TO_KEY, code)) return CODE_TO_KEY[code];
+    if(code && hasOwn(CODE_TO_KEY, code)){
+      const mapped = CODE_TO_KEY[code];
+      if (method === "phone" && (mapped === "err.INVALID_TOKEN" || mapped === "err.TOKEN_EXPIRED")) return mapped + "_PHONE";
+      return mapped;
+    }
     if(status === 429) return "err.TOO_MANY_REQUESTS";
     const normMsg = rawMsg.toLowerCase().replace(/[.!]+$/, "");
-    if(normMsg && hasOwn(MSG_TO_KEY, normMsg)) return MSG_TO_KEY[normMsg];
+    if(normMsg && hasOwn(MSG_TO_KEY, normMsg)){
+      const mapped = MSG_TO_KEY[normMsg];
+      if (method === "phone" && (mapped === "err.INVALID_TOKEN" || mapped === "err.TOKEN_EXPIRED")) return mapped + "_PHONE";
+      return mapped;
+    }
     return "err.fallback";
   }
   function mapAuthError(j, status){ return t(authErrorKey(j, status)); }
@@ -390,9 +445,31 @@ button.primary:disabled{opacity:.6}
   function clearBanner(){ setBanner(null); }
   const setTxt = (sel, key) => { const el = $(sel); if (el) el.textContent = t(key); };
 
+  let method = (params.has("phone") || params.get("method") === "phone") ? "phone" : "email";
   let mode = params.has("token") ? "reset" : params.has("invite") ? "register" : "login";
   if(params.has("invite")) $("#i").value=params.get("invite");
   if(params.has("email")) $("#e").value=params.get("email");
+  if(params.has("phone") && $("#ph")) $("#ph").value=params.get("phone");
+  function updateMethodLabels(){
+    const isPhone = method === "phone";
+    const mTabs = $("#method-tabs");
+    if (mTabs && mTabs.setAttribute) mTabs.setAttribute("aria-label", t("method.aria"));
+    if (document.querySelectorAll) {
+      document.querySelectorAll("#method-tabs button").forEach(b => {
+        const active = b.dataset.method === method;
+        b.classList.toggle("on", active);
+        if (b.setAttribute) b.setAttribute("aria-pressed", active ? "true" : "false");
+        if (b.dataset.method === "email" || b.dataset.method === "phone") b.textContent = t("method." + b.dataset.method);
+      });
+    }
+    setTxt("#lbl-ph", "field.phone");
+    const phInput = $("#ph");
+    if (phInput) phInput.placeholder = t("field.phonePlaceholder");
+    setTxt("#phone-forgot-msg", "forgot.phoneMsg");
+    setTxt("#hint-text", isPhone ? "hint.bodyPhone" : "hint.body");
+    setTxt("#c-terms-post", isPhone ? "consent.termsPostPhone" : "consent.termsPost");
+    if ($("#go")) $("#go").textContent = (mode === "register" && isPhone) ? t("go.registerPhone") : t("go." + mode);
+  }
   function applyLangUI(){
     if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
     if ("title" in document) document.title = t("page.title");
@@ -414,7 +491,6 @@ button.primary:disabled{opacity:.6}
     setTxt("#lbl-i", "field.invite");
     setTxt("#forgot", "btn.forgot");
     setTxt("#resend", "btn.resend");
-    setTxt("#hint-text", "hint.body");
     setTxt("#terms-link", "hint.terms");
     setTxt("#privacy-link", "hint.privacy");
     setTxt("#help-link", "hint.help");
@@ -422,12 +498,11 @@ button.primary:disabled{opacity:.6}
     setTxt("#c-terms-link", "consent.termsLink");
     setTxt("#c-terms-mid", "consent.termsMid");
     setTxt("#c-privacy-link", "consent.privacyLink");
-    setTxt("#c-terms-post", "consent.termsPost");
     setTxt("#lbl-c-sensitive", "consent.sensitive");
     setTxt("#reload-policy", "btn.reloadPolicy");
     const helpLink = $("#help-link");
     if (helpLink) helpLink.href = t("hint.helpMailto");
-    if ($("#go")) $("#go").textContent = t("go." + mode);
+    updateMethodLabels();
     if (errKey) setErr(errKey);
     if (bannerKey) setBanner(bannerKey);
   }
@@ -438,25 +513,51 @@ button.primary:disabled{opacity:.6}
     markExplicitLang(l);
     applyLangUI();
   }
+  function syncFormVisibility(){
+    const isPhone = method === "phone";
+    const isPhoneForgot = isPhone && mode === "forgot";
+    const mTabs = $("#method-tabs");
+    if (mTabs) mTabs.hidden = mode === "reset" || mode === "resend";
+    $("#nw").hidden = mode !== "register";
+    $("#iw").hidden = mode !== "register";
+    const cw = $("#cw"); if (cw) cw.hidden = mode !== "register";
+    if (mode !== "register") { if ($("#c-terms")) $("#c-terms").checked = false; if ($("#c-sensitive")) $("#c-sensitive").checked = false; }
+    $("#pw").hidden = ["forgot", "resend"].includes(mode); $("#p").required = !$("#pw").hidden;
+    $("#ew").hidden = isPhone || mode === "reset"; $("#e").required = !$("#ew").hidden;
+    const phw = $("#phw"); if (phw) phw.hidden = !isPhone || mode === "reset" || mode === "forgot";
+    const ph = $("#ph"); if (ph) ph.required = !!(phw && !phw.hidden);
+    const pfm = $("#phone-forgot-msg"); if (pfm) pfm.hidden = !isPhoneForgot;
+    $("#p").autocomplete = mode === "login" ? "current-password" : "new-password";
+    if ($("#go")) $("#go").hidden = isPhoneForgot;
+    if ($("#forgot")) $("#forgot").hidden = isPhoneForgot;
+    if ($("#resend")) $("#resend").hidden = isPhone;
+    updateMethodLabels();
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.m === mode));
+  }
   function setMode(m){
-    mode=m; $("#nw").hidden=m!=="register"; $("#iw").hidden=m!=="register";
-    const cw=$("#cw"); if(cw) cw.hidden=m!=="register";
-    if(m!=="register"){ if($("#c-terms")) $("#c-terms").checked=false; if($("#c-sensitive")) $("#c-sensitive").checked=false; }
-    $("#pw").hidden=["forgot","resend"].includes(m); $("#p").required=!$("#pw").hidden;
-    $("#ew").hidden=m==="reset"; $("#e").required=m!=="reset";
-    $("#p").autocomplete=m==="login"?"current-password":"new-password";
-    $("#go").textContent=t("go." + m); setErr(null); clearBanner();
-    document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.m===m));
+    mode = m;
+    if (m === "resend") method = "email";
+    syncFormVisibility();
+    setErr(null); clearBanner();
+  }
+  function setMethod(next){
+    if (next !== "email" && next !== "phone") return;
+    method = next;
+    if (method === "phone" && mode === "resend") mode = "login";
+    syncFormVisibility();
+    setErr(null); clearBanner();
   }
   const lsw = $("#lang-switch");
   if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
+  const mTabs = $("#method-tabs");
+  if (mTabs) mTabs.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.method) setMethod(b.dataset.method); };
   $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
   $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
   const reloadPolicyBtn = $("#reload-policy");
   if (reloadPolicyBtn) reloadPolicyBtn.onclick = () => location.reload();
   applyLangUI();
   setMode(mode);
-  if(params.has("error")) setErr(params.get("error")==="TOKEN_EXPIRED"?"err.TOKEN_EXPIRED":"err.INVALID_TOKEN");
+  if(params.has("error")) setErr(params.get("error")==="TOKEN_EXPIRED" ? (method === "phone" ? "err.TOKEN_EXPIRED_PHONE" : "err.TOKEN_EXPIRED") : (method === "phone" ? "err.INVALID_TOKEN_PHONE" : "err.INVALID_TOKEN"));
   let cleanURL=false;
   if(params.has("verified")){
     if(params.get("verified")==="1"&&!params.has("error")) setBanner("banner.verified");
@@ -471,14 +572,22 @@ button.primary:disabled{opacity:.6}
     history.replaceState(null,"",(location.pathname||"/login.html")+(q?"?"+q:"")+(location.hash||""));
   }
   $("#f").onsubmit=async e=>{
-    e.preventDefault(); $("#go").disabled=true; setErr(null); clearBanner();
+    e.preventDefault();
+    if(method==="phone" && mode==="forgot") return;
+    $("#go").disabled=true; setErr(null); clearBanner();
     const email=$("#e").value.trim(), password=$("#p").value;
-    const routes={login:"sign-in/email",register:"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
-    let body={email,password};
+    const phoneNumber=$("#ph") ? $("#ph").value.trim() : "";
+    const isPhoneAuth = method === "phone" && (mode === "login" || mode === "register");
+    const routes={login:isPhoneAuth?"sign-in/phone-number":"sign-in/email",register:isPhoneAuth?"sign-up/phone-number":"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
+    let body = isPhoneAuth ? {phoneNumber,password} : {email,password};
     if(mode==="register"){
       const cTerms=$("#c-terms"), cSens=$("#c-sensitive");
       if((cTerms && !cTerms.checked) || (cSens && !cSens.checked)){ setErr("err.CONSENT_REQUIRED"); $("#go").disabled=false; return; }
-      body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+      if(isPhoneAuth){
+        body={phoneNumber,password,name:$("#n").value.trim()||phoneNumber.slice(-4),invitation:$("#i").value.trim(),consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+      } else {
+        body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+      }
     }
     if(mode==="forgot")body={email,redirectTo:"/login.html"};
     if(mode==="reset")body={token:params.get("token"),newPassword:password};
@@ -489,13 +598,13 @@ button.primary:disabled{opacity:.6}
       catch{setErr("msg.network");return}
       const j=await r.json().catch(()=>({}));
       if(!r.ok){setErr(authErrorKey(j,r.status));return}
-      if(mode==="login"){location.replace("/");return}
-      if(mode==="reset"){history.replaceState(null,"","/login.html");setMode("login");setErr("msg.pwUpdated")}
+      if(mode==="login" || (mode==="register" && isPhoneAuth)){location.replace("/");return}
+      if(mode==="reset"){history.replaceState(null,"","/login.html"+(method==="phone"?"?method=phone":""));setMode("login");setErr("msg.pwUpdated")}
       else setErr(mode==="register"?"msg.verifySent":"msg.mailIfEligible");
     }catch{setErr("err.fallback")}finally{$("#go").disabled=false}
   };
   if (typeof window !== "undefined") {
-    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, resolveLang, detectBrowserLang, mapAuthError, I18N, consentVersion: DISPLAYED_CONSENT_VERSION };
+    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, getMethod: () => method, setMethod, resolveLang, detectBrowserLang, mapAuthError, I18N, consentVersion: DISPLAYED_CONSENT_VERSION };
     if (window.ritualErrorReporter) window.ritualErrorReporter.configure({ getPage: () => "login", getLang: () => curLang });
   }
 })();

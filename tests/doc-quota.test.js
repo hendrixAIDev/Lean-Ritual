@@ -20,7 +20,7 @@ test('HTTP document quotas: bytes, count, overwrite, deletion, isolation and thr
  assert.equal((await request('/api/me',null,'bj_s=old-session')).status,401);
  const password='temporary strong test password';
  const register=async invitation=>{
-  const r=await request('/api/auth/sign-up/email',{email:invitation.email,name:'Test',password,invitation:invitation.token,callbackURL:'/login.html',consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:'2026-11-24'});assert.equal(r.status,200,await r.clone().text());
+  const r=await request('/api/auth/sign-up/email',{email:invitation.email,name:'Test',password,invitation:invitation.token,callbackURL:'/login.html',consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:'2026-11-25'});assert.equal(r.status,200,await r.clone().text());
   assert.equal((await request('/api/auth/sign-in/email',{email:invitation.email,password})).status,403);
   const mails=fs.readdirSync(path.join(dir,'mail')).map(f=>JSON.parse(fs.readFileSync(path.join(dir,'mail',f),'utf8')));
   const mail=mails.find(m=>m.to===invitation.email&&m.kind==='verify');assert.ok(mail);

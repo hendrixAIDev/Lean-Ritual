@@ -6,13 +6,31 @@ The server calls `await createAuth({ dataDir, baseURL, secret, cookieSecure, sen
 
 Set `AUTH_BASE_URL` to the canonical HTTPS origin and a persistent random `AUTH_SECRET` of at least 32 characters. Public origins require secure cookies. Set `MAIL_MODE=smtp`, `SMTP_HOST`, `SMTP_PORT` (587 by default), `SMTP_USER`, `SMTP_PASS`, and `MAIL_FROM` (optional single-mailbox `MAIL_REPLY_TO` defaults to `hendrix.ai.dev@gmail.com`; malformed values log a startup warning and fall back to the default). `createMailer(env,{dataDir,baseURL})` in `lib/mail.js` provides the sender, validating each action URL against the configured `AUTH_BASE_URL` origin before rendering `multipart/alternative` (plain text + HTML) with a domain `Message-ID`, metadata-only delivery logs (type, recipient domain, locally generated messageId, and SMTP response code; never addresses, tokens, or URLs), and sanitized errors on failure. SMTP requires TLS and certificate verification. Local development can explicitly set `MAIL_MODE=file` with a localhost origin; messages go to private files under `DATA_DIR/mail`. File delivery is rejected for public origins.
 
-Issue a seven-day, single-use, email-bound invitation:
+Issue a seven-day, single-use, email- or phone-bound invitation:
 
 ```sh
 node scripts/auth-admin.js invite person@example.com
+node scripts/auth-admin.js invite --phone +8613800138000
+node scripts/auth-admin.js invite --phone 13800138000
 ```
 
-The command prints a secret token; deliver it privately to that email. The login page accepts `?invite=TOKEN&email=EMAIL`, or recipients can paste the token. It is not a permanent shared signup code. Revoke a token by passing it on stdin to `node scripts/auth-admin.js revoke`. Expired or revoked invitations can be replaced with a new invitation.
+Phone numbers are normalized to E.164 (11-digit mainland China mobile numbers default to `+86`). The command prints a secret token (and full invite URL when `AUTH_BASE_URL` is set); deliver it privately to the invited recipient. The login page accepts `?invite=TOKEN&email=EMAIL` or `?invite=TOKEN&phone=PHONE`, or recipients can paste the token. It is not a permanent shared signup code. Revoke a token by passing it on stdin to `node scripts/auth-admin.js revoke`. Expired or revoked invitations can be replaced with a new invitation.
+
+Phone accounts do not use email verification or self-service password reset (SMS verification is planned for later). To issue a single-use password reset link (valid for 24 hours; never sets or prints a password) for a phone account:
+
+```sh
+node scripts/auth-admin.js reset-password --phone +8613800138000
+```
+
+#### Phone password recovery verification procedure (mandatory)
+
+Because SMS ownership verification is not enabled yet and the reset link is a bearer credential that replaces the password and revokes all active sessions, operators **must** authenticate every phone recovery request out-of-band before issuing or delivering a link:
+
+1. **Verify requester identity out-of-band**: Knowing the registered phone number or sending a message from an unfamiliar/new chat account is **never** sufficient proof of identity. Before running `reset-password --phone`, confirm the requester is the original invitee via an independently established channel:
+   - Place a **voice callback directly to the registered phone number** and confirm with the account holder that they requested the reset, **or**
+   - Confirm **in person or via a previously established private channel with the original inviter** who personally knows the invitee and vouches for the request.
+2. **Delivery channel**: Send the one-time reset link **only** through a pre-established, trusted private channel directly to the verified invitee (e.g., their existing known WeChat/messaging conversation with the inviter, or handed directly in person). Never deliver a reset link to an unfamiliar/unverified account, a group chat, or an unverified third party, and remind the user never to forward the link.
+3. **When to deny recovery**: Refuse the request (do not issue a link, and do not share one if already generated) whenever out-of-band verification fails—for example, if the registered number cannot be reached or the speaker is not recognized, the original inviter cannot confirm the request, the requester asks for delivery to a new/unverified account, or there is any doubt about ownership or coercion.
 
 To retain an existing user's app data, the operator must explicitly associate the verified email with the existing username:
 

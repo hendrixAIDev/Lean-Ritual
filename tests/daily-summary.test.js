@@ -304,8 +304,8 @@ test("collectDailySummary reads counts from completed snapshot (data as of), kee
   // Accounts come strictly from snapshot (4 users; NOT the 1 live-only user in DATA_DIR!)
   assert.equal(summary.accounts.snapshotAvailable, true);
   assert.equal(summary.accounts.authDbPresent, true);
-  assert.deepEqual(summary.accounts.last24h, { signups: 2, verifiedSignups: 1 });
-  assert.deepEqual(summary.accounts.trialToDate, { signups: 4, verified: 3, unverified: 1 });
+  assert.deepEqual(summary.accounts.last24h, { signups: 2, verifiedSignups: 1, emailSignups: 2, phoneSignups: 0 });
+  assert.deepEqual(summary.accounts.trialToDate, { signups: 4, verified: 3, unverified: 1, emailSignups: 4, phoneSignups: 0 });
 
   // Active users & logs from snapshot
   assert.deepEqual(summary.activeUsers, { last24h: 3, trialToDate: 3 });
@@ -1095,4 +1095,79 @@ test("handles legacy snapshot without feedback table or auth.sqlite and ignores 
   assert.equal(summary.feedback.trialToDate.total, 0);
   assert.equal(summary.storage.photos.diskCount, 0);
   assert.equal(summary.storage.photos.diskBytes, 0);
+});
+
+test("collectDailySummary counts phone vs email signups without leaking phone numbers", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-summary-phone-"));
+  const dataDir = path.join(root, "data");
+  const snapDir = path.join(root, "snap");
+  fs.mkdirSync(path.join(dataDir, "blobs"), { recursive: true });
+  fs.mkdirSync(snapDir, { recursive: true });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const snapIso = "2026-11-25T04:00:00.000Z";
+  const snapMs = Date.parse(snapIso);
+  const hoursAgo = (h) => new Date(snapMs - h * 3600 * 1000).toISOString();
+
+  const authDb = new DatabaseSync(path.join(snapDir, "auth.sqlite"));
+  authDb.exec(`
+    PRAGMA journal_mode = DELETE;
+    CREATE TABLE "user" (
+      "id" text not null primary key,
+      "name" text not null,
+      "email" text not null unique,
+      "emailVerified" integer not null,
+      "phoneNumber" text,
+      "phoneNumberVerified" integer,
+      "createdAt" date not null,
+      "updatedAt" date not null
+    );
+  `);
+  const ins = authDb.prepare(
+    `INSERT INTO "user" (id, name, email, emailVerified, phoneNumber, phoneNumberVerified, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  // 2 email users (1 older verified, 1 recent unverified) + 2 phone users (1 older, 1 recent)
+  ins.run("u_em_1", "Email Old", "old@example.com", 1, null, 0, hoursAgo(48), hoursAgo(48));
+  ins.run("u_em_2", "Email New", "new@example.com", 0, null, 0, hoursAgo(4), hoursAgo(4));
+  ins.run("u_ph_1", "Phone Old", "phone-1111@phone.leanritual.invalid", 0, "+8613800138001", 0, hoursAgo(36), hoursAgo(36));
+  ins.run("u_ph_2", "Phone New", "phone-2222@phone.leanritual.invalid", 0, "+8613900139002", 0, hoursAgo(2), hoursAgo(2));
+  authDb.close();
+
+  const bojinDb = new DatabaseSync(path.join(snapDir, "bojin.db"));
+  bojinDb.exec(`
+    PRAGMA journal_mode = DELETE;
+    CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
+  `);
+  bojinDb.close();
+  writeSnapshotManifest(snapDir, snapIso, ["bojin.db", "auth.sqlite"]);
+
+  const summary = collectDailySummary({
+    dataDir,
+    nowMs: Date.parse("2026-11-25T10:00:00.000Z"),
+    snapshotDir: snapDir,
+    noJournal: true,
+    noSystemd: true
+  });
+
+  assert.deepEqual(summary.accounts.last24h, {
+    signups: 2,
+    verifiedSignups: 1,
+    emailSignups: 1,
+    phoneSignups: 1
+  });
+  assert.deepEqual(summary.accounts.trialToDate, {
+    signups: 4,
+    verified: 3,
+    unverified: 1,
+    emailSignups: 2,
+    phoneSignups: 2
+  });
+
+  const text = formatSummaryText(summary);
+  assert.match(text, /近24h 新增 2 \(邮箱 1, 手机 1; 已验证 1\)/);
+  assert.match(text, /累计 4 \(邮箱 2, 手机 2; 已验证 3, 未验证 1\)/);
+  const combined = JSON.stringify(summary) + "\n" + text;
+  assert.ok(!combined.includes("13800138001"));
+  assert.ok(!combined.includes("13900139002"));
 });
