@@ -19,3 +19,6 @@ backups/
 *.sqlite-*
 .env.*
 !.env.example
+
+# Landing-page videos for local runs (host: MEDIA_DIR, see docs/OPERATIONS.md)
+/media/

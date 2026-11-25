@@ -290,6 +290,35 @@ If running cleanup in a separate shell where `$DRILL` is not set, pass the liter
 
 Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SIGKILL/OOM kill can leave a file under `DATA_DIR/.access/readers/`, or a `.access/writer` directory. Leases record hostname, kernel boot ID, PID namespace and process start time; backup and app start remove a leftover only when it provably belongs to a dead process on this same kernel (or a previous boot of this host). Leases from another container/host, or in the older format without that evidence, still fail closed. If backup still refuses after a crash: stop EVERY app/admin/backup process using that data volume, check service/container state, then remove the confirmed stale lease files/directory. Never remove a lease while its process might still be writing. Restart the service and repeat the drill.
 
+## Landing-page media
+
+Anonymous visitors to `/` see `public/landing.html`; signed-in users still get the app. The page's intro video is served from stable URLs that never change between voice-over revisions:
+
+| URL | File in `MEDIA_DIR` |
+|---|---|
+| `/media/intro-zh-9x16.mp4` | phone, Chinese |
+| `/media/intro-zh-16x9.mp4` | desktop, Chinese |
+| `/media/intro-en-9x16.mp4` | phone, English |
+| `/media/intro-en-16x9.mp4` | desktop, English |
+| `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the poster bundled in `public/media/` |
+
+The MP4s (about 10–12 MB each) are deliberately **not** in Git or in the release tarball: they would bloat history and every deploy, and the Chinese voice-over is expected to change on its own schedule. The server looks in `MEDIA_DIR` first, then `public/media/`, and serves these files with HTTP Range (206) support, `ETag`/`Last-Modified` revalidation and `Cache-Control: public, max-age=604800`. Only names matching `^[a-z0-9][a-z0-9-]*\.(mp4|jpg|webp)$` are served. A browser downloads a video only after the visitor presses play. If a file is missing the player shows "视频暂时无法播放" and the rest of the page is unaffected.
+
+One-time host setup (as root; adjust the source path to wherever the files were uploaded):
+
+```bash
+install -d -o root -g bojin -m 0750 /var/lib/bojin-media
+install -o root -g bojin -m 0640 lean-ritual-intro-zh.mp4      /var/lib/bojin-media/intro-zh-9x16.mp4
+install -o root -g bojin -m 0640 lean-ritual-intro-zh-16x9.mp4 /var/lib/bojin-media/intro-zh-16x9.mp4
+install -o root -g bojin -m 0640 lean-ritual-intro-en.mp4      /var/lib/bojin-media/intro-en-9x16.mp4
+install -o root -g bojin -m 0640 lean-ritual-intro-en-16x9.mp4 /var/lib/bojin-media/intro-en-16x9.mp4
+grep -q '^MEDIA_DIR=' /etc/bojin/environment || echo 'MEDIA_DIR=/var/lib/bojin-media' >> /etc/bojin/environment
+systemctl restart bojin
+curl -sI -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4 | head -1   # expect HTTP/2 206
+```
+
+To publish a new cut (for example the final Chinese voice-over), copy it over the same file name with `install` as above; no restart or deploy is needed. The file's `ETag` changes immediately, but browsers that already cached the old file may keep it for up to 7 days. Keep the directory outside `DATA_DIR` so the videos stay out of the data snapshots.
+
 ## Monitoring and account operations
 
 - Configure external HTTPS uptime checks for `/api/health`, plus alerts for service restarts, disk capacity, backup age/offsite-copy failure and provider spending. Docker has an internal healthcheck; it does not prove mainland reachability.
