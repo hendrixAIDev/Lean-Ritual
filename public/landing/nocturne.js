@@ -1,6 +1,6 @@
 // Landing page behaviour: zh/en copy swap without reload, the intro video when the
-// server includes it (fetched only on play), scroll reveals and count-ups, the scroll
-// story and the hand-off to the sign-in page. Everything reads fine without it.
+// server includes it (fetched only on play), scroll reveals and count-ups, and the
+// scroll story. Links are left alone, and everything reads fine without this file.
 // boot.js has already chosen the language and set html.js.
 (() => {
   "use strict";
@@ -167,14 +167,16 @@
       for (const e of entries) if (e.isIntersecting) activate(e.target.dataset.step);
     }, { rootMargin: "-48% 0px -48% 0px" });
     for (const el of steps) story.observe(el);
-    // Ambient animation rests while its section is off screen; the header gets a backing once the hero has moved.
+    // With the story observed, wide and tall enough windows may pin one phone instead of showing five (see nocturne.css).
+    root.classList.add("pins");
+    // Ambient animation rests while its section is off screen; the header is see-through only at the very top.
     const ambient = new IntersectionObserver(entries => { for (const e of entries) e.target.classList.toggle("asleep", !e.isIntersecting); });
     for (const el of [hero, document.getElementById("finale")]) ambient.observe(el);
     const mark = document.createElement("div");
     mark.className = "top-mark";
     hero.prepend(mark);
-    new IntersectionObserver(([e]) => top.classList.toggle("scrolled", !e.isIntersecting)).observe(mark);
-  } else { top.classList.add("scrolled"); }
+    new IntersectionObserver(([e]) => top.classList.toggle("clear", e.isIntersecting)).observe(mark);
+  }
 
   // The hero phone leans toward a mouse.
   const rig = document.getElementById("rig");
@@ -184,33 +186,4 @@
     hero.addEventListener("pointermove", e => lean(e.clientX / innerWidth - 0.5, e.clientY / innerHeight - 0.5));
     hero.addEventListener("pointerleave", () => lean(0, 0));
   }
-
-  // Hand-off to sign-in: open login.html's own background colour from the pressed link, then navigate.
-  // The browser keeps this frame until login paints, so dark goes to cream with no white flash.
-  const LOGIN_BG = { light: "#F4F1EA", dark: "#161513" };   // login.html theme-color values
-  const theme = document.querySelector('meta[name="theme-color"]');
-  const pageTheme = theme.content;
-  let veil = null, timer = 0;
-  const reset = () => { clearTimeout(timer); if (veil) veil.remove(); veil = null; theme.content = pageTheme; };
-  const leave = (link, e) => {
-    const box = link.getBoundingClientRect();
-    const x = e.detail ? e.clientX : box.left + box.width / 2, y = e.detail ? e.clientY : box.top + box.height / 2;
-    const to = matchMedia("(prefers-color-scheme: dark)").matches ? LOGIN_BG.dark : LOGIN_BG.light;
-    veil = document.createElement("div");
-    veil.className = "handoff";
-    veil.setAttribute("aria-hidden", "true");
-    const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + 2;
-    for (const [k, v] of [["--to", to], ["--x", x + "px"], ["--y", y + "px"], ["--r", radius + "px"]]) veil.style.setProperty(k, v);
-    theme.content = to;
-    document.body.append(veil);
-    timer = setTimeout(() => { location.assign(link.href); timer = setTimeout(reset, 6000); }, 340);
-  };
-  if (!reduce) for (const link of document.querySelectorAll('a[href^="/login.html"]')) {
-    link.addEventListener("click", e => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      e.preventDefault();
-      if (!veil) leave(link, e);
-    });
-  }
-  addEventListener("pageshow", e => { if (e.persisted) reset(); });
 })();

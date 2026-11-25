@@ -29,8 +29,8 @@ h1,h2,h3{font-family:var(--f-serif);font-weight:700;text-wrap:balance}
 
 /* header */
 .top{position:fixed;inset:0 0 auto;z-index:30;padding-top:env(safe-area-inset-top,0)}
-.top::before{content:"";position:absolute;inset:0;background:var(--bg);border-bottom:1px solid var(--line);opacity:0;transition:opacity .4s}
-.top.scrolled::before{opacity:1}
+.top::before{content:"";position:absolute;inset:0;background:var(--bg);border-bottom:1px solid var(--line);transition:opacity .4s}
+.top.clear::before{opacity:0}   /* solid by default; see-through only while nocturne.js sees the top of the page */
 .top .wrap{position:relative;display:flex;align-items:center;gap:10px;min-height:68px}
 .brand{display:flex;align-items:center;gap:10px;min-height:44px;text-decoration:none;margin-right:auto}
 .brand svg{width:32px;height:32px;border-radius:9px;flex:none;box-shadow:0 0 0 1px var(--line),0 6px 24px rgba(63,191,158,.35)}
@@ -93,6 +93,16 @@ h1,h2,h3{font-family:var(--f-serif);font-weight:700;text-wrap:balance}
 .c1{left:0;top:13%}.c2{right:0;top:44%;transform:translateZ(120px);animation-delay:-2.3s}.c3{left:4%;bottom:9%;transform:translateZ(60px);animation-delay:-4.6s}
 @media (max-width:640px){.card{padding:10px 12px;border-radius:14px;transform:none}.card .v{font-size:26px}.rig{transform-style:flat}.card{z-index:2}.c1 svg{width:112px;height:32px}}
 @keyframes float{50%{translate:0 -9px}}
+/* Wide screens: the cards flank the phone, so they never cover the app's own text. */
+@media (min-width:1000px){
+  .stage{container-type:inline-size}
+  .hero .device{width:min(276px,58cqw)}
+  .card{padding:11px 12px;max-width:25cqw}
+  .card .v{font-size:clamp(24px,6.2cqw,32px);white-space:nowrap}
+  .card .k{letter-spacing:.06em}
+  .c1 svg{width:100%;height:auto}
+  .c1{left:0}.c2{left:75%;right:auto}.c3{left:2%}
+}
 .trend path{fill:none;stroke:var(--emerald-hi);stroke-width:2.2;stroke-linecap:round}
 .trend .raw{stroke:#70837B;stroke-width:1.4;stroke-dasharray:2 4}
 .trend .avg{stroke-dasharray:1;animation:draw 2.2s var(--ease) .6s backwards}
@@ -142,16 +152,23 @@ main{counter-reset:sec;overflow-x:clip}
 .inline-shot img{border-radius:25px;aspect-ratio:540/1000;object-fit:cover;object-position:top;width:100%;height:auto;background:#EEF2F0}
 .pin{display:none}
 @media (min-width:1000px){
-  .live .story{display:grid;grid-template-columns:400px 1fr;gap:88px}
-  .live .pin{display:block;position:sticky;top:max(84px,calc(50vh - 315px));height:630px;perspective:1400px}
-  .pin .device{width:276px;transform:rotateY(11deg) rotateX(2deg)}
+  .step{position:relative;min-height:600px;padding-right:330px}
+  .inline-shot{position:absolute;right:0;top:32px;margin:0}
+}
+/* One pinned phone replaces the five only when the story is observed and the whole phone fits under the header. */
+@media (min-width:1000px) and (min-height:600px){
+  .pins .story{--phone-h:min(590px,100vh - 148px);display:grid;grid-template-columns:400px 1fr;gap:88px}
+  .pins .pin{display:block;position:sticky;top:calc(68px + (100vh - 68px - var(--phone-h))/2);height:var(--phone-h);perspective:1400px}
+  .pin .device{width:calc((var(--phone-h) - 18px)*540/1177 + 18px);transform:rotateY(11deg) rotateX(2deg)}
   .pin .device .screen{position:relative;border-radius:32px;overflow:hidden;aspect-ratio:540/1177;background:#EEF2F0}
   .pin .screen img{position:absolute;inset:0;border-radius:0;opacity:0;transition:opacity .6s var(--ease)}
   .pin .screen img.on{opacity:1}
-  .live .inline-shot{display:none}
-  .live .step{min-height:62vh;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding-left:34px;position:relative}
-  .live .step::before{content:"";position:absolute;left:0;top:26%;bottom:26%;width:3px;border-radius:3px;background:linear-gradient(var(--emerald-hi),var(--emerald));transform:scaleY(0);transition:transform .6s var(--ease)}
-  .live .step.active::before{transform:none}
+  .pins .inline-shot{display:none}
+  /* room below the last step, so the phone is not pushed up under the header while that step is read */
+  .pins .steps{padding-bottom:max(0px,44px + var(--phone-h)/2 - 31vh)}
+  .pins .step{min-height:62vh;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding-left:34px;padding-right:0}
+  .pins .step::before{content:"";position:absolute;left:0;top:26%;bottom:26%;width:3px;border-radius:3px;background:linear-gradient(var(--emerald-hi),var(--emerald));transform:scaleY(0);transition:transform .6s var(--ease)}
+  .pins .step.active::before{transform:none}
 }
 .fine{margin:24px 0 0;color:var(--muted);font-size:14px}
 .sec .center{text-align:center}
@@ -197,10 +214,6 @@ footer .op{margin-left:auto}
 .live .reveal.in{opacity:1;transform:none}
 /* ambient motion stops while its section is off screen */
 .live .asleep,.live .asleep *{animation-play-state:paused!important}
-
-/* leaving for the sign-in page: its own background colour opens from the button (see nocturne.js) */
-.handoff{position:fixed;inset:0;z-index:90;pointer-events:none;background:var(--to);clip-path:circle(var(--r) at var(--x) var(--y));animation:handoff .34s cubic-bezier(.6,0,.3,1) both}
-@keyframes handoff{from{clip-path:circle(0 at var(--x) var(--y))}}
 
 /* boot.js hides the page for one frame while it swaps zh copy for en, so English readers never see a flash of Chinese. */
 html[data-i18n-pending] body{visibility:hidden}

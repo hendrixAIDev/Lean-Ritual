@@ -144,18 +144,57 @@ test('AI copy matches the AI features the app actually ships', () => {
     assert.doesNotMatch(all, banned);
 });
 
-test('Nocturne is dark only, and the hand-off uses the colours login.html really has', () => {
+test('Nocturne is dark only, and leaves every link to the browser', () => {
   assert.deepEqual([...PAGE.matchAll(/<meta name="(color-scheme|theme-color)" content="([^"]+)"([^>]*)>/g)].map(m => [m[1], m[2], m[3]]), [['color-scheme', 'dark', ''], ['theme-color', '#050A08', '']]);
   assert.match(CSS, /--bg:#050A08;/);
   assert.match(CSS, /html\{[^}]*background:var\(--bg\)/);
   assert.match(CSS, /color-scheme:dark/);
   assert.doesNotMatch(CSS, /prefers-color-scheme/);
-  const login = read('public/login.html');
-  for (const scheme of ['light', 'dark']) {
-    const colour = login.match(new RegExp(`<meta name="theme-color" content="(#[0-9A-F]{6})" media="\\(prefers-color-scheme: ${scheme}\\)">`))[1];
-    assert.match(JS, new RegExp(`LOGIN_BG = \\{[^}]*${scheme}: "${colour}"`));
-    assert.ok(login.includes('--bg:' + colour), 'login.html paints its ' + scheme + ' theme colour');
+  // Sign-in must start at once: no script may cancel, delay or replace a navigation.
+  assert.doesNotMatch(JS, /preventDefault|stopPropagation|setTimeout|setInterval|location\.|\.href\s*=\s*["'`]\/|window\.open/);
+  assert.doesNotMatch(JS, /addEventListener\("(pointerdown|mousedown|touchstart|submit|beforeunload|pagehide)"/);
+  assert.equal((JS.match(/addEventListener\("click"/g) || []).length, 2, 'clicks are handled on the play and language buttons only');
+});
+
+/** Copyright strings (name ID 0) embedded in a woff2 file, read with Node's own Brotli. */
+function embeddedCopyright(file) {
+  const buf = fs.readFileSync(file);
+  assert.equal(buf.toString('latin1', 0, 4), 'wOF2');
+  const numTables = buf.readUInt16BE(12), compressed = buf.readUInt32BE(20);
+  const TAGS = ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf', 'loca'];
+  let at = 48;
+  const base128 = () => { let v = 0, byte; do { byte = buf[at++]; v = v * 128 + (byte & 127); } while (byte & 128); return v; };
+  let offset = 0, name = null;
+  for (let i = 0; i < numTables; i++) {
+    const flags = buf[at++], index = flags & 63, version = flags >> 6;
+    let tag = TAGS[index];
+    if (index === 63) { tag = buf.toString('latin1', at, at + 4); at += 4; }
+    const original = base128();
+    const transformed = (tag === 'glyf' || tag === 'loca') ? version !== 3 : version !== 0;
+    const length = transformed ? base128() : original;
+    if (tag === 'name') name = [offset, length];
+    offset += length;
   }
+  const table = require('node:zlib').brotliDecompressSync(buf.subarray(at, at + compressed)).subarray(name[0], name[0] + name[1]);
+  const strings = table.readUInt16BE(4), found = new Set();
+  for (let i = 0; i < table.readUInt16BE(2); i++) {
+    const r = 6 + i * 12;
+    if (table.readUInt16BE(r + 6) !== 0) continue;
+    const raw = Buffer.from(table.subarray(strings + table.readUInt16BE(r + 10), strings + table.readUInt16BE(r + 10) + table.readUInt16BE(r + 8)));
+    found.add(table.readUInt16BE(r) === 1 ? raw.toString('latin1') : raw.swap16().toString('utf16le'));
+  }
+  return [...found];
+}
+
+test('each shipped font travels with the OFL and the copyright notice embedded in it', () => {
+  const dir = path.join(ROOT, 'public/landing/fonts');
+  for (const [font, licence] of [['serif-display.woff2', 'OFL-NotoSerifSC.txt'], ['num-medium.woff2', 'OFL-BarlowCondensed.txt']]) {
+    const text = fs.readFileSync(path.join(dir, licence), 'utf8'), notices = embeddedCopyright(path.join(dir, font));
+    assert.ok(notices.length >= 1, font + ' embeds a copyright');
+    for (const notice of notices) assert.ok(text.includes(notice), `${licence} records "${notice}"`);
+    assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
+  }
+  assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.woff2')).sort(), ['num-medium.woff2', 'serif-display.woff2']);
 });
 
 test('public/landing ships only files the page uses, under names Scoreboard never cached', () => {
@@ -171,7 +210,7 @@ test('public/landing ships only files the page uses, under names Scoreboard neve
 
 test('content never depends on script: CSS hides things only under .live, which nocturne.js sets last', () => {
   for (const [, selector] of CSS.replace(/@keyframes[^{]+\{(?:[^{}]*\{[^}]*\})*\s*\}/g, '').matchAll(/([^{}]+)\{[^}]*opacity:0/g))
-    assert.match(selector, /\.live|\.top::before|\.pin /, selector.trim());
+    assert.match(selector, /\.live|\.top\.clear::before|\.pin /, selector.trim());
   assert.ok(JS.indexOf('classList.add("live")') > JS.indexOf('apply(lang);'));
   assert.equal((JS.match(/addEventListener\("(scroll|wheel|touchmove|keydown)"/g) || []).length, 0, 'scrolling and keys are never taken over');
 });
