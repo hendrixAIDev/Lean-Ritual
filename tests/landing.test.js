@@ -18,9 +18,9 @@ const PAGE = read('public/landing.html');          // as shipped: video hidden
 const FILM = read('lib/landing-film.html');
 const HTML = PAGE.replace(MARKER, () => FILM);      // with the video section
 
-const JS = read('public/landing/landing.js');
+const JS = read('public/landing/nocturne.js');
 const BOOT = read('public/landing/boot.js');
-const CSS = read('public/landing/landing.css');
+const CSS = read('public/landing/nocturne.css');
 
 function loadI18N() {
   const start = JS.indexOf('const I18N = ');
@@ -73,7 +73,7 @@ test('zh and en copy have the same keys and cover every data-i hook', () => {
     assert.ok(key in zh, 'zh has ' + key);
     assert.ok(key in en, 'en has ' + key);
   }
-  for (const [key, value] of Object.entries(en)) if (key !== 'brand2') assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
+  for (const [key, value] of Object.entries(en)) assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
 });
 
 test('the video section is absent by default and inserted only when the videos are available', async () => {
@@ -144,6 +144,38 @@ test('AI copy matches the AI features the app actually ships', () => {
     assert.doesNotMatch(all, banned);
 });
 
+test('Nocturne is dark only, and the hand-off uses the colours login.html really has', () => {
+  assert.deepEqual([...PAGE.matchAll(/<meta name="(color-scheme|theme-color)" content="([^"]+)"([^>]*)>/g)].map(m => [m[1], m[2], m[3]]), [['color-scheme', 'dark', ''], ['theme-color', '#050A08', '']]);
+  assert.match(CSS, /--bg:#050A08;/);
+  assert.match(CSS, /html\{[^}]*background:var\(--bg\)/);
+  assert.match(CSS, /color-scheme:dark/);
+  assert.doesNotMatch(CSS, /prefers-color-scheme/);
+  const login = read('public/login.html');
+  for (const scheme of ['light', 'dark']) {
+    const colour = login.match(new RegExp(`<meta name="theme-color" content="(#[0-9A-F]{6})" media="\\(prefers-color-scheme: ${scheme}\\)">`))[1];
+    assert.match(JS, new RegExp(`LOGIN_BG = \\{[^}]*${scheme}: "${colour}"`));
+    assert.ok(login.includes('--bg:' + colour), 'login.html paints its ' + scheme + ' theme colour');
+  }
+});
+
+test('public/landing ships only files the page uses, under names Scoreboard never cached', () => {
+  const used = new Set(['fonts/serif-display.chars.txt', 'fonts/OFL-BarlowCondensed.txt', 'fonts/OFL-NotoSerifSC.txt']);
+  for (const [, file] of (HTML + CSS).matchAll(/\/landing\/([\w./-]+)/g)) used.add(file);
+  for (const [, shot] of HTML.matchAll(/data-shot="(\w+)"/g)) for (const lang of ['zh', 'en']) used.add(`img/${lang}-${shot}.webp`);
+  const shipped = fs.readdirSync(path.join(ROOT, 'public/landing'), { recursive: true, withFileTypes: true }).filter(e => e.isFile())
+    .map(e => path.relative(path.join(ROOT, 'public/landing'), path.join(e.parentPath, e.name)));
+  assert.deepEqual(shipped.sort(), [...used].sort());
+  // Those URLs were served with a day-long cache, so reusing them would mix old code with the new page.
+  for (const old of ['landing.css', 'landing.js', 'fonts/display-cjk.woff2', 'fonts/cond-semibold.woff2', 'fonts/cond-black-italic.woff2']) assert.ok(!shipped.includes(old), old);
+});
+
+test('content never depends on script: CSS hides things only under .live, which nocturne.js sets last', () => {
+  for (const [, selector] of CSS.replace(/@keyframes[^{]+\{(?:[^{}]*\{[^}]*\})*\s*\}/g, '').matchAll(/([^{}]+)\{[^}]*opacity:0/g))
+    assert.match(selector, /\.live|\.top::before|\.pin /, selector.trim());
+  assert.ok(JS.indexOf('classList.add("live")') > JS.indexOf('apply(lang);'));
+  assert.equal((JS.match(/addEventListener\("(scroll|wheel|touchmove|keydown)"/g) || []).length, 0, 'scrolling and keys are never taken over');
+});
+
 test('the no-JS fallback copy in landing.html is the zh copy', () => {
   const { zh } = loadI18N();
   for (const [, key, text] of HTML.matchAll(/data-i="([^"]+)"[^>]*>([^<]*)</g)) assert.equal(text, zh[key], key);
@@ -182,9 +214,9 @@ test('language choice follows login.html: ?lang, then saved bj-lang, then browse
 });
 
 test('the display font subset covers every Chinese character on the page', () => {
-  const chars = new Set([...read('public/landing/fonts/display-cjk.chars.txt')]);
+  const chars = new Set([...read('public/landing/fonts/serif-display.chars.txt')]);
   const missing = [...new Set([...HTML + JS].filter(c => /[　-〿㐀-鿿＀-￯]/.test(c) && !chars.has(c)))];
-  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/display-cjk.woff2 for the new copy');
+  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/serif-display.woff2 for the new copy');
 });
 
 test('the video is attached only on play and points at the stable /media paths', () => {
@@ -270,12 +302,14 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
     assert.equal(r.headers.get('location'), '/login.html', spelling);
   }
   for (const route of ['/login.html', '/login.html?invite=abc123', '/privacy.html', '/terms.html', '/landing.html']) assert.equal((await get(route)).status, 200, route);
-  for (const [route, type] of [['/landing/landing.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
-    ['/landing/landing.css', 'text/css; charset=utf-8'], ['/landing/fonts/display-cjk.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
+  for (const [route, type] of [['/landing/nocturne.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
+    ['/landing/nocturne.css', 'text/css; charset=utf-8'], ['/landing/fonts/serif-display.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
     const r = await get(route);
     assert.equal(r.status, 200, route);
     assert.equal(r.headers.get('content-type'), type);
     assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
+    // Page code is revalidated with the page; fonts and images keep their day-long cache.
+    assert.equal(r.headers.get('cache-control'), /\.(js|css)$/.test(route) ? 'no-cache' : 'public, max-age=86400', route);
   }
 
   // Signed-in users go straight to the app, as before.
