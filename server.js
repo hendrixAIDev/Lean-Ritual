@@ -144,14 +144,19 @@ function serveStatic(req, res, user){
   try { p = decodeURIComponent(new URL(req.url, "http://x").pathname); } catch { throw httpErr(400, "bad_path"); }
   // "/" is the landing page for visitors and the app for signed-in users, so it varies by cookie.
   if (p === "/") { res.setHeader("Vary", "Cookie"); p = user ? "/index.html" : "/landing.html"; }
-  if (p === "/index.html" && !user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
   const f = path.join(CFG.publicDir, path.normalize(p).replace(/^([/\\])+/, ""));
   if (!f.startsWith(CFG.publicDir + path.sep)) { res.writeHead(404); return res.end(); }
+  // Gate the file that will actually be served, so //index.html or /x/..%2findex.html can't skip it.
+  const rel = "/" + path.relative(CFG.publicDir, f).split(path.sep).join("/");
+  if (rel.toLowerCase() === "/index.html") {
+    res.setHeader("Vary", "Cookie");
+    if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
+  }
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
     streamFile(f, res, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
-      "Cache-Control": (ext === ".html" || p === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
+      "Cache-Control": (ext === ".html" || rel === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
   });
 }
 

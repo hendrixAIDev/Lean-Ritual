@@ -20,6 +20,18 @@ function committedDoc(response, matchesPath) {
   return request.postDataJSON().changes.some(change => change.after && matchesPath(change.path));
 }
 
+// A revoked session reloading "/" is an anonymous visitor: it gets the landing page
+// (never the app shell) and signs in again through the page's own link.
+async function assertRevokedSessionLands(page, base) {
+  await page.reload();
+  await page.locator('#hero-h').waitFor();
+  assert.equal(page.url(), base + '/');
+  assert.equal(await page.locator('#tabs').count(), 0, 'the app shell must not render after revocation');
+  assert.equal((await page.request.get(base + '/api/me')).status(), 401);
+  await page.locator('header a[href="/login.html"]').click();
+  await page.waitForURL('**/login.html');
+}
+
 async function waitForSavedMeal(page, text, opts) {
   await page.locator('.meal').getByText(text, { exact: true }).waitFor(opts);
   await page.waitForFunction(() => (
@@ -288,8 +300,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('[data-act="pw-save"]').click();
     await page.getByText('密码已更新，其他设备需要重新登录', { exact: true }).waitFor();
 
-    await page2.reload();
-    await page2.waitForURL('**/login.html');
+    await assertRevokedSessionLands(page2, srv.base);
 
     await page2.locator('#e').fill(email);
     await page2.locator('#p').fill(pw2);
@@ -311,8 +322,7 @@ async function runFullStandaloneJourney(browser, label, viewport, jpegFixture) {
     await page.locator('#go').click();
     await page.getByText('密码已更新，请重新登录。', { exact: true }).waitFor();
 
-    await page2.reload();
-    await page2.waitForURL('**/login.html');
+    await assertRevokedSessionLands(page2, srv.base);
     await ctx2.close();
 
     await page.locator('#e').fill(email);

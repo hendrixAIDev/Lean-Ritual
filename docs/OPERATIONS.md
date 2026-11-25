@@ -302,7 +302,7 @@ Anonymous visitors to `/` see `public/landing.html`; signed-in users still get t
 | `/media/intro-en-16x9.mp4` | desktop, English |
 | `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the poster bundled in `public/media/` |
 
-The MP4s (about 10–12 MB each) are deliberately **not** in Git or in the release tarball: they would bloat history and every deploy, and the Chinese voice-over is expected to change on its own schedule. The server looks in `MEDIA_DIR` first, then `public/media/`, and serves these files with HTTP Range (206) support, `ETag`/`Last-Modified` revalidation and `Cache-Control: public, max-age=604800`. Only names matching `^[a-z0-9][a-z0-9-]*\.(mp4|jpg|webp)$` are served. A browser downloads a video only after the visitor presses play. If a file is missing the player shows "视频暂时无法播放" and the rest of the page is unaffected.
+The MP4s (about 10–12 MB each) are deliberately **not** in Git or in the release tarball: they would bloat history and every deploy, and the Chinese voice-over is expected to change on its own schedule. The server looks in `MEDIA_DIR` first, then `public/media/`, and serves these files with HTTP Range (206) support, `ETag`/`Last-Modified` revalidation and `Cache-Control: public, max-age=604800`. Only the eight names above (four `.mp4`, four `.jpg`) are served; any other file in the folder stays private, and symlinks are refused with 404, so install real files. A browser downloads a video only after the visitor presses play. If a file is missing the player shows "视频暂时无法播放" and the rest of the page is unaffected.
 
 One-time host setup (as root; adjust the source path to wherever the files were uploaded):
 
@@ -314,10 +314,11 @@ install -o root -g bojin -m 0640 lean-ritual-intro-en.mp4      /var/lib/bojin-me
 install -o root -g bojin -m 0640 lean-ritual-intro-en-16x9.mp4 /var/lib/bojin-media/intro-en-16x9.mp4
 grep -q '^MEDIA_DIR=' /etc/bojin/environment || echo 'MEDIA_DIR=/var/lib/bojin-media' >> /etc/bojin/environment
 systemctl restart bojin
-curl -sI -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4 | head -1   # expect HTTP/2 206
+# Must be a GET: Range is ignored on HEAD, so `curl -I` would report 200.
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4   # expect 206
 ```
 
-To publish a new cut (for example the final Chinese voice-over), copy it over the same file name with `install` as above; no restart or deploy is needed. The file's `ETag` changes immediately, but browsers that already cached the old file may keep it for up to 7 days. Keep the directory outside `DATA_DIR` so the videos stay out of the data snapshots.
+To publish a new cut (for example the final Chinese voice-over), replace the same file name with `install` as above (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place); no restart or deploy is needed. The file's `ETag` changes immediately, but browsers that already cached the old file may keep it for up to 7 days. Keep the directory outside `DATA_DIR` so the videos stay out of the data snapshots.
 
 ## Monitoring and account operations
 

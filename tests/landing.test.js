@@ -71,17 +71,34 @@ test('zh and en copy have the same keys and cover every data-i hook', () => {
   for (const [key, value] of Object.entries(en)) if (key !== 'brand2') assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
 });
 
-test('AI wording stays honest: only meal photos and the coach use AI, never the plan', () => {
+test('AI copy matches the AI features the app actually ships', () => {
   const { zh, en } = loadI18N();
+  // Every model call in the app, by enclosing function. A new one must be described on the page too.
+  const app = read('app/index.html');
+  const callers = [...app.matchAll(/S\.sample\.json\(/g)].map(m => [...app.slice(0, m.index).matchAll(/\nasync function (\w+)\(/g)].at(-1)[1]);
+  assert.deepEqual(callers.sort(), ['aiSuggest', 'estimateMeal', 'runAI']);
+  assert.equal((HTML.match(/data-i="ai\.\dt"/g) || []).length, callers.length, 'one card per AI feature');
+  assert.match(zh['ai.1d'], /照片或文字.*热量和蛋白质.*可以改/);
+  assert.match(en['ai.1d'], /photo or a few words.*edit/);
+  assert.match(zh['ai.2d'], /最多推荐 3 个/);
+  assert.match(en['ai.2d'], /up to 3/);
+  assert.match(zh['ai.3d'], /你提出时.*最近 14 天.*可采纳，也可撤销/);
+  assert.match(en['ai.3t'] + ' ' + en['ai.3d'], /last 14 days.*When you ask.*apply or undo/);
+  assert.match(zh['ai.note'], /公式计算，不用 AI.*不构成医疗建议/);
+  assert.match(en['ai.note'], /formulas, not AI.*not medical advice/);
+  // The app tells users photo estimates take about a minute; the page must not promise seconds.
+  assert.match(app, /有照片时一般 1 分钟左右/);
+  assert.match(zh['f3.d'], /1 分钟左右/);
+  assert.match(en['f3.d'], /about a minute/);
   const all = [...Object.values(zh), ...Object.values(en), HTML].join('\n');
-  for (const banned of [/AI\s*为你定制/, /AI\s*定制/, /AI\s*生成.*计划/, /AI[- ]?(builds|creates|generates|designs)/i, /AI[- ]customi[sz]ed/i, /AI[- ]made plan/i])
+  for (const banned of [/AI\s*为你定制/, /AI\s*定制/, /AI\s*生成.*计划/, /AI[- ]?(builds|creates|generates|designs)/i, /AI[- ]customi[sz]ed/i, /AI[- ]made plan/i,
+    /持续调整|不断调整|自动调整/, /tuned by AI|keeps adjusting|automatically adjust/i, /只用在两个|两件事/, /exactly two|two jobs/i, /几秒/, /in seconds/i, /coach checks in/i, /随时撤销|一键撤销/, /undo anytime/i])
     assert.doesNotMatch(all, banned);
-  assert.equal(zh['ai.t'], 'AI 只用在两个地方');
-  assert.equal(en['ai.t'], 'AI does exactly two jobs');
-  assert.match(zh['ai.note'], /不构成医疗建议/);
-  assert.match(en['ai.note'], /not medical advice/);
-  assert.equal(zh['setup.t2'], '为你定制，AI 持续调整');
-  assert.equal(en['setup.t2'], 'Made for you, tuned by AI');
+});
+
+test('the no-JS fallback copy in landing.html is the zh copy', () => {
+  const { zh } = loadI18N();
+  for (const [, key, text] of HTML.matchAll(/data-i="([^"]+)"[^>]*>([^<]*)</g)) assert.equal(text, zh[key], key);
 });
 
 test('language choice follows login.html: ?lang, then saved bj-lang, then browser language, then zh', () => {
@@ -136,7 +153,9 @@ test('parseRange handles the single-range forms browsers send', () => {
   assert.deepEqual(parseRange('bytes=-100', 1000), { start: 900, end: 999 });
   assert.deepEqual(parseRange('bytes=0-5000', 1000), { start: 0, end: 999 });
   assert.equal(parseRange(undefined, 1000), null);
+  assert.deepEqual(parseRange('BYTES=0-9', 1000), { start: 0, end: 9 });
   assert.equal(parseRange('bytes=0-1,5-6', 1000), null);
+  assert.equal(parseRange('bytes=x', 1000), 'invalid');
   assert.equal(parseRange('items=0-1', 1000), null);
   assert.equal(parseRange('bytes=1000-', 1000), 'invalid');
   assert.equal(parseRange('bytes=5-1', 1000), 'invalid');
@@ -151,6 +170,8 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   const video = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 251));
   fs.writeFileSync(path.join(mediaDir, 'intro-zh-9x16.mp4'), video);
   fs.writeFileSync(path.join(mediaDir, 'intro-en-16x9.jpg'), Buffer.from('host poster'));
+  fs.writeFileSync(path.join(mediaDir, 'private.mp4'), 'must stay private');
+  fs.symlinkSync(path.join(ROOT, 'server.js'), path.join(mediaDir, 'intro-en-16x9.mp4'));
   const base = 'http://127.0.0.1:18095';
   const env = { ...process.env, DATA_DIR: path.join(dir, 'data'), MEDIA_DIR: mediaDir, PORT: '18095', HOST: '127.0.0.1', AUTH_BASE_URL: base,
     AUTH_SECRET: 'disposable-test-secret-at-least-32-characters', COOKIE_SECURE: '0', TRUST_PROXY: '0', MAIL_MODE: 'file', OPENROUTER_API_KEY: '', GEMINI_API_KEY: '' };
@@ -187,6 +208,12 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.match(csp, /connect-src 'self'/);
   assert.doesNotMatch(csp.split(';').find(d => d.includes('script-src')), /unsafe-inline|'unsafe-eval'/);
   assert.equal((await get('/index.html')).headers.get('location'), '/login.html');
+  // The gate follows the file that would be served, however the path is spelled.
+  for (const spelling of ['/x/..%2findex.html', '/%2findex.html', '/.%2findex.html', '/%69ndex.html', '/x%2f..%2f%2findex.html']) {
+    const r = await get(spelling);
+    assert.equal(r.status, 302, spelling);
+    assert.equal(r.headers.get('location'), '/login.html', spelling);
+  }
   for (const route of ['/login.html', '/login.html?invite=abc123', '/privacy.html', '/terms.html', '/landing.html']) assert.equal((await get(route)).status, 200, route);
   for (const [route, type] of [['/landing/landing.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
     ['/landing/landing.css', 'text/css; charset=utf-8'], ['/landing/fonts/display-cjk.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
@@ -213,6 +240,14 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(appHtml, read('public/index.html'));
   assert.notEqual(appHtml, HTML);
   assert.equal((await get('/index.html', { cookie })).status, 200);
+  assert.equal((await get('/x/..%2findex.html', { cookie })).status, 200, 'signed-in users are not gated');
+
+  // A revoked session is a visitor again: landing page at "/", no app shell.
+  assert.equal((await request('/api/auth/sign-out', {}, cookie)).status, 200);
+  const revoked = await get('/', { cookie });
+  assert.equal(revoked.status, 200);
+  assert.equal(await revoked.text(), HTML);
+  assert.equal((await get('/index.html', { cookie })).headers.get('location'), '/login.html');
 
   // Media: host MEDIA_DIR first, bundled posters as the fallback, byte ranges, validators, caching.
   const full = await get('/media/intro-zh-9x16.mp4');
@@ -247,6 +282,6 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(bundled.status, 200);
   assert.equal(bundled.headers.get('content-type'), 'image/jpeg');
   assert.ok(Buffer.from(await bundled.arrayBuffer()).equals(fs.readFileSync(path.join(ROOT, 'public/media/intro-zh-16x9.jpg'))));
-  for (const route of ['/media/intro-en-9x16.mp4', '/media/..%2Fserver.js', '/media/%2e%2e/server.js', '/media/Intro.mp4', '/media/a/b.mp4', '/media/x.html'])
+  for (const route of ['/media/private.mp4', '/media/intro-en-16x9.mp4', '/media/intro-zh-9x16.webp', '/media/intro-en-9x16.mp4', '/media/..%2Fserver.js', '/media/%2e%2e/server.js', '/media/Intro.mp4', '/media/a/b.mp4', '/media/x.html'])
     assert.equal((await get(route)).status, 404, route);
 });
