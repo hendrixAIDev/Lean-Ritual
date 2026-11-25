@@ -1,4 +1,4 @@
-# Lean Ritual Product Intro Video Generator (v11)
+# Lean Ritual Product Intro Video Generator (v12)
 
 Reproducible generator for the ~1:30 user walkthrough videos of **Lean Ritual (薄肌日课)** in Chinese (`zh`) and English (`en`), outputting both **1080×1920 (9:16 vertical)** and **1920×1080 (16:9 widescreen)** 30fps H.264 + AAC MP4s with neural voiceover, rock-solid fixed-frame mobile recordings, 3D perspective swing transitions with parallax & light sweeps, kinetic per-word captions & stat count-ups, upbeat 116 BPM voice-ducked music, and beat-synced sound effects.
 

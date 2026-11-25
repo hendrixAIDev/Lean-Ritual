@@ -80,10 +80,10 @@ const STORYBOARDS = {
             iflytekSpoken: '先花一分钟，说说你的目标和身体状况！'
           },
           {
-            caption: '为你定制，AI 持续调整',
+            caption: '为你定制，AI 帮你调整',
             callout: '专属计划 · AI 教练',
-            narration: '计划按你的目标和身体定制，AI 教练还会随你进步不断调整。',
-            iflytekSpoken: '计划按你的目标和身体量身定制，AI 教练还会陪你一起进步、不断调整！'
+            narration: '计划按你的目标和身体定制，想调整时，AI 教练给你建议。',
+            iflytekSpoken: '计划按你的目标和身体量身定制，想调整时，AI 教练给你建议！'
           }
         ]
       },
@@ -95,9 +95,9 @@ const STORYBOARDS = {
         minDuration: 8.0,
         beats: [
           {
-            caption: '每天 10 秒打卡',
-            narration: '每天十秒，记下体重、步数和睡眠。',
-            iflytekSpoken: '每天只要十秒，轻松记下体重、步数[=shu4]和睡眠！'
+            caption: '每天快速打卡',
+            narration: '每天打个卡，记下体重、步数和睡眠。',
+            iflytekSpoken: '每天打个卡，轻松记下体重、步数[=shu4]和睡眠！'
           },
           {
             caption: '7 天平均，看清趋势',
@@ -141,10 +141,10 @@ const STORYBOARDS = {
             iflytekSpoken: '吃饭不用称重，拍张照就搞定！'
           },
           {
-            caption: '几秒出结果',
+            caption: '热量、蛋白质，自动算好',
             callout: '540 kcal · 蛋白质 46.5 g',
-            narration: '几秒算出热量和蛋白质，今天还差多少一看就知道。',
-            iflytekSpoken: '几秒算出热量和蛋白质，今天还差多少一眼就知道！'
+            narration: '自动算出热量和蛋白质，今天还差多少一看就知道。',
+            iflytekSpoken: '自动算出热量和蛋白质，今天还差多少一眼就知道！'
           }
         ]
       },
@@ -162,9 +162,9 @@ const STORYBOARDS = {
             iflytekSpoken: '进入平台期了？别担心！写一句感受，AI 教练看完两周数据给你支招！'
           },
           {
-            caption: '一键采纳，随时撤销',
-            narration: '喜欢就采纳，不合适随时撤销。',
-            iflytekSpoken: '喜欢就一键采纳，不合适随时撤销！'
+            caption: '一键采纳，也能撤销',
+            narration: '喜欢就采纳，不合适也能撤销。',
+            iflytekSpoken: '喜欢就一键采纳，不合适也能撤销！'
           }
         ]
       },
@@ -311,7 +311,7 @@ const STORYBOARDS = {
           {
             caption: 'Made for you, tuned by AI',
             callout: 'Your plan · AI coach',
-            narration: 'Your plan fits your goal and body, and your AI coach keeps adjusting it as you progress.'
+            narration: 'Your plan fits your goal and body. Want a change? Ask your AI coach.'
           }
         ]
       },
@@ -323,8 +323,8 @@ const STORYBOARDS = {
         minDuration: 8.0,
         beats: [
           {
-            caption: '10-second daily check-in',
-            narration: 'Ten seconds a day: weight, steps, sleep.'
+            caption: 'Quick daily check-in',
+            narration: 'Check in daily: weight, steps, sleep.'
           },
           {
             caption: '7-day average shows the trend',
@@ -338,7 +338,7 @@ const STORYBOARDS = {
         label: 'Workouts & Progress',
         chapter: '03 · Workouts & Progress',
         transition: 'perspective_swing',
-        minDuration: 11.5,
+        minDuration: 9.5,
         beats: [
           {
             caption: 'Know what weight to lift',
@@ -357,16 +357,16 @@ const STORYBOARDS = {
         label: 'Meals · Photo Estimate (AI)',
         chapter: '04 · Meal Photo AI',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 8.5,
         beats: [
           {
             caption: 'Snap a photo, AI counts it',
             narration: 'No scales. Just snap your meal.'
           },
           {
-            caption: 'Results in seconds',
+            caption: 'Calories and protein, done for you',
             callout: '540 kcal · 46.5 g protein',
-            narration: "Calories and protein in seconds, so you know what's left today."
+            narration: "It works out calories and protein, so you know what's left today."
           }
         ]
       },
@@ -375,16 +375,16 @@ const STORYBOARDS = {
         label: 'Feedback · AI Coach',
         chapter: '05 · AI Coach',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 9.5,
         beats: [
           {
-            caption: 'Your AI coach checks in',
+            caption: 'Ask your AI coach',
             callout: '2-week review · Clear tweaks',
             narration: 'Stuck? Write one line, and your AI coach reviews two weeks and suggests fixes.'
           },
           {
-            caption: 'Apply in a tap. Undo anytime.',
-            narration: 'Like it? Apply it. Changed your mind? Undo.'
+            caption: 'Apply in a tap. Undo if you need to.',
+            narration: 'Like it? Apply it. Changed your mind? Undo it.'
           }
         ]
       },
@@ -476,8 +476,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v11（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v11 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v12（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v12 (English)`
   );
   lines.push('');
   lines.push(
