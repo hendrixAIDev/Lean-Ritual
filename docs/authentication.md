@@ -6,13 +6,21 @@ The server calls `await createAuth({ dataDir, baseURL, secret, cookieSecure, sen
 
 Set `AUTH_BASE_URL` to the canonical HTTPS origin and a persistent random `AUTH_SECRET` of at least 32 characters. Public origins require secure cookies. Set `MAIL_MODE=smtp`, `SMTP_HOST`, `SMTP_PORT` (587 by default), `SMTP_USER`, `SMTP_PASS`, and `MAIL_FROM` (optional single-mailbox `MAIL_REPLY_TO` defaults to `hendrix.ai.dev@gmail.com`; malformed values log a startup warning and fall back to the default). `createMailer(env,{dataDir,baseURL})` in `lib/mail.js` provides the sender, validating each action URL against the configured `AUTH_BASE_URL` origin before rendering `multipart/alternative` (plain text + HTML) with a domain `Message-ID`, metadata-only delivery logs (type, recipient domain, locally generated messageId, and SMTP response code; never addresses, tokens, or URLs), and sanitized errors on failure. SMTP requires TLS and certificate verification. Local development can explicitly set `MAIL_MODE=file` with a localhost origin; messages go to private files under `DATA_DIR/mail`. File delivery is rejected for public origins.
 
-Issue a seven-day, single-use, email-bound invitation:
+Issue a seven-day, single-use, email- or phone-bound invitation:
 
 ```sh
 node scripts/auth-admin.js invite person@example.com
+node scripts/auth-admin.js invite --phone +8613800138000
+node scripts/auth-admin.js invite --phone 13800138000
 ```
 
-The command prints a secret token; deliver it privately to that email. The login page accepts `?invite=TOKEN&email=EMAIL`, or recipients can paste the token. It is not a permanent shared signup code. Revoke a token by passing it on stdin to `node scripts/auth-admin.js revoke`. Expired or revoked invitations can be replaced with a new invitation.
+Phone numbers are normalized to E.164 (11-digit mainland China mobile numbers default to `+86`). The command prints a secret token (and full invite URL when `AUTH_BASE_URL` is set); deliver it privately to the invited recipient. The login page accepts `?invite=TOKEN&email=EMAIL` or `?invite=TOKEN&phone=PHONE`, or recipients can paste the token. It is not a permanent shared signup code. Revoke a token by passing it on stdin to `node scripts/auth-admin.js revoke`. Expired or revoked invitations can be replaced with a new invitation.
+
+Phone accounts do not use email verification or self-service password reset (SMS verification is planned for later). To issue a single-use password reset link (valid for 24 hours; never sets or prints a password) for a phone account:
+
+```sh
+node scripts/auth-admin.js reset-password --phone +8613800138000
+```
 
 To retain an existing user's app data, the operator must explicitly associate the verified email with the existing username:
 

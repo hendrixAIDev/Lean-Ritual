@@ -222,7 +222,7 @@ async function handle(req, res){
       return;
     }
     if (p === "/api/me" && m === "GET") return send(res, 200, {
-      id: user.id, username: user.username, email: user.email, created: user.created, mustChange: !!user.mustChange,
+      id: user.id, username: user.username, email: user.email, phoneNumber: user.phoneNumber || null, created: user.created, mustChange: !!user.mustChange,
       ai: aiProxy.enabled, aiModel: aiProxy.model,
       consentVersion: user.consentVersion || null, consentedAt: user.consentedAt || null,
       requiredConsentVersion: CONSENT_VERSION, consentRequired

@@ -829,7 +829,7 @@ const I18N = {
     "account.title":"账号", "account.changePw":"改密码", "account.logout":"退出登录",
     "account.mustChange":"这个账号还在用初始密码，请先改一个只有你知道的密码。",
     "account.oldPw":"原密码", "account.newPw":"新密码（至少 8 位）", "account.newPw2":"再输一次新密码",
-    "account.username":"用户名", "account.joined":"注册时间",
+    "account.username":"用户名", "account.phone":"手机号", "account.joined":"注册时间",
     "account.privateHint":"每个人的记录只存在自己账号下，别人看不到。",
     "account.export":"导出我的记录和照片", "account.terms":"使用条款", "account.privacy":"隐私说明",
     "consent.title":"继续使用前请确认同意",
@@ -1237,7 +1237,7 @@ const I18N = {
     "account.title":"Account", "account.changePw":"Change password", "account.logout":"Sign out",
     "account.mustChange":"This account still uses a temporary password — please set a new password.",
     "account.oldPw":"Current password", "account.newPw":"New password (8+ chars)", "account.newPw2":"Confirm new password",
-    "account.username":"Username", "account.joined":"Joined",
+    "account.username":"Username", "account.phone":"Phone", "account.joined":"Joined",
     "account.privateHint":"Your logs are private to your account.",
     "account.export":"Export my data & photos", "account.terms":"Terms of Use", "account.privacy":"Privacy Notice",
     "consent.title":"Please review and accept to continue",
@@ -3764,7 +3764,7 @@ function viewHostedAccount(){
       <label>${esc(t("account.newPw2"))}<input id="pw-new2" type="password" autocomplete="new-password"></label>
       ${pw.msg ? `<p class="small" role="alert" style="color:var(--bad)">${esc(pw.msg)}</p>` : ""}
       <div class="row"><button class="btn primary" data-act="pw-save" ${pw.busy?"disabled":""}>${esc(pw.busy ? t("food.saving") : t("common.save"))}</button><button class="btn" data-act="pw-cancel">${esc(t("common.cancel"))}</button></div></div>`
-    : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span><span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
+    : `<div class="grid2 small"><span class="muted">${esc(t("account.username"))}</span><span>${esc(u.username || "")}</span>${u.phoneNumber ? `<span class="muted">${esc(t("account.phone"))}</span><span>${esc(u.phoneNumber)}</span>` : ""}<span class="muted">${esc(t("account.joined"))}</span><span>${esc((u.created || "").slice(0, 10))}</span></div>`}
     <p class="small muted">${esc(t("account.privateHint"))}</p>
     <div class="row"><a class="btn" href="/api/account/export" download>${esc(t("account.export"))}</a><a class="btn" href="/terms.html">${esc(t("account.terms"))}</a><a class="btn" href="/privacy.html">${esc(t("account.privacy"))}</a></div>
     <details><summary>${esc(t("account.deleteSummary"))}</summary><p class="tip warn">${esc(t("account.deleteWarn"))}</p>
