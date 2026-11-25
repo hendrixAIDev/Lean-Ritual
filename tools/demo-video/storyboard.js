@@ -11,6 +11,15 @@ const STORYBOARDS = {
       speaker: 'zf_001',
       sid: 3,
       speed: 1.08,
+      iflytek: {
+        vcn: 'x6_lingxiaoxuan_pro',
+        speed: 64,
+        pitch: 61,
+        volume: 80,
+        oralLevel: 'high',
+        sparkAssist: 1,
+        remain: 0
+      },
       gemini: {
         modelId: process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts',
         voiceName: 'Leda',
@@ -36,7 +45,8 @@ const STORYBOARDS = {
       pills: ['1 分钟定制', '拍照估热量', 'AI 教练'],
       duration: 4.0,
       narration: '薄肌日课：练得更瘦、更强、更好，需要的都在这里。',
-      spoken: '薄机日课，练得更瘦更强更好，需要的都在这里。'
+      spoken: '薄机日课，练得更瘦更强更好，需要的都在这里。',
+      iflytekSpoken: '来！薄肌日课！练得更瘦、更强、更好，需要的全都在这里！'
     },
     outroCard: {
       eyebrow: 'LEAN RITUAL · 薄肌日课',
@@ -46,7 +56,8 @@ const STORYBOARDS = {
       footnote: '浏览器打开即用 · 可添加到主屏幕',
       duration: 4.0,
       narration: '薄肌日课，邀请制内测中。',
-      spoken: '薄机日课，邀请制内测中。'
+      spoken: '薄机日课，邀请制内测中。',
+      iflytekSpoken: '薄肌日课，邀请制内测中，一起加油！'
     },
     poster: {
       eyebrow: '薄肌日课 · LEAN RITUAL',
@@ -65,12 +76,14 @@ const STORYBOARDS = {
           {
             caption: '1 分钟，填好目标和身体状况',
             callout: '1 分钟 · 伤病也考虑',
-            narration: '先花一分钟，说说你的目标和身体状况。'
+            narration: '先花一分钟，说说你的目标和身体状况。',
+            iflytekSpoken: '先花一分钟，说说你的目标和身体状况！'
           },
           {
             caption: '为你定制，AI 持续调整',
             callout: '专属计划 · AI 教练',
-            narration: '计划按你的目标和身体定制，AI 教练还会随你进步不断调整。'
+            narration: '计划按你的目标和身体定制，AI 教练还会随你进步不断调整。',
+            iflytekSpoken: '计划按你的目标和身体量身定制，AI 教练还会陪你一起进步、不断调整！'
           }
         ]
       },
@@ -83,12 +96,14 @@ const STORYBOARDS = {
         beats: [
           {
             caption: '每天 10 秒打卡',
-            narration: '每天十秒，记下体重、步数和睡眠。'
+            narration: '每天十秒，记下体重、步数和睡眠。',
+            iflytekSpoken: '每天只要十秒，轻松记下体重、步数[=shu4]和睡眠！'
           },
           {
             caption: '7 天平均，看清趋势',
             callout: '7 天平均 72.4 kg',
-            narration: '看七天平均，不被每天的起伏干扰。'
+            narration: '看七天平均，不被每天的起伏干扰。',
+            iflytekSpoken: '看七天平均，稳稳向前，不被每天的小起伏干扰！'
           }
         ]
       },
@@ -102,12 +117,14 @@ const STORYBOARDS = {
           {
             caption: '每次训练，告诉你练多重',
             callout: '今天建议 60 kg',
-            narration: '每个动作都会建议今天的重量，练完一键保存。'
+            narration: '每个动作都会建议今天的重量，练完一键保存。',
+            iflytekSpoken: '每个动作都会给你建议今天的重量，练完一键保存，超省心！'
           },
           {
             caption: '进步一目了然',
             callout: '体重 · 热量 · 力量',
-            narration: '体重、热量和力量的变化，都画成曲线。'
+            narration: '体重、热量和力量的变化，都画成曲线。',
+            iflytekSpoken: '体重、热量和力量的进步，全都画成清晰曲线！'
           }
         ]
       },
@@ -116,16 +133,18 @@ const STORYBOARDS = {
         label: '饮食 · 拍照 AI 估算',
         chapter: '04 · 饮食拍照估算',
         transition: 'perspective_swing',
-        minDuration: 9.0,
+        minDuration: 8.2,
         beats: [
           {
             caption: '拍张照，AI 帮你算热量',
-            narration: '吃饭不用称重，拍张照就行。'
+            narration: '吃饭不用称重，拍张照就行。',
+            iflytekSpoken: '吃饭不用称重，拍张照就搞定！'
           },
           {
             caption: '几秒出结果',
             callout: '540 kcal · 蛋白质 46.5 g',
-            narration: '几秒算出热量和蛋白质，今天还差多少一看就知道。'
+            narration: '几秒算出热量和蛋白质，今天还差多少一看就知道。',
+            iflytekSpoken: '几秒算出热量和蛋白质，今天还差多少一眼就知道！'
           }
         ]
       },
@@ -139,11 +158,13 @@ const STORYBOARDS = {
           {
             caption: 'AI 教练帮你复盘',
             callout: '看两周数据 · 给出调整',
-            narration: '进入平台期了？写一句感受，AI 教练看完两周数据给你建议。'
+            narration: '进入平台期了？写一句感受，AI 教练看完两周数据给你建议。',
+            iflytekSpoken: '进入平台期了？别担心！写一句感受，AI 教练看完两周数据给你支招！'
           },
           {
             caption: '一键采纳，随时撤销',
-            narration: '喜欢就采纳，不合适随时撤销。'
+            narration: '喜欢就采纳，不合适随时撤销。',
+            iflytekSpoken: '喜欢就一键采纳，不合适随时撤销！'
           }
         ]
       },
@@ -157,7 +178,8 @@ const STORYBOARDS = {
           {
             caption: '像 App 一样放在主屏幕',
             callout: '中文 / English',
-            narration: '中英文随时切换，还能像 App 一样放在主屏幕。'
+            narration: '中英文随时切换，还能像 App 一样放在主屏幕。',
+            iflytekSpoken: '中英文随时切换，还能像 App 一样直接放在主屏幕！'
           }
         ]
       },
@@ -171,7 +193,8 @@ const STORYBOARDS = {
           {
             caption: '你的数据，随时带走',
             callout: '一键导出',
-            narration: '记录和照片，一键导出，永远属于你。'
+            narration: '记录和照片，一键导出，永远属于你。',
+            iflytekSpoken: '所有记录和照片，一键导出，永远属于你！'
           }
         ]
       }
@@ -453,8 +476,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v10（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v10 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v11（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v11 (English)`
   );
   lines.push('');
   lines.push(

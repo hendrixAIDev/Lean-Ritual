@@ -13,9 +13,10 @@ const { recordAllScenes } = require('./record');
 const { synthesizeAllVoices, composeLanguageVideo, probeMedia } = require('./compose');
 const { hasElevenLabsApiKey } = require('./tts_elevenlabs');
 const { hasGeminiApiKey } = require('./tts_gemini');
+const { hasIflytekCredentials } = require('./tts_iflytek');
 
 const ROOT = path.resolve(__dirname, '../..');
-const VALID_TTS = new Set(['auto', 'gemini', 'kokoro', 'elevenlabs', 'say']);
+const VALID_TTS = new Set(['auto', 'iflytek', 'gemini', 'kokoro', 'elevenlabs', 'say']);
 
 function parseTtsSpec(spec) {
   const raw = String(spec || 'auto').trim();
@@ -26,7 +27,7 @@ function parseTtsSpec(spec) {
   for (const part of raw.split(',').map(s => s.trim()).filter(Boolean)) {
     const [k, v] = part.split('=').map(s => s.trim());
     if (!k || !v || !STORYBOARDS[k] || !VALID_TTS.has(v)) {
-      throw new Error(`Unsupported TTS spec: "${spec}" (use auto, gemini, kokoro, elevenlabs, say, or e.g. zh=gemini,en=elevenlabs)`);
+      throw new Error(`Unsupported TTS spec: "${spec}" (use auto, iflytek, gemini, kokoro, elevenlabs, say, or e.g. zh=iflytek,en=elevenlabs)`);
     }
     byLang[k] = v;
   }
@@ -40,6 +41,9 @@ function resolveTtsEngineForLang(ttsSpec, lang, voiceOverrides = {}) {
   const req = ttsSpec.byLang[lang] || ttsSpec.defaultEngine;
   if (req !== 'auto') return req;
   const sb = STORYBOARDS[lang];
+  if (hasIflytekCredentials() && sb.voice?.iflytek?.vcn) {
+    return 'iflytek';
+  }
   if (hasGeminiApiKey() && sb.voice?.gemini?.voiceName) {
     return 'gemini';
   }
@@ -102,7 +106,7 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (a === '-h' || a === '--help') {
       console.log(
-        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts auto|gemini|kokoro|elevenlabs|say|zh=gemini,en=elevenlabs] [--tts-zh <engine>] [--tts-en <engine>] [--gemini-model <model>] [--voice-zh <name_or_id>] [--voice-en <id>] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
+        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts auto|iflytek|gemini|kokoro|elevenlabs|say|zh=iflytek,en=elevenlabs] [--tts-zh <engine>] [--tts-en <engine>] [--gemini-model <model>] [--voice-zh <vcn_or_name_or_id>] [--voice-en <id>] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
       );
       process.exit(0);
     }
@@ -194,10 +198,16 @@ async function main() {
           ttsEngine: langTts,
           elevenlabsVoiceId: langTts === 'elevenlabs' ? opts.voiceOverrides[lang] : null,
           geminiVoiceName: langTts === 'gemini' ? opts.voiceOverrides[lang] : null,
-          geminiModelId: opts.geminiModel
+          geminiModelId: opts.geminiModel,
+          iflytekVcn: langTts === 'iflytek' ? opts.voiceOverrides[lang] : null
         });
         console.log(`  voice: ${preSynth.voiceLabel}`);
-        if (preSynth.stats?.provider === 'gemini') {
+        if (preSynth.stats?.provider === 'iflytek') {
+          console.log(
+            `  iflytek usage: apiCalls=${preSynth.stats.apiCalls}, cacheHits=${preSynth.stats.cacheHits}, ` +
+            `textCharsNew=${preSynth.stats.textCharsNew}/${preSynth.stats.textCharsTotal}`
+          );
+        } else if (preSynth.stats?.provider === 'gemini') {
           console.log(
             `  gemini usage: apiCalls=${preSynth.stats.apiCalls}, cacheHits=${preSynth.stats.cacheHits}, ` +
             `textCharsNew=${preSynth.stats.textCharsNew}/${preSynth.stats.textCharsTotal}, ` +
@@ -309,6 +319,7 @@ async function main() {
           elevenlabsVoiceId: langTts === 'elevenlabs' ? opts.voiceOverrides[lang] : null,
           geminiVoiceName: langTts === 'gemini' ? opts.voiceOverrides[lang] : null,
           geminiModelId: opts.geminiModel,
+          iflytekVcn: langTts === 'iflytek' ? opts.voiceOverrides[lang] : null,
           preSynth
         });
 

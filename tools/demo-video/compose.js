@@ -23,6 +23,7 @@ const {
 } = require('./assets');
 const elevenlabs = require('./tts_elevenlabs');
 const gemini = require('./tts_gemini');
+const iflytek = require('./tts_iflytek');
 const { renderTransitionBridge } = require('./transitions');
 
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
@@ -91,14 +92,19 @@ async function synthesizeAllVoices({
   ttsEngine = 'kokoro',
   elevenlabsVoiceId = null,
   geminiVoiceName = null,
-  geminiModelId = null
+  geminiModelId = null,
+  iflytekVcn = null
 }) {
   const items = [];
   const addItem = (id, text) => {
     items.push({ id, text, outWav: path.join(compDir, `vo-${id}.wav`) });
   };
 
-  const pickText = obj => (ttsEngine === 'gemini' ? (obj.geminiSpoken || obj.narration) : (obj.spoken || obj.narration));
+  const pickText = obj => {
+    if (ttsEngine === 'iflytek') return obj.iflytekSpoken || obj.narration;
+    if (ttsEngine === 'gemini') return obj.geminiSpoken || obj.narration;
+    return obj.spoken || obj.narration;
+  };
   addItem('title', pickText(sb.titleCard));
   sb.scenes.forEach(sc => {
     sc.beats.forEach((beat, bi) => {
@@ -106,6 +112,20 @@ async function synthesizeAllVoices({
     });
   });
   addItem('outro', pickText(sb.outroCard));
+
+  if (ttsEngine === 'iflytek') {
+    const ifCfg = sb.voice.iflytek || {};
+    return iflytek.synthesizeBatch({
+      items,
+      vcn: iflytekVcn || ifCfg.vcn || iflytek.DEFAULT_VCN,
+      speed: ifCfg.speed ?? iflytek.DEFAULT_SPEED,
+      pitch: ifCfg.pitch ?? iflytek.DEFAULT_PITCH,
+      volume: ifCfg.volume ?? iflytek.DEFAULT_VOLUME,
+      oralLevel: ifCfg.oralLevel || iflytek.DEFAULT_ORAL_LEVEL,
+      sparkAssist: ifCfg.sparkAssist ?? iflytek.DEFAULT_SPARK_ASSIST,
+      remain: ifCfg.remain ?? iflytek.DEFAULT_REMAIN
+    });
+  }
 
   if (ttsEngine === 'gemini') {
     const gCfg = sb.voice.gemini || {};
@@ -485,9 +505,9 @@ function buildMasterAudioMix({ voiceCues, sfxCues, bgmWav, totalDur, outWav }) {
   });
   vFilters.push(
     `${vMix.join('')}amix=inputs=${voiceCues.length}:duration=longest:normalize=0,` +
-    `highpass=f=80,equalizer=f=3100:t=q:w=1.2:g=1.4,` +
-    `acompressor=threshold=-16dB:ratio=2.4:attack=15:release=150:makeup=1.5,` +
-    `volume=1.08,alimiter=limit=0.94,apad,atrim=0:${totalDur.toFixed(3)}[vout]`
+    `highpass=f=85,equalizer=f=3100:t=q:w=1.2:g=1.4,` +
+    `acompressor=threshold=-17dB:ratio=2.4:attack=14:release=150:makeup=1.6,` +
+    `volume=1.02,alimiter=limit=0.84:level=disabled:asc=true,apad,atrim=0:${totalDur.toFixed(3)}[vout]`
   );
   vArgs.push('-filter_complex', vFilters.join(';'), '-map', '[vout]', '-ar', '48000', '-ac', '2', '-c:a', 'pcm_s16le', voiceStem);
   runBin(FFMPEG, vArgs);
@@ -523,9 +543,9 @@ function buildMasterAudioMix({ voiceCues, sfxCues, bgmWav, totalDur, outWav }) {
     '-filter_complex',
     [
       `[0:a]asplit=2[vmain][vsc]`,
-      `[1:a]atrim=0:${totalDur.toFixed(3)},volume=0.27[bgm0]`,
-      `[bgm0][vsc]sidechaincompress=threshold=0.020:ratio=6.8:attack=30:release=420:makeup=1[bgm_duck]`,
-      `[vmain][bgm_duck][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.89,atrim=0:${totalDur.toFixed(3)}[aout]`
+      `[1:a]atrim=0:${totalDur.toFixed(3)},volume=0.25[bgm0]`,
+      `[bgm0][vsc]sidechaincompress=threshold=0.018:ratio=7.2:attack=25:release=420:makeup=1[bgm_duck]`,
+      `[vmain][bgm_duck][2:a]amix=inputs=3:duration=first:normalize=0,alimiter=limit=0.82:level=disabled:asc=true,atrim=0:${totalDur.toFixed(3)}[aout]`
     ].join(';'),
     '-map', '[aout]',
     '-ar', '48000',
@@ -718,6 +738,7 @@ async function composeLanguageVideo({
   elevenlabsVoiceId = null,
   geminiVoiceName = null,
   geminiModelId = null,
+  iflytekVcn = null,
   preSynth = null
 }) {
   const compDir = path.join(workDir, `compose-${sb.lang}`);
@@ -726,7 +747,7 @@ async function composeLanguageVideo({
 
   const synth =
     preSynth ||
-    (await synthesizeAllVoices({ sb, compDir, ttsEngine, elevenlabsVoiceId, geminiVoiceName, geminiModelId }));
+    (await synthesizeAllVoices({ sb, compDir, ttsEngine, elevenlabsVoiceId, geminiVoiceName, geminiModelId, iflytekVcn }));
   const { plan, timeline, totalDur, voicePlan, sfxPlan } = planLanguageTimeline({
     sb,
     recordedScenes,
