@@ -45,8 +45,13 @@ def check(origin, revision=None):
             status, headers, _ = get("/", http=True)
             return status in (301, 302, 307, 308) and headers.get("location") == origin + "/"
         record("HTTP redirects to canonical HTTPS", redirect)
+        def landing_page():
+            status, headers, body = get("/")
+            return (status == 200 and headers.get("vary", "").lower() == "cookie" and 'id="hero-h"' in body
+                    and 'href="/login.html?invite="' in body and "/shim.js" not in body)
+        record("Anonymous root serves the landing page, not the app", landing_page)
         def protected_page():
-            return all((lambda r: r[0] == 302 and r[1].get("location") == "/login.html")(get(path)) for path in ("/", "/index.html"))
+            return all((lambda r: r[0] == 302 and r[1].get("location") == "/login.html")(get(path)) for path in ("/index.html", "/x/..%2findex.html"))
         record("Anonymous app pages redirect to login", protected_page)
         def login():
             status, _, body = get("/login.html")

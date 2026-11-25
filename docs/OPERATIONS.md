@@ -290,6 +290,37 @@ If running cleanup in a separate shell where `$DRILL` is not set, pass the liter
 
 Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SIGKILL/OOM kill can leave a file under `DATA_DIR/.access/readers/`, or a `.access/writer` directory. Leases record hostname, kernel boot ID, PID namespace and process start time; backup and app start remove a leftover only when it provably belongs to a dead process on this same kernel (or a previous boot of this host). Leases from another container/host, or in the older format without that evidence, still fail closed. If backup still refuses after a crash: stop EVERY app/admin/backup process using that data volume, check service/container state, then remove the confirmed stale lease files/directory. Never remove a lease while its process might still be writing. Restart the service and repeat the drill.
 
+## Landing-page media
+
+Anonymous visitors to `/` see `public/landing.html`; signed-in users still get the app. **The intro video is off by default.** The video section appears only while `MEDIA_DIR` is set and all four MP4s below are readable, non-empty regular files in it. Otherwise the page has no video section and every `/media/` URL, posters included, returns 404.
+
+**Do not install the v10 cuts.** They claim "AI 持续调整 / tuned by AI", "几秒出结果 / results in seconds" and "随时撤销 / undo anytime", which the app does not do. The server cannot judge content: putting four files in this folder is the approval, so install only cuts the owner has approved.
+
+| URL | File in `MEDIA_DIR` |
+|---|---|
+| `/media/intro-zh-9x16.mp4` | phone, Chinese |
+| `/media/intro-zh-16x9.mp4` | desktop, Chinese |
+| `/media/intro-en-9x16.mp4` | phone, English |
+| `/media/intro-en-16x9.mp4` | desktop, English |
+| `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the one bundled in `public/media/` |
+
+The MP4s stay out of Git, release bundles and `DATA_DIR` snapshots. Only these eight names are served; symlinks are refused, so install real files. Responses support Range (206) on GET, `ETag`/`Last-Modified` and `Cache-Control: public, max-age=604800`. A browser downloads a video only after the visitor presses play.
+
+Once approved cuts exist (as root, from the folder holding them):
+
+```bash
+install -d -o root -g bojin -m 0750 /var/lib/bojin-media
+for f in intro-zh-9x16 intro-zh-16x9 intro-en-9x16 intro-en-16x9; do
+  install -o root -g bojin -m 0640 "$f.mp4" "/var/lib/bojin-media/$f.mp4"
+done
+grep -q '^MEDIA_DIR=' /etc/bojin/environment || echo 'MEDIA_DIR=/var/lib/bojin-media' >> /etc/bojin/environment
+systemctl restart bojin
+# Must be a GET: Range is ignored on HEAD, so `curl -I` would report 200.
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4   # expect 206
+```
+
+To hide the video again, remove or rename any one of the four MP4s; the next page load omits the section, with no restart. To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Browsers that already cached the old file may keep it for up to 7 days.
+
 ## Monitoring and account operations
 
 - Configure external HTTPS uptime checks for `/api/health`, plus alerts for service restarts, disk capacity, backup age/offsite-copy failure and provider spending. Docker has an internal healthcheck; it does not prove mainland reachability.

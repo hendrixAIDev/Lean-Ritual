@@ -22,6 +22,8 @@ const CFG = {
   host: process.env.HOST || "127.0.0.1",
   dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, "data")),
   publicDir: path.join(ROOT, "public"),
+  // Approved landing-page videos; unset means the page ships without a video (see docs/OPERATIONS.md).
+  mediaDir: process.env.MEDIA_DIR ? path.resolve(process.env.MEDIA_DIR) : null,
   authBaseURL: process.env.AUTH_BASE_URL || "http://127.0.0.1:8080",
   authSecret: process.env.AUTH_SECRET || "",
   aiProvider: process.env.AI_PROVIDER,
@@ -136,20 +138,37 @@ function streamFile(file, res, headers){
     pipeline(stream, res, error => { if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") console.error("file stream failed", error.code || "error"); });
   });
 }
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".json": "application/json", ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2", ".webp": "image/webp", ".jpg": "image/jpeg", ".txt": "text/plain; charset=utf-8" };
 function serveStatic(req, res, user){
   let p;
   try { p = decodeURIComponent(new URL(req.url, "http://x").pathname); } catch { throw httpErr(400, "bad_path"); }
-  if (p === "/") { if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); } p = "/index.html"; }
-  if (p === "/index.html" && !user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
+  // "/" is the landing page for visitors and the app for signed-in users, so it varies by cookie.
+  if (p === "/") { res.setHeader("Vary", "Cookie"); p = user ? "/index.html" : "/landing.html"; }
   const f = path.join(CFG.publicDir, path.normalize(p).replace(/^([/\\])+/, ""));
   if (!f.startsWith(CFG.publicDir + path.sep)) { res.writeHead(404); return res.end(); }
+  // Gate the file that will actually be served, so //index.html or /x/..%2findex.html can't skip it.
+  const rel = "/" + path.relative(CFG.publicDir, f).split(path.sep).join("/");
+  if (rel.toLowerCase() === "/index.html") {
+    res.setHeader("Vary", "Cookie");
+    if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
+  }
+  if (rel === "/landing.html") return sendLanding(res);
+  // Posters are public only through the media route, however the path is spelled.
+  if (rel.toLowerCase().startsWith("/media/")) { res.writeHead(404, { "Cache-Control": "no-cache" }); return res.end(); }
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
     streamFile(f, res, { "Content-Type": MIME[ext] || "application/octet-stream", "Content-Length": st.size,
-      "Cache-Control": (ext === ".html" || p === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
+      "Cache-Control": (ext === ".html" || rel === "/client-errors.js") ? "no-cache" : "public, max-age=86400" });
   });
+}
+
+const media = require("./lib/media").createMedia({ mediaDir: CFG.mediaDir, posterDir: path.join(CFG.publicDir, "media") });
+const { renderLanding } = require("./lib/landing");
+async function sendLanding(res){
+  const body = await renderLanding(CFG.publicDir, await media.enabled());
+  res.writeHead(200, { "Content-Type": MIME[".html"], "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-cache" });
+  res.end(body);
 }
 
 /* ---------- 路由 ---------- */
@@ -159,7 +178,7 @@ if (process.argv.length === 2) {
   try {
     scriptHashes = JSON.parse(fs.readFileSync(path.join(CFG.publicDir, "csp-hashes.json"), "utf8"));
     const actual = new Set();
-    for (const name of ["index.html", "login.html", "privacy.html", "terms.html", "guide.html"]) {
+    for (const name of ["index.html", "landing.html", "login.html", "privacy.html", "terms.html", "guide.html"]) {
       const html = fs.readFileSync(path.join(CFG.publicDir, name), "utf8");
       for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi))
         if (!/\bsrc\s*=/i.test(m[1])) actual.add("'sha256-" + crypto.createHash("sha256").update(m[2].replace(/\r\n?/g, "\n")).digest("base64") + "'");
@@ -188,6 +207,8 @@ async function handle(req, res){
   if (p === "/api/client-error") {
     return clientErrors.handle(req, res, { getUser: () => authentication.telemetryUser(req), ip: clientIP(req), readBody });
   }
+  // Public, cookie-independent media: answer before the session lookup so video range requests stay cheap.
+  if (p.startsWith("/media/")) return media.handle(req, res);
   const user = await authentication.sessionUser(req);
   // 改数据的请求必须带自定义头，挡掉跨站表单提交（CSRF）
   if (m !== "GET" && m !== "HEAD" && req.headers["x-bojin"] !== "1") throw httpErr(403, "csrf", "请求来源不对");
