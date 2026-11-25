@@ -22,6 +22,7 @@ const {
   W16_PANEL_Y
 } = require('./assets');
 const elevenlabs = require('./tts_elevenlabs');
+const gemini = require('./tts_gemini');
 const { renderTransitionBridge } = require('./transitions');
 
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
@@ -84,19 +85,40 @@ function resolveSayVoice(preferredList) {
   return preferredList[preferredList.length - 1];
 }
 
-async function synthesizeAllVoices({ sb, compDir, ttsEngine = 'kokoro', elevenlabsVoiceId = null }) {
+async function synthesizeAllVoices({
+  sb,
+  compDir,
+  ttsEngine = 'kokoro',
+  elevenlabsVoiceId = null,
+  geminiVoiceName = null,
+  geminiModelId = null
+}) {
   const items = [];
   const addItem = (id, text) => {
     items.push({ id, text, outWav: path.join(compDir, `vo-${id}.wav`) });
   };
 
-  addItem('title', sb.titleCard.spoken || sb.titleCard.narration);
+  const pickText = obj => (ttsEngine === 'gemini' ? (obj.geminiSpoken || obj.narration) : (obj.spoken || obj.narration));
+  addItem('title', pickText(sb.titleCard));
   sb.scenes.forEach(sc => {
     sc.beats.forEach((beat, bi) => {
-      addItem(`${sc.id}-${bi}`, beat.spoken || beat.narration);
+      addItem(`${sc.id}-${bi}`, pickText(beat));
     });
   });
-  addItem('outro', sb.outroCard.spoken || sb.outroCard.narration);
+  addItem('outro', pickText(sb.outroCard));
+
+  if (ttsEngine === 'gemini') {
+    const gCfg = sb.voice.gemini || {};
+    const voiceName = geminiVoiceName || gCfg.voiceName || gemini.DEFAULT_VOICE_NAME;
+    const modelId = geminiModelId || gCfg.modelId || gemini.DEFAULT_MODEL_ID;
+    const stylePrompt = gCfg.stylePrompt || gemini.DEFAULT_STYLE_PROMPT;
+    return gemini.synthesizeBatch({
+      items,
+      voiceName,
+      modelId,
+      stylePrompt
+    });
+  }
 
   if (ttsEngine === 'elevenlabs') {
     const elCfg = sb.voice.elevenlabs || {};
@@ -577,7 +599,7 @@ function verifyMp4(mp4Path, expectedW, expectedH) {
   assert.equal(info.video?.height, expectedH, `${mp4Path}: expected height ${expectedH}`);
   assert.ok(Math.abs(info.video.fps - FPS) < 0.5, `${mp4Path}: expected ${FPS}fps, got ${info.video.fps}`);
   assert.equal(info.audio?.codec, 'aac', `${mp4Path}: expected aac audio`);
-  assert.ok(info.duration >= 75 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 75-135s range`);
+  assert.ok(info.duration >= 65 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 65-135s range`);
   assert.ok(info.sizeBytes <= MAX_BYTES, `${mp4Path}: size ${(info.sizeBytes / 1048576).toFixed(2)} MB exceeds 25 MB`);
   return info;
 }
@@ -694,17 +716,36 @@ async function composeLanguageVideo({
   formats = ['9x16', '16x9'],
   ttsEngine = 'kokoro',
   elevenlabsVoiceId = null,
+  geminiVoiceName = null,
+  geminiModelId = null,
   preSynth = null
 }) {
   const compDir = path.join(workDir, `compose-${sb.lang}`);
   fs.mkdirSync(compDir, { recursive: true });
   fs.mkdirSync(outDir, { recursive: true });
 
-  const synth = preSynth || (await synthesizeAllVoices({ sb, compDir, ttsEngine, elevenlabsVoiceId }));
+  const synth =
+    preSynth ||
+    (await synthesizeAllVoices({ sb, compDir, ttsEngine, elevenlabsVoiceId, geminiVoiceName, geminiModelId }));
   const { plan, timeline, totalDur, voicePlan, sfxPlan } = planLanguageTimeline({
     sb,
     recordedScenes,
     voiceCuesMap: synth.cues
+  });
+  plan.forEach((seg, idx) => {
+    const vcs = voicePlan.filter(v => v.segIdx === idx);
+    const t = timeline[idx];
+    const spans = vcs.map((v, vi) => {
+      const key = seg.id === 'title' || seg.id === 'outro' ? seg.id : `${seg.id}-${vi}`;
+      const d = synth.cues[key].duration;
+      return { start: v.localOffset, end: v.localOffset + d, dur: d };
+    });
+    const midGap = spans.length === 2 ? ` midGap=${(spans[1].start - spans[0].end).toFixed(2)}s` : '';
+    const tailGap = ` tailGap=${(seg.duration - spans[spans.length - 1].end).toFixed(2)}s`;
+    console.log(
+      `  [${sb.lang}] timeline ${seg.id.padEnd(11)} ${t.start.toFixed(1)}-${t.end.toFixed(1)}s ` +
+      `(dur=${seg.duration.toFixed(2)}s)${midGap}${tailGap}`
+    );
   });
 
   // Generate tailored original upbeat 116 BPM BGM + UI & transition impact SFX

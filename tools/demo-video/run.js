@@ -12,9 +12,10 @@ const { seedDemoAccount } = require('./seed');
 const { recordAllScenes } = require('./record');
 const { synthesizeAllVoices, composeLanguageVideo, probeMedia } = require('./compose');
 const { hasElevenLabsApiKey } = require('./tts_elevenlabs');
+const { hasGeminiApiKey } = require('./tts_gemini');
 
 const ROOT = path.resolve(__dirname, '../..');
-const VALID_TTS = new Set(['auto', 'kokoro', 'elevenlabs', 'say']);
+const VALID_TTS = new Set(['auto', 'gemini', 'kokoro', 'elevenlabs', 'say']);
 
 function parseTtsSpec(spec) {
   const raw = String(spec || 'auto').trim();
@@ -25,7 +26,7 @@ function parseTtsSpec(spec) {
   for (const part of raw.split(',').map(s => s.trim()).filter(Boolean)) {
     const [k, v] = part.split('=').map(s => s.trim());
     if (!k || !v || !STORYBOARDS[k] || !VALID_TTS.has(v)) {
-      throw new Error(`Unsupported TTS spec: "${spec}" (use auto, kokoro, elevenlabs, say, or e.g. zh=elevenlabs,en=kokoro)`);
+      throw new Error(`Unsupported TTS spec: "${spec}" (use auto, gemini, kokoro, elevenlabs, say, or e.g. zh=gemini,en=elevenlabs)`);
     }
     byLang[k] = v;
   }
@@ -39,6 +40,9 @@ function resolveTtsEngineForLang(ttsSpec, lang, voiceOverrides = {}) {
   const req = ttsSpec.byLang[lang] || ttsSpec.defaultEngine;
   if (req !== 'auto') return req;
   const sb = STORYBOARDS[lang];
+  if (hasGeminiApiKey() && sb.voice?.gemini?.voiceName) {
+    return 'gemini';
+  }
   if (hasElevenLabsApiKey() && (voiceOverrides[lang] || sb.voice?.elevenlabs?.voiceId)) {
     return 'elevenlabs';
   }
@@ -51,8 +55,9 @@ function parseArgs(argv) {
     formats: ['9x16', '16x9'],
     ttsRaw: 'auto',
     ttsSpec: parseTtsSpec('auto'),
+    geminiModel: process.env.GEMINI_TTS_MODEL || null,
     voiceOverrides: {
-      zh: process.env.ELEVENLABS_VOICE_ZH || null,
+      zh: process.env.GEMINI_VOICE_ZH || process.env.ELEVENLABS_VOICE_ZH || null,
       en: process.env.ELEVENLABS_VOICE_EN || null
     },
     outDir: path.join(os.tmpdir(), 'lean-ritual-demo-video'),
@@ -71,6 +76,18 @@ function parseArgs(argv) {
     } else if (a === '--tts' && argv[i + 1]) {
       opts.ttsRaw = argv[++i].trim();
       opts.ttsSpec = parseTtsSpec(opts.ttsRaw);
+    } else if (a === '--tts-zh' && argv[i + 1]) {
+      const v = argv[++i].trim();
+      if (!VALID_TTS.has(v)) throw new Error(`Unsupported --tts-zh engine: "${v}"`);
+      opts.ttsSpec.byLang.zh = v;
+      opts.ttsRaw = `${opts.ttsRaw} (zh=${v})`;
+    } else if (a === '--tts-en' && argv[i + 1]) {
+      const v = argv[++i].trim();
+      if (!VALID_TTS.has(v)) throw new Error(`Unsupported --tts-en engine: "${v}"`);
+      opts.ttsSpec.byLang.en = v;
+      opts.ttsRaw = `${opts.ttsRaw} (en=${v})`;
+    } else if (a === '--gemini-model' && argv[i + 1]) {
+      opts.geminiModel = argv[++i].trim();
     } else if (a === '--voice-zh' && argv[i + 1]) {
       opts.voiceOverrides.zh = argv[++i].trim();
     } else if (a === '--voice-en' && argv[i + 1]) {
@@ -85,7 +102,7 @@ function parseArgs(argv) {
       opts.dryRun = true;
     } else if (a === '-h' || a === '--help') {
       console.log(
-        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts auto|kokoro|elevenlabs|say|zh=elevenlabs,en=kokoro] [--voice-zh <id>] [--voice-en <id>] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
+        `Usage: node tools/demo-video/run.js [--lang zh|en|all] [--formats 9x16,16x9] [--tts auto|gemini|kokoro|elevenlabs|say|zh=gemini,en=elevenlabs] [--tts-zh <engine>] [--tts-en <engine>] [--gemini-model <model>] [--voice-zh <name_or_id>] [--voice-en <id>] [--out <dir>] [--dry-run] [--skip-build] [--keep-work]`
       );
       process.exit(0);
     }
@@ -175,10 +192,19 @@ async function main() {
           sb,
           compDir,
           ttsEngine: langTts,
-          elevenlabsVoiceId: opts.voiceOverrides[lang]
+          elevenlabsVoiceId: langTts === 'elevenlabs' ? opts.voiceOverrides[lang] : null,
+          geminiVoiceName: langTts === 'gemini' ? opts.voiceOverrides[lang] : null,
+          geminiModelId: opts.geminiModel
         });
         console.log(`  voice: ${preSynth.voiceLabel}`);
-        if (preSynth.stats) {
+        if (preSynth.stats?.provider === 'gemini') {
+          console.log(
+            `  gemini usage: apiCalls=${preSynth.stats.apiCalls}, cacheHits=${preSynth.stats.cacheHits}, ` +
+            `textCharsNew=${preSynth.stats.textCharsNew}/${preSynth.stats.textCharsTotal}, ` +
+            `promptTokensNew=${preSynth.stats.promptTokensNew}, ` +
+            `audioTokensNew=${preSynth.stats.audioTokensNew}, audioTokensCached=${preSynth.stats.audioTokensCached}`
+          );
+        } else if (preSynth.stats) {
           console.log(
             `  elevenlabs usage: apiCalls=${preSynth.stats.apiCalls}, cacheHits=${preSynth.stats.cacheHits}, ` +
             `textCharsNew=${preSynth.stats.textCharsNew}/${preSynth.stats.textCharsTotal}, ` +
@@ -280,7 +306,9 @@ async function main() {
           outDir: opts.outDir,
           formats: opts.formats,
           ttsEngine: langTts,
-          elevenlabsVoiceId: opts.voiceOverrides[lang],
+          elevenlabsVoiceId: langTts === 'elevenlabs' ? opts.voiceOverrides[lang] : null,
+          geminiVoiceName: langTts === 'gemini' ? opts.voiceOverrides[lang] : null,
+          geminiModelId: opts.geminiModel,
           preSynth
         });
 

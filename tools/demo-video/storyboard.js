@@ -11,6 +11,11 @@ const STORYBOARDS = {
       speaker: 'zf_001',
       sid: 3,
       speed: 1.08,
+      gemini: {
+        modelId: process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts',
+        voiceName: 'Puck',
+        stylePrompt: 'warm, natural, upbeat, slightly brisk Mandarin narrator'
+      },
       elevenlabs: {
         modelId: process.env.ELEVENLABS_MODEL_ID || 'eleven_v3',
         voiceId: 'MI36FIkp9wRP7cpWKPTl',
@@ -92,7 +97,7 @@ const STORYBOARDS = {
         label: '记训练与记录趋势',
         chapter: '03 · 记训练 & 记录',
         transition: 'perspective_swing',
-        minDuration: 11.5,
+        minDuration: 9.5,
         beats: [
           {
             caption: '每次训练，告诉你练多重',
@@ -111,7 +116,7 @@ const STORYBOARDS = {
         label: '饮食 · 拍照 AI 估算',
         chapter: '04 · 饮食拍照估算',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 9.0,
         beats: [
           {
             caption: '拍张照，AI 帮你算热量',
@@ -129,7 +134,7 @@ const STORYBOARDS = {
         label: '反馈 · AI 教练与一键撤销',
         chapter: '05 · AI 教练反馈',
         transition: 'perspective_swing',
-        minDuration: 10.5,
+        minDuration: 9.5,
         beats: [
           {
             caption: 'AI 教练帮你复盘',
@@ -448,8 +453,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v8（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v8 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v9（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v9 (English)`
   );
   lines.push('');
   lines.push(
