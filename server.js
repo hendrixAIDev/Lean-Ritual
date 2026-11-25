@@ -22,8 +22,8 @@ const CFG = {
   host: process.env.HOST || "127.0.0.1",
   dataDir: path.resolve(process.env.DATA_DIR || path.join(ROOT, "data")),
   publicDir: path.join(ROOT, "public"),
-  // Large landing-page videos live outside Git and outside release bundles (see docs/OPERATIONS.md).
-  mediaDir: path.resolve(process.env.MEDIA_DIR || path.join(ROOT, "media")),
+  // Approved landing-page videos; unset means the page ships without a video (see docs/OPERATIONS.md).
+  mediaDir: process.env.MEDIA_DIR ? path.resolve(process.env.MEDIA_DIR) : null,
   authBaseURL: process.env.AUTH_BASE_URL || "http://127.0.0.1:8080",
   authSecret: process.env.AUTH_SECRET || "",
   aiProvider: process.env.AI_PROVIDER,
@@ -152,6 +152,9 @@ function serveStatic(req, res, user){
     res.setHeader("Vary", "Cookie");
     if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
   }
+  if (rel === "/landing.html") return sendLanding(res);
+  // Posters are public only through the media route, however the path is spelled.
+  if (rel.toLowerCase().startsWith("/media/")) { res.writeHead(404, { "Cache-Control": "no-cache" }); return res.end(); }
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
     const ext = path.extname(f);
@@ -160,7 +163,13 @@ function serveStatic(req, res, user){
   });
 }
 
-const media = require("./lib/media").createMedia({ dirs: [CFG.mediaDir, path.join(CFG.publicDir, "media")] });
+const media = require("./lib/media").createMedia({ mediaDir: CFG.mediaDir, posterDir: path.join(CFG.publicDir, "media") });
+const { renderLanding } = require("./lib/landing");
+async function sendLanding(res){
+  const body = await renderLanding(CFG.publicDir, await media.enabled());
+  res.writeHead(200, { "Content-Type": MIME[".html"], "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-cache" });
+  res.end(body);
+}
 
 /* ---------- 路由 ---------- */
 // Generated from the final HTML by build.js; deploy it with the public assets.

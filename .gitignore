@@ -20,5 +20,5 @@ backups/
 .env.*
 !.env.example
 
-# Landing-page videos for local runs (host: MEDIA_DIR, see docs/OPERATIONS.md)
+# Landing-page videos for local runs (set MEDIA_DIR=media; see docs/OPERATIONS.md)
 /media/

@@ -292,7 +292,9 @@ Normal SIGTERM/SIGINT shutdown and uncaught-exception exits release leases. A SI
 
 ## Landing-page media
 
-Anonymous visitors to `/` see `public/landing.html`; signed-in users still get the app. The page's intro video is served from stable URLs that never change between voice-over revisions:
+Anonymous visitors to `/` see `public/landing.html`; signed-in users still get the app. **The intro video is off by default.** The video section appears only while `MEDIA_DIR` is set and all four MP4s below are readable, non-empty regular files in it. Otherwise the page has no video section and every `/media/` URL, posters included, returns 404.
+
+**Do not install the v10 cuts.** They claim "AI 持续调整 / tuned by AI", "几秒出结果 / results in seconds" and "随时撤销 / undo anytime", which the app does not do. The server cannot judge content: putting four files in this folder is the approval, so install only cuts the owner has approved.
 
 | URL | File in `MEDIA_DIR` |
 |---|---|
@@ -300,25 +302,24 @@ Anonymous visitors to `/` see `public/landing.html`; signed-in users still get t
 | `/media/intro-zh-16x9.mp4` | desktop, Chinese |
 | `/media/intro-en-9x16.mp4` | phone, English |
 | `/media/intro-en-16x9.mp4` | desktop, English |
-| `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the poster bundled in `public/media/` |
+| `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the one bundled in `public/media/` |
 
-The MP4s (about 10–12 MB each) are deliberately **not** in Git or in the release tarball: they would bloat history and every deploy, and the Chinese voice-over is expected to change on its own schedule. The server looks in `MEDIA_DIR` first, then `public/media/`, and serves these files with HTTP Range (206) support, `ETag`/`Last-Modified` revalidation and `Cache-Control: public, max-age=604800`. Only the eight names above (four `.mp4`, four `.jpg`) are served; any other file in the folder stays private, and symlinks are refused with 404, so install real files. A browser downloads a video only after the visitor presses play. If a file is missing the player shows "视频暂时无法播放" and the rest of the page is unaffected.
+The MP4s stay out of Git, release bundles and `DATA_DIR` snapshots. Only these eight names are served; symlinks are refused, so install real files. Responses support Range (206) on GET, `ETag`/`Last-Modified` and `Cache-Control: public, max-age=604800`. A browser downloads a video only after the visitor presses play.
 
-One-time host setup (as root; adjust the source path to wherever the files were uploaded):
+Once approved cuts exist (as root, from the folder holding them):
 
 ```bash
 install -d -o root -g bojin -m 0750 /var/lib/bojin-media
-install -o root -g bojin -m 0640 lean-ritual-intro-zh.mp4      /var/lib/bojin-media/intro-zh-9x16.mp4
-install -o root -g bojin -m 0640 lean-ritual-intro-zh-16x9.mp4 /var/lib/bojin-media/intro-zh-16x9.mp4
-install -o root -g bojin -m 0640 lean-ritual-intro-en.mp4      /var/lib/bojin-media/intro-en-9x16.mp4
-install -o root -g bojin -m 0640 lean-ritual-intro-en-16x9.mp4 /var/lib/bojin-media/intro-en-16x9.mp4
+for f in intro-zh-9x16 intro-zh-16x9 intro-en-9x16 intro-en-16x9; do
+  install -o root -g bojin -m 0640 "$f.mp4" "/var/lib/bojin-media/$f.mp4"
+done
 grep -q '^MEDIA_DIR=' /etc/bojin/environment || echo 'MEDIA_DIR=/var/lib/bojin-media' >> /etc/bojin/environment
 systemctl restart bojin
 # Must be a GET: Range is ignored on HEAD, so `curl -I` would report 200.
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4   # expect 206
 ```
 
-To publish a new cut (for example the final Chinese voice-over), replace the same file name with `install` as above (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place); no restart or deploy is needed. The file's `ETag` changes immediately, but browsers that already cached the old file may keep it for up to 7 days. Keep the directory outside `DATA_DIR` so the videos stay out of the data snapshots.
+To hide the video again, remove or rename any one of the four MP4s; the next page load omits the section, with no restart. To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Browsers that already cached the old file may keep it for up to 7 days.
 
 ## Monitoring and account operations
 

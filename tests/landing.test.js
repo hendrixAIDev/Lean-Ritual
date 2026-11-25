@@ -12,7 +12,12 @@ const { parseRange } = require('../lib/media');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-const HTML = read('public/landing.html');
+const { renderLanding, MARKER } = require('../lib/landing');
+
+const PAGE = read('public/landing.html');          // as shipped: video hidden
+const FILM = read('lib/landing-film.html');
+const HTML = PAGE.replace(MARKER, () => FILM);      // with the video section
+
 const JS = read('public/landing/landing.js');
 const BOOT = read('public/landing/boot.js');
 const CSS = read('public/landing/landing.css');
@@ -69,6 +74,49 @@ test('zh and en copy have the same keys and cover every data-i hook', () => {
     assert.ok(key in en, 'en has ' + key);
   }
   for (const [key, value] of Object.entries(en)) if (key !== 'brand2') assert.doesNotMatch(value, /[\u4e00-\u9fff]/, 'en.' + key + ' has no Chinese');
+});
+
+test('the video section is absent by default and inserted only when the videos are available', async () => {
+  const hidden = await renderLanding(path.join(ROOT, 'public'), false);
+  const shown = await renderLanding(path.join(ROOT, 'public'), true);
+  assert.equal(shown, HTML);
+  assert.equal(hidden, PAGE.replace(MARKER, ''));
+  for (const page of [PAGE.replace(MARKER, ''), hidden]) assert.doesNotMatch(page, /film|<video|\/media\/|data-i="video\.|播放|视频/i);
+  for (const part of ['id="film"', 'id="play"', 'data-i="video.t"']) assert.equal(shown.split(part).length, 2, part);
+  // Section numbers come from a counter, so hiding the video leaves no gap in the sequence.
+  assert.doesNotMatch(HTML, /No\.\s*0\d/);
+  assert.match(CSS, /counter-increment:sec;content:"No\. " counter\(sec,decimal-leading-zero\)/);
+});
+
+test('every number on the page is backed by the app or is sample data', () => {
+  const { zh, en } = loadI18N();
+  const app = read('app/index.html');
+  // [pattern in the copy, evidence]. Anything left over after removing these fails.
+  assert.match(app, /"setup\.newTitle":"先花一分钟建档"/);
+  assert.match(app, /"setup\.newTitle":"1-Minute Setup"/);
+  assert.match(app, /有照片时一般 1 分钟左右/);
+  assert.match(app, /Photo estimates take ~1 minute/);
+  assert.match(app, /AI 会结合最近 14 天的记录/);
+  assert.match(app, /\.slice\(0,3\)\.map\(a => \(\{name:String/);             // up to 3 swaps
+  for (const fn of ['chart', 'balanceChart', 'liftChart']) assert.match(app, new RegExp('function ' + fn + '\\('));   // 3 charts
+  const allowed = [/1 分钟/g, /1 minute\b/g, /(最近 )?14 (天|days)/g, /7[- ](天平均|day average|day avg)/g, /最多推荐 3 个/g, /up to 3 options/g, /© 2026/g,
+    /60 kg/g, /72\.7 kg/g, /540 kcal/g, /46\.5 g/g];
+  for (const [lang, copy] of Object.entries({ zh, en })) for (const [key, value] of Object.entries(copy)) {
+    const rest = allowed.reduce((text, re) => text.replace(re, ''), value);
+    assert.doesNotMatch(rest, /[0-9]/, `${lang}.${key}: ${value}`);
+    assert.doesNotMatch(value, /秒|second|sec\b|一键|one[- ]tap|in one tap|随时撤销/i, `${lang}.${key}: ${value}`);
+  }
+  // Big animated figures: sample kcal/kg, 7-day average, 14-day review, 3 charts.
+  assert.deepEqual([...HTML.matchAll(/data-count="(\d+)"/g)].map(m => +m[1]), [7, 60, 540, 14, 3]);
+  assert.match(zh['f1.t'], /快速打卡/);
+  assert.match(en['f1.t'], /Quick daily check-in/);
+  // A first-time lift has no suggestion, so the page must not promise one for every lift.
+  assert.match(app, /if \(!h\.length\) return \{w:null/);
+  assert.match(zh['f2.d'], /练过的动作/);
+  assert.match(en['f2.d'], /lifts you've logged/);
+  assert.match(zh['board.note'], /示例/);
+  assert.match(en['board.note'], /examples/);
+  assert.match(HTML, /data-i="board\.note"/);
 });
 
 test('AI copy matches the AI features the app actually ships', () => {
@@ -167,11 +215,13 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-landing-'));
   const mediaDir = path.join(dir, 'media');
   fs.mkdirSync(mediaDir);
+  const staged = path.join(dir, 'staged.mp4');
   const video = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 251));
   fs.writeFileSync(path.join(mediaDir, 'intro-zh-9x16.mp4'), video);
   fs.writeFileSync(path.join(mediaDir, 'intro-en-16x9.jpg'), Buffer.from('host poster'));
   fs.writeFileSync(path.join(mediaDir, 'private.mp4'), 'must stay private');
-  fs.symlinkSync(path.join(ROOT, 'server.js'), path.join(mediaDir, 'intro-en-16x9.mp4'));
+  for (const name of ['intro-zh-16x9.mp4', 'intro-en-9x16.mp4']) fs.writeFileSync(path.join(mediaDir, name), video);
+  fs.writeFileSync(staged, video);   // the fourth video is installed later, while the server runs
   const base = 'http://127.0.0.1:18095';
   const env = { ...process.env, DATA_DIR: path.join(dir, 'data'), MEDIA_DIR: mediaDir, PORT: '18095', HOST: '127.0.0.1', AUTH_BASE_URL: base,
     AUTH_SECRET: 'disposable-test-secret-at-least-32-characters', COOKIE_SECURE: '0', TRUST_PROXY: '0', MAIL_MODE: 'file', OPENROUTER_API_KEY: '', GEMINI_API_KEY: '' };
@@ -201,7 +251,12 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(home.headers.get('vary'), 'Cookie');
   assert.equal(home.headers.get('cache-control'), 'no-cache');
   const homeHtml = await home.text();
-  assert.equal(homeHtml, HTML);
+  const HIDDEN = PAGE.replace(MARKER, '');
+  assert.equal(homeHtml, HIDDEN, 'three of four videos: the section stays hidden');
+  assert.equal(home.headers.get('content-length'), String(Buffer.byteLength(HIDDEN)));
+  assert.equal(await (await get('/landing.html')).text(), HIDDEN);
+  for (const route of ['/media/intro-zh-9x16.mp4', '/media/intro-zh-9x16.jpg', '/media/intro-en-16x9.jpg', '/x/..%2fmedia/intro-zh-9x16.jpg', '/%2fmedia/intro-zh-9x16.jpg', '/x/..%2fMEDIA/intro-zh-9x16.jpg'])
+    assert.equal((await get(route)).status, 404, 'hidden: ' + route);
   const csp = home.headers.get('content-security-policy');
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /font-src 'self'/);
@@ -246,10 +301,14 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal((await request('/api/auth/sign-out', {}, cookie)).status, 200);
   const revoked = await get('/', { cookie });
   assert.equal(revoked.status, 200);
-  assert.equal(await revoked.text(), HTML);
+  assert.equal(await revoked.text(), HIDDEN);
   assert.equal((await get('/index.html', { cookie })).headers.get('location'), '/login.html');
 
   // Media: host MEDIA_DIR first, bundled posters as the fallback, byte ranges, validators, caching.
+  fs.renameSync(staged, path.join(mediaDir, 'intro-en-16x9.mp4'));
+  assert.equal(await (await get('/')).text(), HTML, 'the fourth video turns the section on without a restart');
+  assert.equal(await (await get('/landing.html')).text(), HTML);
+  assert.equal((await get('/x/..%2fmedia/intro-zh-9x16.jpg')).status, 404, 'posters only through the media route');
   const full = await get('/media/intro-zh-9x16.mp4');
   assert.equal(full.status, 200);
   assert.equal(full.headers.get('content-type'), 'video/mp4');
@@ -282,6 +341,9 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(bundled.status, 200);
   assert.equal(bundled.headers.get('content-type'), 'image/jpeg');
   assert.ok(Buffer.from(await bundled.arrayBuffer()).equals(fs.readFileSync(path.join(ROOT, 'public/media/intro-zh-16x9.jpg'))));
-  for (const route of ['/media/private.mp4', '/media/intro-en-16x9.mp4', '/media/intro-zh-9x16.webp', '/media/intro-en-9x16.mp4', '/media/..%2Fserver.js', '/media/%2e%2e/server.js', '/media/Intro.mp4', '/media/a/b.mp4', '/media/x.html'])
+  for (const route of ['/media/private.mp4', '/media/intro-zh-9x16.webp', '/media/..%2Fserver.js', '/media/%2e%2e/server.js', '/media/Intro.mp4', '/media/a/b.mp4', '/media/x.html'])
     assert.equal((await get(route)).status, 404, route);
+  fs.unlinkSync(path.join(mediaDir, 'intro-en-9x16.mp4'));
+  assert.equal(await (await get('/')).text(), HIDDEN, 'withdrawing one video hides it again');
+  assert.equal((await get('/media/intro-zh-9x16.mp4')).status, 404);
 });

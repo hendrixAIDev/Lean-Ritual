@@ -92,6 +92,8 @@ a{color:inherit}
 /* section heads */
 .sec{padding:clamp(64px,10vw,128px) 0}
 .sec-head{display:grid;gap:10px;margin-bottom:clamp(28px,5vw,56px)}
+main{counter-reset:sec}
+.sec-head .no::before{counter-increment:sec;content:"No. " counter(sec,decimal-leading-zero)}
 .sec-head .no{font:900 clamp(20px,3vw,28px)/1 var(--f-mega);color:var(--green)}
 .sec-head h2{margin:0;font:900 clamp(40px,8vw,96px)/.95 var(--f-mega);max-width:14em}
 :lang(en) .sec-head h2{text-transform:uppercase}
@@ -203,3 +205,4 @@ footer .op{margin-left:auto}
 html[data-i18n-pending] body{visibility:hidden}
 .film-note{margin:14px 0 0;color:var(--ink-2);font-size:14px}
 .film-note:empty{display:none}
+.board + .fine{margin-top:20px}
