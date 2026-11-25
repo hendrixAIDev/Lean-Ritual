@@ -664,6 +664,136 @@ test("reissuing a phone invite preserves a stable UID so deletion-ledger replay 
   assert.notEqual(invAfterDel.userId, inv1.userId);
 });
 
+test("explicit-UID / --legacy-user reissues reject conflicting UIDs and preserve stable UID across pre-reissue snapshots for both phone and email", { timeout: 45000 }, async t => {
+  const srv = await startTestServer(t);
+  const runAdmin = (args, stdin) => spawnSync(process.execPath, ["scripts/auth-admin.js", ...args], {
+    cwd: ROOT, env: srv.env, encoding: "utf8", timeout: 8000, ...(stdin !== undefined ? { input: stdin } : {}),
+  });
+  const api = (route, body, cookie, method) => fetch(srv.base + route, {
+    method: method || (body ? "POST" : "GET"),
+    redirect: "manual",
+    headers: { origin: srv.origin, "Content-Type": "application/json", "X-Bojin": "1", ...(cookie ? { cookie } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const stopServer = async child => {
+    if (child.exitCode === null) {
+      const done = new Promise(r => child.once("exit", r));
+      child.kill();
+      await done;
+    }
+  };
+  const startAgain = async () => {
+    const child = spawn(process.execPath, ["server.js"], { cwd: ROOT, env: srv.env, stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    child.stderr.on("data", d => { err += d; });
+    t.after(() => stopServer(child));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("restart timeout " + err)), 8000);
+      child.stdout.once("data", () => { clearTimeout(timer); resolve(); });
+      child.once("exit", () => { clearTimeout(timer); reject(new Error(err)); });
+    });
+    return child;
+  };
+
+  // Seed legacy users in bojin.db
+  const legacyDb = new DatabaseSync(path.join(srv.dir, "bojin.db"));
+  legacyDb.prepare("INSERT INTO users (id, username, pass, created, mustChange) VALUES (?, ?, 'x', '2025-01-01', 0)").run("u_legacy_phone", "legacy_phone");
+  legacyDb.prepare("INSERT INTO users (id, username, pass, created, mustChange) VALUES (?, ?, 'x', '2025-01-01', 0)").run("u_legacy_email", "legacy_email");
+  legacyDb.prepare("INSERT INTO users (id, username, pass, created, mustChange) VALUES (?, ?, 'x', '2025-01-01', 0)").run("u_legacy_other", "legacy_other");
+  legacyDb.close();
+
+  // 1. Default phone invite cannot later be reassigned to a conflicting --legacy-user UID
+  const defPhoneRes = runAdmin(["invite", "--phone", "13800138666"]);
+  assert.equal(defPhoneRes.status, 0, defPhoneRes.stderr);
+  const conflictPhoneRes = runAdmin(["invite", "--phone", "+86 138-0013-8666", "--legacy-user", "legacy_other"]);
+  assert.equal(conflictPhoneRes.status, 1);
+  assert.match(conflictPhoneRes.stderr, /different user ID/);
+
+  // 2. Legacy-bound phone and email invites -> take pre-reissue snapshot BEFORE any reissue or enrollment
+  const lp1Res = runAdmin(["invite", "--phone", "13800138777", "--legacy-user", "legacy_phone"]);
+  assert.equal(lp1Res.status, 0, lp1Res.stderr);
+  const lp1 = JSON.parse(lp1Res.stdout);
+  assert.equal(lp1.userId, "u_legacy_phone");
+
+  const le1Res = runAdmin(["invite", "Legacy.Owner@Example.com", "--legacy-user", "legacy_email"]);
+  assert.equal(le1Res.status, 0, le1Res.stderr);
+  const le1 = JSON.parse(le1Res.stdout);
+  assert.equal(le1.userId, "u_legacy_email");
+
+  await stopServer(srv.child);
+  const snapRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-legacy-reissue-snap-"));
+  t.after(() => fs.rmSync(snapRoot, { recursive: true, force: true }));
+  const preReissueSnap = path.join(snapRoot, "pre-reissue");
+  await createSnapshot(srv.dir, preReissueSnap);
+
+  // 3. Restart server; conflicting --legacy-user fails; matching --legacy-user AND default reissue both preserve the legacy UID
+  const child2 = await startAgain();
+  assert.equal(runAdmin(["invite", "--phone", "13800138777", "--legacy-user", "legacy_other"]).status, 1);
+  assert.equal(runAdmin(["invite", "legacy.owner@example.com", "--legacy-user", "legacy_other"]).status, 1);
+
+  assert.equal(runAdmin(["revoke"], lp1.token).status, 0);
+  const lp2Res = runAdmin(["invite", "--phone", "+86 138-0013-8777", "--legacy-user", "legacy_phone"]);
+  assert.equal(lp2Res.status, 0, lp2Res.stderr);
+  const lp2 = JSON.parse(lp2Res.stdout);
+  assert.equal(lp2.userId, "u_legacy_phone");
+
+  // Reissue again WITHOUT --legacy-user -> still keeps u_legacy_phone!
+  const lp3Res = runAdmin(["invite", "--phone", "13800138777"]);
+  assert.equal(lp3Res.status, 0, lp3Res.stderr);
+  const lp3 = JSON.parse(lp3Res.stdout);
+  assert.equal(lp3.userId, "u_legacy_phone");
+  assert.notEqual(lp3.token, lp2.token);
+
+  // Same for email: default reissue keeps u_legacy_email
+  assert.equal(runAdmin(["revoke"], le1.token).status, 0);
+  const le2Res = runAdmin(["invite", "legacy.owner@example.com"]);
+  assert.equal(le2Res.status, 0, le2Res.stderr);
+  const le2 = JSON.parse(le2Res.stdout);
+  assert.equal(le2.userId, "u_legacy_email");
+
+  // 4. Enroll both legacy users via their reissued invites, then delete both accounts
+  const pw = "legacy-reissue-pass-1";
+  const signPhone = await api("/api/auth/sign-up/phone-number", {
+    phoneNumber: "+8613800138777", name: "Legacy Phone", password: pw, invitation: lp3.token,
+    consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION,
+  });
+  assert.equal(signPhone.status, 200, await signPhone.clone().text());
+  const phoneCookie = signPhone.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  assert.equal((await api("/api/auth/delete-user", { password: pw }, phoneCookie)).status, 200);
+
+  const signEmail = await api("/api/auth/sign-up/email", {
+    email: le2.email, name: "Legacy Email", password: pw, invitation: le2.token,
+    callbackURL: "/login.html", consentTerms: true, consentSensitiveCrossBorder: true, agreedConsentVersion: CONSENT_VERSION,
+  });
+  assert.equal(signEmail.status, 200, await signEmail.clone().text());
+  const vMail = fs.readdirSync(path.join(srv.dir, "mail"))
+    .map(f => JSON.parse(fs.readFileSync(path.join(srv.dir, "mail", f), "utf8")))
+    .find(m => m.to === le2.email && m.kind === "verify");
+  await fetch(vMail.url, { redirect: "manual" });
+  const loginEmail = await api("/api/auth/sign-in/email", { email: le2.email, password: pw });
+  const emailCookie = loginEmail.headers.getSetCookie().map(c => c.split(";")[0]).join("; ");
+  assert.equal((await api("/api/auth/delete-user", { password: pw }, emailCookie)).status, 200);
+  await stopServer(child2);
+
+  // 5. Replay deletion ledger onto the pre-reissue snapshot -> BOTH legacy phone and legacy email invites are erased!
+  const ledger = readLedger(srv.dir);
+  const restoredDir = path.join(snapRoot, "restored-legacy-pre-reissue");
+  restoreSnapshot(preReissueSnap, restoredDir, ledger);
+
+  const restoredAuth = new DatabaseSync(path.join(restoredDir, "auth.sqlite"));
+  try {
+    for (const { name } of restoredAuth.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()) {
+      const dump = JSON.stringify(restoredAuth.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all());
+      assert.ok(!dump.includes("13800138777"), `pre-reissue snapshot table ${name} retained legacy phone`);
+      assert.ok(!dump.includes("u_legacy_phone"), `pre-reissue snapshot table ${name} retained legacy phone UID`);
+      assert.ok(!dump.includes("legacy.owner@example.com"), `pre-reissue snapshot table ${name} retained legacy email`);
+      assert.ok(!dump.includes("u_legacy_email"), `pre-reissue snapshot table ${name} retained legacy email UID`);
+    }
+    // Unrelated pending default phone invite (13800138666) was not deleted and remains intact
+    assert.ok(restoredAuth.prepare("SELECT 1 FROM launch_invites WHERE phone=?").get("+8613800138666"));
+  } finally { restoredAuth.close(); }
+});
+
 test("cold-start unknown phone login performs equivalent lookup and single password verification without lazy hash overhead", { timeout: 30000 }, async t => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-phone-timing-"));
   const svc = await createAuth({

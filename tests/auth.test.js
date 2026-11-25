@@ -128,7 +128,13 @@ test("deletion purges reissued invitation emails and retries after auth user rem
   const expired = service.invites.issue(email);
   db.prepare("UPDATE launch_invites SET expires=0 WHERE userId=?").run(expired.userId);
   const invite = service.invites.issue(" Reissued@Example.com ");
-  assert.notEqual(old.userId, invite.userId);
+  assert.equal(old.userId, invite.userId);
+  assert.equal(expired.userId, invite.userId);
+  assert.throws(() => service.invites.issue(email, { userId: "u_conflicting_legacy" }), /different user ID/);
+  // Also seed a historical pre-fix reissued row with a distinct UID so purgeDeletedArtifacts
+  // is still proven to scrub older multi-UID rows sharing the same email.
+  db.prepare("INSERT INTO launch_invites(tokenHash,email,phone,userId,expires,revoked) VALUES(?,?,NULL,?,?,1)")
+    .run("historical-reissue-hash", email, "u_historical_reissue", 0);
   const request = (route, body, cookie) => service.auth.handler(new Request("http://localhost:8080/api/auth/"+route, {
     method:"POST", headers:{"content-type":"application/json", origin:"http://localhost:8080", ...(cookie ? {cookie} : {})}, body:JSON.stringify(body)
   }));
