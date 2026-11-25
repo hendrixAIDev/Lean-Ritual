@@ -9,8 +9,8 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_ENV_FILE = path.join(os.homedir(), '.config', 'lean-ritual', 'gemini.env');
 const DEFAULT_MODEL_ID = 'gemini-3.8-flash-tts';
-const DEFAULT_VOICE_NAME = 'Puck';
-const DEFAULT_STYLE_PROMPT = 'warm, natural, upbeat, slightly brisk Mandarin narrator';
+const DEFAULT_VOICE_NAME = 'Leda';
+const DEFAULT_STYLE_PROMPT = 'cheerful, motivating female fitness coach, energetic and warm, encouraging, natural Mandarin, brisk upbeat pace';
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
 const FFPROBE = process.env.FFPROBE_BIN || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe');
 

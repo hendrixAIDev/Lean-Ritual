@@ -13,8 +13,8 @@ const STORYBOARDS = {
       speed: 1.08,
       gemini: {
         modelId: process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts',
-        voiceName: 'Puck',
-        stylePrompt: 'warm, natural, upbeat, slightly brisk Mandarin narrator'
+        voiceName: 'Leda',
+        stylePrompt: 'cheerful, motivating female fitness coach, energetic and warm, encouraging, natural Mandarin, brisk upbeat pace'
       },
       elevenlabs: {
         modelId: process.env.ELEVENLABS_MODEL_ID || 'eleven_v3',
@@ -453,8 +453,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v9（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v9 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v10（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v10 (English)`
   );
   lines.push('');
   lines.push(
