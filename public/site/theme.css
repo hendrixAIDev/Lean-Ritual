@@ -1,0 +1,72 @@
+/* Lean Ritual public site, Nocturne theme: the one source of design tokens and shared pieces.
+   Loaded first by landing.html, login.html, privacy.html, terms.html and guide.html; each page's
+   own sheet (landing/nocturne.css, site/login.css, site/doc.css) uses only these tokens.
+   Dark only. The app (app/index.html) has its own theme and does not load this file. */
+@font-face{font-family:"LR Serif";src:url(/landing/fonts/serif-display.woff2) format("woff2");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"LR Num";src:url(/landing/fonts/num-medium.woff2) format("woff2");font-weight:500;font-style:normal;font-display:swap}
+:root{
+  /* colour: deep green-black, ivory text, emerald light. Contrast on --bg: ivory 17.2, text-read 14.5, muted 10.6, emerald-hi 13.5 */
+  --bg:#050A08; --ivory:#ECEFE9; --muted:#B4C0BA; --text-read:#D6DED9;
+  --emerald:#3FBF9E; --emerald-hi:#8DE5CB; --emerald-deep:#0C7560; --on-emerald:#03140F;
+  --glass:rgba(236,239,233,.05); --glass-hi:rgba(236,239,233,.1); --line:rgba(236,239,233,.16); --solid:#0B1512; --solid-hi:#15211D;
+  --raised:linear-gradient(160deg,#13211C,#0A1411);
+  --line-strong:rgba(236,239,233,.24); --selected:rgba(141,229,203,.18); --selected-soft:rgba(141,229,203,.14); --selected-line:rgba(141,229,203,.6); --link-line:rgba(141,229,203,.55);
+  /* forms: field borders keep 3:1 against every surface they sit on */
+  --field:#07110E; --field-filled:#0E241D; --field-line:#6B7E76; --placeholder:#9AABA3;
+  --shadow-deep:0 40px 90px -40px #000;
+  --danger:#FF9E8C; --danger-line:rgba(255,158,140,.55); --danger-bg:rgba(255,158,140,.08);
+  --warn:#F2C86B; --warn-line:rgba(242,200,107,.45); --warn-bg:rgba(242,200,107,.07);
+  --ok:var(--emerald-hi); --ok-line:rgba(141,229,203,.45); --ok-bg:rgba(141,229,203,.08);
+  /* aurora glow */
+  --glow-card:rgba(63,191,158,.16); --glow-mark:rgba(63,191,158,.38);
+  --glow-1:rgba(63,191,158,.34); --glow-1-soft:rgba(63,191,158,.1); --glow-2:rgba(12,117,96,.42); --glow-3:rgba(141,229,203,.14);
+  /* the still aurora behind the login and document pages (the landing hero animates its own from the same glows) */
+  --aurora:radial-gradient(55vmax 40vmax at 82% -10%,var(--glow-1),var(--glow-1-soft) 55%,transparent 75%),radial-gradient(42vmax 34vmax at -8% 30%,var(--glow-2),transparent 70%);
+  /* type */
+  --f-body:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+  --f-serif:"LR Serif","Songti SC","Noto Serif SC","STSong",serif;
+  --f-num:"LR Num","DIN Alternate","Arial Narrow",var(--f-body);
+  --f-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --fs-xs:13px; --fs-sm:14px; --fs-base:16px; --fs-read:17px; --fs-lg:19px; --fs-xl:23px;
+  --fs-2xl:clamp(24px,3.2vw,30px); --fs-3xl:clamp(30px,6vw,46px);
+  --lh-read:1.8; --measure:68ch;
+  /* space, radius, motion */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:72px;
+  --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:24px; --r-2xl:28px; --r-pill:999px;
+  --gutter:clamp(16px,4vw,56px); --max:1240px; --tap:44px;
+  --ease:cubic-bezier(.16,1,.3,1);
+  /* focus: one ring everywhere */
+  --focus:var(--emerald-hi); --focus-w:2px; --focus-gap:3px; --focus-halo:0 0 0 4px rgba(141,229,203,.22);
+  /* buttons */
+  --btn-h:50px;
+  --btn-primary:linear-gradient(180deg,var(--emerald-hi),var(--emerald));
+  --btn-primary-shadow:0 0 0 1px rgba(141,229,203,.6) inset,0 10px 40px -8px rgba(63,191,158,.7);
+  /* print: dark on white */
+  --print-ink:#000; --print-paper:#fff; --print-line:#999; --print-rule:#bbb; --print-fill:#eee;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--ivory);font:var(--fs-base)/1.65 var(--f-body);-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-family:var(--f-serif);font-weight:700;text-wrap:balance}
+:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-gap)}
+
+/* language switch: landing's .lang (aria-pressed) and the pages' .lang-sw (.on) look the same */
+.lang,.lang-sw{display:inline-flex;flex:none;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--solid)}
+.lang button,.lang-sw button{all:unset;cursor:pointer;min-width:var(--tap);min-height:var(--tap);padding:0 12px;box-sizing:border-box;display:grid;place-items:center;border-radius:var(--r-pill);font:500 15px/1 var(--f-num);letter-spacing:.06em;color:var(--muted);transition:color .2s,background-color .2s}
+.lang button{padding:0}
+.lang-sw button{font:500 var(--fs-sm)/1 var(--f-body);letter-spacing:.02em}
+.lang button[aria-pressed=true],.lang-sw button.on{background:var(--selected);color:var(--ivory)}
+.lang button:hover,.lang-sw button:hover{color:var(--ivory)}
+.lang button:focus-visible,.lang-sw button:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:0}
+
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+/* Printed pages are dark on white whatever the screen theme. */
+@media print{
+  :root{color-scheme:light}
+  html,body{background:var(--print-paper)!important;color:var(--print-ink)!important}
+  body::before,body::after{display:none!important}
+}

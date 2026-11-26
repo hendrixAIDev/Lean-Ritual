@@ -170,7 +170,8 @@ test('all HTML pages include manifest, icons, light/dark theme-color, iOS standa
     const html = fs.readFileSync(path.join(ROOT, file), 'utf8');
     const headMatch = html.match(/<head>([\s\S]*?)<\/head>/i);
     assert.ok(headMatch, `${file} must have an explicit <head>...</head> section`);
-    const head = headMatch[1];
+    // Styles may live in local stylesheets linked from <head>; they count as part of the head.
+    const head = [headMatch[1], ...[...headMatch[1].matchAll(/<link rel="stylesheet" href="(\/[^"]+\.css)">/g)].map(m => fs.readFileSync(path.join(ROOT, 'public', m[1]), 'utf8'))].join('\n');
 
     assert.match(head, /<link\s+rel="manifest"\s+href="\/manifest\.webmanifest"\s*>/);
     assert.match(head, /<link\s+rel="apple-touch-icon"\s+sizes="180x180"\s+href="\/icons\/apple-touch-icon\.png"\s*>/);

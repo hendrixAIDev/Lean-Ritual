@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#F4F1EA" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050A08" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#050A08" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -15,47 +16,9 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
 <title>登录 · 薄肌日课</title>
-<style>
-:root{--bg:#F4F1EA;--surface:#FFFDF8;--ink:#1F1D1A;--muted:#6B655C;--line:#DDD6C8;--accent:#B5462F;--on-accent:#FFFFFF;--bad:#A83A3A;--ok:#2E6B4E;color-scheme:light}
-@media (prefers-color-scheme: dark){:root{--bg:#161513;--surface:#201E1B;--ink:#EEE9DF;--muted:#A39C90;--line:#38342E;--accent:#E07A5F;--on-accent:#1F120E;--bad:#E77B7B;--ok:#6EC29B;color-scheme:dark}}
-*{box-sizing:border-box}
-[hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;font-size:15px;line-height:1.55}
-main{max-width:380px;margin:0 auto;padding:calc(56px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(56px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
-h1{font-size:24px;margin:0 0 4px}
-p{margin:0 0 20px;color:var(--muted)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.top-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 4px}
-.top-row h1{margin:0}
-.lang-sw{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface);flex-shrink:0}
-.lang-sw button{border:none;background:none;color:var(--muted);min-height:44px;min-width:44px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-.lang-sw button:focus-visible{outline-offset:-2px}
-.lang-sw button.on{background:var(--accent);color:var(--on-accent);font-weight:700}
-.banner{margin:0 0 12px;padding:10px 12px;border:1px solid var(--ok);border-radius:8px;background:var(--surface);color:var(--ok);font-size:14px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px}
-.tabs{display:flex;gap:8px}
-.tabs button{flex:1;min-height:44px;padding:8px;border:1px solid var(--line);background:none;color:var(--ink);border-radius:8px;font:inherit;cursor:pointer}
-.tabs button.on{border-color:var(--accent);font-weight:700}
-.method-sw{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
-.method-sw button{flex:1;min-height:44px;padding:8px;border:none;border-radius:0;background:none;color:var(--muted);font:inherit;font-size:14px;cursor:pointer}
-.method-sw button:focus-visible{outline-offset:-2px}
-.method-sw button.on{background:var(--accent);color:var(--on-accent);font-weight:700}
-.info-box{margin:0;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6}
-label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
-input{font:inherit;font-size:16px;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
-.consent-box{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
-.checkline{display:flex;flex-direction:row;align-items:flex-start;gap:10px;min-height:44px;padding:2px 0;font-size:13px;line-height:1.5;color:var(--ink);cursor:pointer}
-.checkline input[type="checkbox"]{width:20px;height:20px;min-height:0;padding:0;margin:2px 0 0;flex-shrink:0;accent-color:var(--accent);cursor:pointer}
-.checkline a{color:var(--accent);text-decoration:underline}
-button{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
-button.primary{padding:11px;border:none;border-radius:8px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;cursor:pointer}
-button.primary:disabled{opacity:.6}
-.err{color:var(--bad);font-size:14px;min-height:1.2em;margin:0}
-.hint{font-size:12px;color:var(--muted);margin:0}
-.hint-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:2px}
-.hint a{color:var(--accent);display:inline-flex;align-items:center;min-height:44px;min-width:44px}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
-</style>
+<link rel="preload" href="/landing/fonts/serif-display.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/site/theme.css">
+<link rel="stylesheet" href="/site/login.css">
 </head>
 <body>
 <main>

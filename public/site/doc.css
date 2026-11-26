@@ -1,0 +1,64 @@
+/* privacy.html, terms.html and guide.html in the Nocturne look: long reading on dark.
+   17px text at line-height 1.8, lines kept to about 68 characters, every text colour AAA on the
+   background, links always underlined. Prints dark on white. Tokens come from /site/theme.css. */
+[hidden]{display:none!important}
+body{position:relative;isolation:isolate;color:var(--text-read);font-size:var(--fs-read);line-height:var(--lh-read)}
+/* a still glow at the top only, so the reading area below is the plain background */
+body::before{content:"";position:absolute;z-index:-1;inset:0 0 auto;height:min(640px,100vh);pointer-events:none;background:var(--aurora);opacity:.7;
+  -webkit-mask-image:linear-gradient(var(--print-ink) 35%,transparent);mask-image:linear-gradient(var(--print-ink) 35%,transparent)}
+main{max-width:46rem;margin:0 auto;padding:calc(var(--sp-5) + env(safe-area-inset-top,0px)) max(20px,env(safe-area-inset-right,0px)) calc(var(--sp-8) + env(safe-area-inset-bottom,0px)) max(20px,env(safe-area-inset-left,0px))}
+
+.top-row{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);margin:0 0 clamp(32px,7vw,56px)}
+.back{margin:0;font-size:var(--fs-sm)}
+#back-link{display:inline-flex;align-items:center;min-height:var(--tap);min-width:var(--tap);padding:0 18px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--solid);color:var(--ivory);font-size:var(--fs-sm);font-weight:500;text-decoration:none;transition:background-color .2s,border-color .2s}
+#back-link:hover{background:var(--solid-hi);border-color:var(--field-line)}
+
+h1,h2,h3{color:var(--ivory);line-height:1.3}
+h1{margin:0 0 var(--sp-4);font-size:var(--fs-3xl);line-height:1.2;letter-spacing:.01em}
+h1::after{content:"";display:block;width:56px;height:3px;margin-top:20px;border-radius:3px;background:linear-gradient(90deg,var(--emerald-hi),var(--emerald))}
+h2{margin:2.4em 0 .7em;padding-top:1.2em;border-top:1px solid var(--line);font-size:var(--fs-2xl);scroll-margin-top:var(--sp-5)}
+h1 + h2{margin-top:1.4em;padding-top:0;border-top:0}
+h3{margin:1.9em 0 .5em;font-size:var(--fs-lg);color:var(--emerald-hi);scroll-margin-top:var(--sp-5)}
+p,ul,ol,pre{margin:0 0 1em}
+p,li{max-width:var(--measure)}
+ul,ol{padding-left:1.4em}
+li{margin:.35em 0;padding-left:.2em}
+li::marker{color:var(--emerald)}
+li p{margin:.2em 0}
+strong{color:var(--ivory);font-weight:700}
+em{color:var(--ivory)}
+a{color:var(--emerald-hi);text-decoration:underline;text-decoration-thickness:1px;text-decoration-color:var(--link-line);text-underline-offset:3px;overflow-wrap:anywhere;transition:color .2s,text-decoration-color .2s}
+a:hover{color:var(--ivory);text-decoration-color:currentColor}
+
+.meta{margin:0 0 var(--sp-6);color:var(--muted);font-size:var(--fs-sm);line-height:1.7}
+.summary{margin:0 0 var(--sp-5);padding:18px 22px;border:1px solid var(--line);border-left:3px solid var(--emerald);border-radius:var(--r-lg);background:var(--raised);color:var(--ivory);font-size:var(--fs-base);line-height:1.75;max-width:none}
+.notice{padding:18px 22px;border:1px solid var(--warn-line);border-left:3px solid var(--warn);border-radius:var(--r-lg);background:var(--warn-bg);color:var(--ivory);max-width:none}
+.notice strong{color:var(--warn)}
+
+/* guide: tables scroll sideways inside their own frame, formulas sit in a code panel */
+.tw{overflow-x:auto;margin:1.2em 0 1.6em;border:1px solid var(--line);border-radius:var(--r-md);background:var(--solid)}
+table{border-collapse:collapse;width:100%;font-size:var(--fs-sm);line-height:1.6}
+th,td{padding:10px 14px;border:0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--solid-hi);color:var(--ivory);font-weight:600;white-space:nowrap}
+tbody tr:nth-child(even) td{background:var(--glass)}
+tbody tr:last-child td{border-bottom:0}
+pre{overflow-x:auto;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field);color:var(--ivory);white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-sm);line-height:1.6}
+code{font-family:var(--f-mono)}
+.tw:focus-visible,pre:focus-visible{outline-offset:2px}
+
+@media print{
+  body{font-size:11pt;line-height:1.6}
+  main{max-width:none;padding:0}
+  .top-row{display:none}
+  h1,h2,h3,strong,em,.summary,.notice,.notice strong,.meta,th,pre{color:var(--print-ink)!important}
+  h1::after{display:none}
+  h2{border-top-color:var(--print-rule)}
+  h2,h3{break-after:avoid}
+  a{color:var(--print-ink);text-decoration-color:var(--print-ink)}
+  .summary,.notice,.tw,pre{background:none!important;border-color:var(--print-line)}
+  th{background:var(--print-fill)!important}
+  tbody tr:nth-child(even) td{background:none}
+  th,td{border-bottom-color:var(--print-rule)}
+  tr,pre,.summary,.notice{break-inside:avoid}
+  li::marker{color:var(--print-ink)}
+}

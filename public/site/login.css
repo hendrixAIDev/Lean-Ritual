@@ -1,0 +1,92 @@
+/* login.html in the Nocturne look: sign-in, invite sign-up (email and phone), consent, forgot and reset password.
+   Every colour, size, radius and the focus ring come from /site/theme.css. Appearance only: the page's
+   script shows and hides parts with [hidden] and marks the active tab and method with .on. */
+[hidden]{display:none!important}
+body{min-height:100vh;min-height:100dvh;position:relative;isolation:isolate}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:var(--aurora)}
+main{max-width:440px;margin:0 auto;padding:calc(48px + env(safe-area-inset-top,0px)) max(var(--sp-4),env(safe-area-inset-right,0px)) calc(56px + env(safe-area-inset-bottom,0px)) max(var(--sp-4),env(safe-area-inset-left,0px))}
+
+/* heading: the app mark, the name in the display serif, the language switch to its right */
+/* the switch sits beside the mark, so the name gets the full width below them */
+.top-row{position:relative;margin:0 0 var(--sp-3)}
+.top-row h1{margin:0;font-size:clamp(25px,7.4vw,32px);line-height:1.25;letter-spacing:.01em;text-wrap:pretty}
+.top-row .lang-sw{position:absolute;top:-3px;right:0}
+.top-row h1::before{content:"";display:block;width:44px;height:44px;margin:0 0 var(--sp-4);border-radius:12px;background:url(/icons/icon.svg) center/cover;box-shadow:0 0 0 1px var(--line),0 8px 28px var(--glow-mark)}
+#subtitle{margin:0 0 var(--sp-5);color:var(--muted);font-size:var(--fs-base)}
+
+/* status messages above the form (email verified, account deleted) */
+.banner{display:flex;gap:var(--sp-3);align-items:baseline;margin:0 0 var(--sp-4);padding:var(--sp-3) var(--sp-4);border:1px solid var(--ok-line);border-radius:var(--r-md);background:var(--ok-bg);color:var(--ok);font-size:var(--fs-sm)}
+.banner::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:currentColor;transform:translateY(-1px)}
+
+/* the form panel */
+.card{position:relative;display:flex;flex-direction:column;gap:var(--sp-4);padding:var(--sp-5);border:1px solid var(--line);border-radius:var(--r-xl);
+  background:radial-gradient(360px 220px at 100% 0,var(--glow-card),transparent 70%),var(--raised);box-shadow:var(--shadow-deep)}
+@media (max-width:359px){.card{padding:var(--sp-5) var(--sp-4)}}
+
+/* sign in / sign up with invite */
+.tabs{display:flex;gap:var(--sp-2)}
+.tabs button{flex:1;min-height:46px;padding:var(--sp-2) var(--sp-3);border:1px solid var(--line);border-radius:var(--r-pill);background:transparent;color:var(--muted);font:500 var(--fs-base)/1.3 var(--f-body);cursor:pointer;transition:color .2s,background-color .2s,border-color .2s}
+.tabs button:hover{color:var(--ivory);border-color:var(--field-line)}
+.tabs button.on{border-color:var(--selected-line);background:var(--selected-soft);color:var(--ivory);font-weight:600}
+/* email / phone: the same track as the language switch */
+.method-sw{display:flex;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--field)}
+.method-sw button{flex:1;min-height:var(--tap);padding:var(--sp-2);border:0;border-radius:var(--r-pill);background:none;color:var(--muted);font:500 var(--fs-sm)/1.2 var(--f-body);cursor:pointer;transition:color .2s,background-color .2s}
+.method-sw button:hover{color:var(--ivory)}
+.method-sw button:focus-visible{outline-offset:0}
+.method-sw button.on{background:var(--selected);color:var(--ivory);font-weight:600}
+
+/* fields */
+label{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-sm);font-weight:500;color:var(--muted)}
+input{font:inherit;font-size:var(--fs-base);font-weight:400;min-height:48px;padding:11px 14px;border:1px solid var(--field-line);border-radius:var(--r-md);background:var(--field);color:var(--ivory);caret-color:var(--emerald-hi);transition:border-color .2s,box-shadow .2s}
+input::placeholder{color:var(--placeholder);opacity:1}
+input:hover{border-color:var(--muted)}
+input:focus{border-color:var(--focus);box-shadow:var(--focus-halo)}
+input:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:2px}
+input:user-invalid{border-color:var(--danger);background-color:var(--danger-bg)}
+input:disabled{opacity:.55;cursor:not-allowed}
+/* Browser autofill keeps the dark field and ivory text instead of Chrome's pale blue or Safari's yellow. */
+input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus{-webkit-text-fill-color:var(--ivory);caret-color:var(--emerald-hi);-webkit-box-shadow:0 0 0 100px var(--field-filled) inset;box-shadow:0 0 0 100px var(--field-filled) inset;border-color:var(--selected-line);transition:background-color 100000s 0s}
+input:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 100px var(--field-filled) inset,var(--focus-halo);box-shadow:0 0 0 100px var(--field-filled) inset,var(--focus-halo);border-color:var(--focus)}
+input:autofill{background-color:var(--field-filled);color:var(--ivory)}
+input:-webkit-autofill::first-line{font-family:var(--f-body);font-size:var(--fs-base);color:var(--ivory)}
+
+/* consent: two separate ticks, the legal text at full contrast */
+.consent-box{display:flex;flex-direction:column;gap:0;padding:var(--sp-1) var(--sp-4);border:1px solid var(--line);border-radius:var(--r-lg);background:var(--glass)}
+.checkline{display:flex;flex-direction:row;align-items:flex-start;gap:var(--sp-3);min-height:var(--tap);padding:var(--sp-3) 0;font-size:var(--fs-sm);font-weight:400;line-height:1.65;color:var(--ivory);cursor:pointer}
+.checkline + .checkline{border-top:1px solid var(--line)}
+.checkline input[type="checkbox"]{appearance:none;-webkit-appearance:none;flex:none;width:22px;height:22px;min-height:0;margin:1px 0 0;padding:0;border:1.5px solid var(--field-line);border-radius:7px;background:var(--field) center/14px 14px no-repeat;accent-color:var(--emerald);cursor:pointer;transition:background-color .15s,border-color .15s}
+.checkline:hover input[type="checkbox"]{border-color:var(--muted)}
+.checkline input[type="checkbox"]:checked{border-color:var(--emerald-hi);background-color:var(--emerald-hi);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 7.4 5.6 10.4 11.5 3.8' fill='none' stroke='%2303140F' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.checkline input[type="checkbox"]:focus{box-shadow:var(--focus-halo)}
+.checkline a{color:var(--emerald-hi);text-decoration:underline;text-underline-offset:3px}
+.checkline a:hover{color:var(--ivory)}
+
+.info-box{margin:0;padding:var(--sp-3) var(--sp-4);border:1px solid var(--line);border-left:3px solid var(--emerald-hi);border-radius:var(--r-md);background:var(--glass);color:var(--ivory);font-size:var(--fs-sm);line-height:1.6}
+.err{margin:0;min-height:1.2em;color:var(--danger);font-size:var(--fs-sm);line-height:1.55}
+
+/* buttons: the landing page's emerald pill for the main action, quiet pills for the rest */
+button{min-height:46px;padding:var(--sp-2) var(--sp-4);border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--solid);color:var(--ivory);font:500 var(--fs-sm)/1.3 var(--f-body);cursor:pointer;transition:transform .3s var(--ease),background-color .2s,border-color .2s,opacity .2s}
+button:hover{background:var(--solid-hi);border-color:var(--field-line)}
+button:active{transform:scale(.98)}
+button.primary{min-height:var(--btn-h);margin-top:var(--sp-1);padding:var(--sp-3) var(--sp-5);border:0;background:var(--btn-primary);color:var(--on-emerald);font:600 var(--fs-base)/1.2 var(--f-body);box-shadow:var(--btn-primary-shadow)}
+button.primary:hover{transform:translateY(-1px);background:var(--btn-primary);filter:brightness(1.05)}
+button.primary:active{transform:scale(.98)}
+/* waiting for the server: a flat, muted pill (no fading, so its label stays readable) */
+button.primary:disabled{background:var(--solid-hi);color:var(--muted);box-shadow:inset 0 0 0 1px var(--line-strong);cursor:progress;transform:none;filter:none}
+#forgot,#resend{border-color:transparent;background:transparent;color:var(--muted)}
+#forgot:hover,#resend:hover{color:var(--ivory);background:var(--glass)}
+#reload-policy{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn)}
+
+.hint{margin:var(--sp-1) 0 0;padding-top:var(--sp-4);border-top:1px solid var(--line);font-size:var(--fs-xs);line-height:1.6;color:var(--muted)}
+.hint-links{display:flex;flex-wrap:wrap;gap:0 var(--sp-4);margin-top:var(--sp-1)}
+.hint a{display:inline-flex;align-items:center;min-height:var(--tap);min-width:var(--tap);color:var(--emerald-hi);text-decoration:underline;text-underline-offset:3px;font-size:var(--fs-sm)}
+.hint a:hover{color:var(--ivory)}
+
+@media print{
+  main{max-width:none;padding:0}
+  .card{background:none;border-color:var(--print-line);box-shadow:none}
+  .lang-sw,.tabs,.method-sw,button{display:none!important}
+  .top-row h1::before{box-shadow:none}
+  label,.hint,.checkline,#subtitle,.err,.info-box,.banner{color:var(--print-ink)}
+  .checkline a,.hint a{color:var(--print-ink)}
+}
