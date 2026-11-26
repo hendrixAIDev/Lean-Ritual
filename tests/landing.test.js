@@ -52,8 +52,7 @@ test('landing markup is CSP-safe: no inline script, handlers, style attributes o
   }
   for (const lang of ['zh', 'en']) for (const shot of ['workout', 'checkin', 'meal', 'coach', 'charts'])
     assert.ok(fs.existsSync(path.join(ROOT, 'public/landing/img', `${lang}-${shot}.webp`)));
-  for (const lang of ['zh', 'en']) for (const shape of ['9x16', '16x9'])
-    assert.ok(fs.existsSync(path.join(ROOT, 'public/media', `intro-${lang}-${shape}.jpg`)), 'bundled poster ' + lang + shape);
+  assert.equal(fs.existsSync(path.join(ROOT, 'public/media')), false, 'outdated v10 posters are not bundled');
 });
 
 test('calls to action: invite sign-up, sign-in and an invite request to the privacy-page contact', () => {
@@ -294,7 +293,7 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   for (const name of ['intro-zh-16x9.mp4', 'intro-en-9x16.mp4']) fs.writeFileSync(path.join(mediaDir, name), video);
   fs.writeFileSync(staged, video);   // the fourth video is installed later, while the server runs
   const base = 'http://127.0.0.1:18095';
-  const env = { ...process.env, DATA_DIR: path.join(dir, 'data'), MEDIA_DIR: mediaDir, PORT: '18095', HOST: '127.0.0.1', AUTH_BASE_URL: base,
+  const env = { ...process.env, DATA_DIR: path.join(dir, 'data'), MEDIA_DIR: mediaDir, MEDIA_CHECK_TTL_MS: '60', PORT: '18095', HOST: '127.0.0.1', AUTH_BASE_URL: base,
     AUTH_SECRET: 'disposable-test-secret-at-least-32-characters', COOKIE_SECURE: '0', TRUST_PROXY: '0', MAIL_MODE: 'file', OPENROUTER_API_KEY: '', GEMINI_API_KEY: '' };
   const issued = spawnSync(process.execPath, ['scripts/auth-admin.js', 'invite', 'landing@example.com'], { cwd: ROOT, env, encoding: 'utf8', timeout: 5000 });
   assert.equal(issued.status, 0, issued.stderr);
@@ -377,8 +376,9 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(await revoked.text(), HIDDEN);
   assert.equal((await get('/index.html', { cookie })).headers.get('location'), '/login.html');
 
-  // Media: host MEDIA_DIR first, bundled posters as the fallback, byte ranges, validators, caching.
+  // Media: host MEDIA_DIR only (no bundled posters), cached availability, byte ranges, validators, caching.
   fs.renameSync(staged, path.join(mediaDir, 'intro-en-16x9.mp4'));
+  await new Promise(r => setTimeout(r, 80));
   assert.equal(await (await get('/')).text(), HTML, 'the fourth video turns the section on without a restart');
   assert.equal(await (await get('/landing.html')).text(), HTML);
   assert.equal((await get('/x/..%2fmedia/intro-zh-9x16.jpg')).status, 404, 'posters only through the media route');
@@ -409,14 +409,16 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   assert.equal(head.headers.get('content-length'), '4096');
   assert.equal((await fetch(base + '/media/intro-zh-9x16.mp4', { method: 'POST' })).status, 405);
   const hostPoster = await get('/media/intro-en-16x9.jpg');
-  assert.equal(await hostPoster.text(), 'host poster', 'MEDIA_DIR overrides the bundled poster');
-  const bundled = await get('/media/intro-zh-16x9.jpg');
-  assert.equal(bundled.status, 200);
-  assert.equal(bundled.headers.get('content-type'), 'image/jpeg');
-  assert.ok(Buffer.from(await bundled.arrayBuffer()).equals(fs.readFileSync(path.join(ROOT, 'public/media/intro-zh-16x9.jpg'))));
+  assert.equal(hostPoster.status, 200);
+  assert.equal(hostPoster.headers.get('content-type'), 'image/jpeg');
+  assert.equal(await hostPoster.text(), 'host poster', 'posters are served from MEDIA_DIR');
+  const missingPoster = await get('/media/intro-zh-16x9.jpg');
+  assert.equal(missingPoster.status, 404, 'missing host poster returns 404 with no bundled fallback');
+  assert.equal(missingPoster.headers.get('cache-control'), 'no-cache');
   for (const route of ['/media/private.mp4', '/media/intro-zh-9x16.webp', '/media/..%2Fserver.js', '/media/%2e%2e/server.js', '/media/Intro.mp4', '/media/a/b.mp4', '/media/x.html'])
     assert.equal((await get(route)).status, 404, route);
   fs.unlinkSync(path.join(mediaDir, 'intro-en-9x16.mp4'));
-  assert.equal(await (await get('/')).text(), HIDDEN, 'withdrawing one video hides it again');
+  assert.equal((await get('/media/intro-en-9x16.mp4')).status, 404, 'missing video fails and invalidates availability cache');
+  assert.equal(await (await get('/')).text(), HIDDEN, 'withdrawing one video hides it immediately after miss');
   assert.equal((await get('/media/intro-zh-9x16.mp4')).status, 404);
 });

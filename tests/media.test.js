@@ -7,28 +7,28 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { createMedia, ASSETS, VIDEOS } = require('../lib/media');
+const { createMedia, mediaOptions, ASSETS, VIDEOS, DEFAULT_CHECK_TTL_MS } = require('../lib/media');
 
 const NAME = 'intro-zh-9x16.mp4';
 const POSTER = 'intro-zh-9x16.jpg';
 const BYTES = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 251));
 
 /** Media server over a temp root, keeping every handle so tests can prove its fd was released. */
-async function fixture(t, { beforeOpen, afterOpen, wrap, videos = true } = {}) {
+async function fixture(t, { beforeOpen, afterOpen, wrap, videos = true, checkTtlMs = 0, now, lstat, access } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ritual-media-'));
-  const host = path.join(dir, 'host'), bundled = path.join(dir, 'bundled');
-  fs.mkdirSync(host); fs.mkdirSync(bundled);
+  const host = path.join(dir, 'host');
+  fs.mkdirSync(host);
   if (videos) for (const name of VIDEOS) fs.writeFileSync(path.join(host, name), BYTES);
   const handles = [];
   const open = async (file, flags) => {
-    if (beforeOpen) beforeOpen(file);
+    if (beforeOpen) await beforeOpen(file);
     const handle = await fs.promises.open(file, flags);
     handles.push(handle);
     if (afterOpen) await afterOpen(file);
     if (wrap) wrap(handle);
     return handle;
   };
-  const media = createMedia({ mediaDir: host, posterDir: bundled, open });
+  const media = createMedia({ mediaDir: host, open, checkTtlMs, ...(now ? { now } : {}), ...(lstat ? { lstat } : {}), ...(access ? { access } : {}) });
   const server = http.createServer((req, res) => { media.handle(req, res).catch(() => res.destroy()); });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   t.after(async () => { server.closeAllConnections(); await new Promise(r => server.close(r)); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -38,7 +38,7 @@ async function fixture(t, { beforeOpen, afterOpen, wrap, videos = true } = {}) {
     for (let i = 0; i < 100 && handles.some(h => h.fd !== -1); i++) await new Promise(r => setTimeout(r, 20));
     assert.deepEqual(handles.map(h => h.fd), handles.map(() => -1), 'every opened descriptor is closed');
   };
-  return { dir, host, bundled, media, handles, call, settled, port: server.address().port };
+  return { dir, host, media, handles, call, settled, port: server.address().port };
 }
 
 test('only the four intro videos and their posters can be published', async t => {
@@ -64,12 +64,10 @@ test('only the four intro videos and their posters can be published', async t =>
 });
 
 test('off by default: nothing is served until MEDIA_DIR holds all four videos as real files', async t => {
-  for (const mediaDir of [null, undefined, '']) assert.equal(await createMedia({ mediaDir, posterDir: 'x' }).enabled(), false);
-  assert.equal(await createMedia({ mediaDir: '/nonexistent/media', posterDir: 'x' }).enabled(), false);
+  for (const mediaDir of [null, undefined, '']) assert.equal(await createMedia({ mediaDir }).enabled(), false);
+  assert.equal(await createMedia({ mediaDir: '/nonexistent/media' }).enabled(), false);
   const f = await fixture(t, { videos: false });
-  for (const name of ASSETS.keys()) if (name.endsWith('.jpg')) { fs.writeFileSync(path.join(f.host, name), 'host'); fs.writeFileSync(path.join(f.bundled, name), 'bundled'); }
-  // A video in the poster folder is never used: MP4s come only from MEDIA_DIR.
-  for (const name of VIDEOS) fs.writeFileSync(path.join(f.bundled, name), BYTES);
+  for (const name of ASSETS.keys()) if (name.endsWith('.jpg')) fs.writeFileSync(path.join(f.host, name), 'host');
   const off = async why => {
     assert.equal(await f.media.enabled(), false, why);
     for (const name of ASSETS.keys()) {
@@ -106,7 +104,6 @@ test('symlinks, directories and FIFOs under an allowed name are refused', async 
   const secret = path.join(f.dir, 'secret.jpg');
   fs.writeFileSync(secret, 'outside the root');
   fs.writeFileSync(path.join(f.host, 'inside.jpg'), 'inside the root');
-  fs.writeFileSync(path.join(f.bundled, POSTER), 'bundled');
   for (const to of [secret, path.join(f.host, 'inside.jpg'), path.join(f.dir, 'dangling')]) {
     fs.symlinkSync(to, target);
     const r = await f.call(POSTER);
@@ -120,9 +117,9 @@ test('symlinks, directories and FIFOs under an allowed name are refused', async 
   assert.equal(spawnSync('mkfifo', [target]).status, 0);
   assert.equal((await f.call(POSTER)).status, 404, 'a FIFO neither hangs nor serves');
   fs.unlinkSync(target);
-  assert.equal(await (await f.call(POSTER)).text(), 'bundled', 'a missing host poster falls back to the bundled one');
+  assert.equal((await f.call(POSTER)).status, 404, 'a missing host poster returns 404 with no bundled fallback');
   fs.writeFileSync(target, 'host');
-  assert.equal(await (await f.call(POSTER)).text(), 'host', 'a host poster wins');
+  assert.equal(await (await f.call(POSTER)).text(), 'host', 'a host poster is served from MEDIA_DIR');
   await f.settled();
 });
 
@@ -229,4 +226,304 @@ test('validators: If-None-Match (tag, list, weak, *), If-Modified-Since and If-R
   assert.equal((await f.call(NAME, { 'If-None-Match': '"other"', 'If-Modified-Since': modified })).status, 200, 'If-None-Match takes precedence');
   assert.equal((await f.call(NAME, { Range: 'bytes=0-9', 'If-Range': etag })).status, 206);
   assert.equal((await f.call(NAME, { Range: 'bytes=0-9', 'If-Range': '"other"' })).status, 200);
+});
+
+test('availability check caches within TTL, refreshes on expiry, and skips fs when MEDIA_DIR is unset', async t => {
+  assert.equal(DEFAULT_CHECK_TTL_MS, 30_000);
+  assert.deepEqual(mediaOptions({}), { checkTtlMs: 30_000 });
+  assert.deepEqual(mediaOptions({ MEDIA_CHECK_TTL_MS: '' }), { checkTtlMs: 30_000 });
+  assert.deepEqual(mediaOptions({ MEDIA_CHECK_TTL_MS: '45000' }), { checkTtlMs: 45_000 });
+  for (const bad of ['0', '-1', 'abc', '1.5', '300001'])
+    assert.throws(() => mediaOptions({ MEDIA_CHECK_TTL_MS: bad }), /MEDIA_CHECK_TTL_MS/);
+  for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+    assert.throws(() => createMedia({ mediaDir: '/tmp', checkTtlMs: bad }), /checkTtlMs/);
+
+  let ops = 0;
+  const unset = createMedia({
+    mediaDir: null,
+    lstat: async p => { ops++; return fs.promises.lstat(p); },
+    access: async (p, m) => { ops++; return fs.promises.access(p, m); }
+  });
+  assert.deepEqual(await Promise.all([unset.enabled(), unset.enabled(), unset.enabled()]), [false, false, false]);
+  assert.equal(ops, 0, 'unset MEDIA_DIR performs zero filesystem operations');
+
+  let clock = 1000;
+  let lstatCount = 0, accessCount = 0;
+  const f = await fixture(t, {
+    checkTtlMs: DEFAULT_CHECK_TTL_MS,
+    now: () => clock,
+    lstat: async p => { lstatCount++; return fs.promises.lstat(p); },
+    access: async (p, m) => { accessCount++; return fs.promises.access(p, m); }
+  });
+  // Non-allowlisted paths never trigger an availability probe even on cold cache.
+  assert.equal((await f.call('private.mp4')).status, 404);
+  assert.equal(lstatCount + accessCount, 0, 'refused asset name triggers no availability check');
+
+  assert.equal(await f.media.enabled(), true);
+  assert.equal(lstatCount, 4);
+  assert.equal(accessCount, 4);
+
+  // Repeated enabled() and HTTP requests within TTL perform zero extra metadata checks.
+  for (let i = 0; i < 5; i++) assert.equal(await f.media.enabled(), true);
+  assert.equal((await f.call(NAME, {}, 'HEAD')).status, 200);
+  clock += DEFAULT_CHECK_TTL_MS - 1;
+  assert.equal(await f.media.enabled(), true);
+  assert.equal(lstatCount + accessCount, 8, 'cached true avoids extra fs metadata calls');
+
+  // Remove one file; once TTL expires, the next check observes false and caches it for TTL.
+  const removed = path.join(f.host, VIDEOS[3]);
+  fs.renameSync(removed, removed + '.off');
+  assert.equal(await f.media.enabled(), true, 'still within TTL before expiry');
+  clock += 1;
+  assert.equal(await f.media.enabled(), false, 're-checked on TTL expiry');
+  const afterMiss = lstatCount + accessCount;
+  assert.ok(afterMiss > 8 && afterMiss <= 16);
+  clock += DEFAULT_CHECK_TTL_MS - 1;
+  for (let i = 0; i < 5; i++) assert.equal(await f.media.enabled(), false);
+  assert.equal((await f.call(NAME)).status, 404);
+  assert.equal(lstatCount + accessCount, afterMiss, 'cached false avoids extra fs metadata calls');
+
+  // Restore file and expire TTL: re-checks and turns back on.
+  fs.renameSync(removed + '.off', removed);
+  clock += 1;
+  assert.equal(await f.media.enabled(), true);
+  assert.equal(lstatCount + accessCount, afterMiss + 8);
+  await f.settled();
+});
+
+test('concurrent availability checks coalesce via single-flight', async t => {
+  let clock = 5000;
+  let lstatCount = 0, accessCount = 0;
+  let releaseGate;
+  let gate = new Promise(r => { releaseGate = r; });
+  const f = await fixture(t, {
+    checkTtlMs: DEFAULT_CHECK_TTL_MS,
+    now: () => clock,
+    lstat: async p => {
+      lstatCount++;
+      await gate;
+      return fs.promises.lstat(p);
+    },
+    access: async (p, m) => { accessCount++; return fs.promises.access(p, m); }
+  });
+
+  // Launch 10 concurrent checks + 2 HTTP requests while the first probe is in flight.
+  const pending = [
+    ...Array.from({ length: 10 }, () => f.media.enabled()),
+    f.call(NAME, {}, 'HEAD').then(r => r.status === 200),
+    f.call(NAME, {}, 'HEAD').then(r => r.status === 200)
+  ];
+  await new Promise(r => setImmediate(r));
+  assert.equal(lstatCount, 1, 'only one in-flight probe started across all concurrent callers');
+  releaseGate();
+  const results = await Promise.all(pending);
+  assert.deepEqual(results, Array(12).fill(true));
+  assert.equal(lstatCount, 4);
+  assert.equal(accessCount, 4);
+
+  // Expire TTL and verify another burst of concurrent callers also coalesces into one refresh.
+  clock += DEFAULT_CHECK_TTL_MS;
+  gate = new Promise(r => { releaseGate = r; });
+  const burst = Array.from({ length: 8 }, () => f.media.enabled());
+  await new Promise(r => setImmediate(r));
+  assert.equal(lstatCount, 5, 'only one refresh probe started after TTL expiry');
+  releaseGate();
+  assert.deepEqual(await Promise.all(burst), Array(8).fill(true));
+  assert.equal(lstatCount, 8);
+  assert.equal(accessCount, 8);
+  await f.settled();
+});
+
+test('a miss on a required video invalidates the cached true result, while a missing poster does not', async t => {
+  let clock = 1000;
+  let ops = 0;
+  const f = await fixture(t, {
+    checkTtlMs: DEFAULT_CHECK_TTL_MS,
+    now: () => clock,
+    lstat: async p => { ops++; return fs.promises.lstat(p); },
+    access: async (p, m) => { ops++; return fs.promises.access(p, m); }
+  });
+
+  // Warm the cache as enabled.
+  assert.equal(await f.media.enabled(), true);
+  assert.equal(ops, 8);
+
+  // Missing poster returns 404 (no bundled fallback) and does NOT invalidate video availability.
+  assert.equal((await f.call(POSTER)).status, 404);
+  assert.equal(await f.media.enabled(), true);
+  assert.equal(ops, 8, 'missing poster does not bust the cache');
+
+  // Removing a required MP4 and requesting it returns 404 and immediately invalidates the stale true cache.
+  const target = path.join(f.host, NAME);
+  fs.unlinkSync(target);
+  assert.equal((await f.call(NAME)).status, 404);
+  assert.equal(await f.media.enabled(), false, 're-checked immediately after video miss');
+  const afterDeleteOps = ops;
+  assert.ok(afterDeleteOps > 8 && afterDeleteOps <= 16);
+  // Subsequent checks within TTL stay cached false (bounded).
+  for (let i = 0; i < 5; i++) assert.equal(await f.media.enabled(), false);
+  assert.equal(ops, afterDeleteOps);
+
+  // Restore, advance TTL, warm true again, then truncate the video to 0 bytes.
+  fs.writeFileSync(target, BYTES);
+  clock += DEFAULT_CHECK_TTL_MS;
+  assert.equal(await f.media.enabled(), true);
+  fs.writeFileSync(target, '');
+  assert.equal((await f.call(NAME)).status, 404, '0-byte video is refused even while cached true');
+  assert.equal(await f.media.enabled(), false, '0-byte video invalidates cached true');
+
+  // Restore, advance TTL, warm true again, then swap the video for a symlink.
+  fs.writeFileSync(target, BYTES);
+  clock += DEFAULT_CHECK_TTL_MS;
+  assert.equal(await f.media.enabled(), true);
+  fs.unlinkSync(target);
+  fs.symlinkSync('/etc/hosts', target);
+  assert.equal((await f.call(NAME)).status, 404, 'symlinked video is refused even while cached true');
+  assert.equal(await f.media.enabled(), false, 'symlinked video invalidates cached true');
+
+  await f.settled();
+});
+
+test('a confirmed video miss wins over both a newer completed refresh and an overlapping in-flight refresh', async t => {
+  // Case 1: HEAD pauses at open, TTL expires and a fresh positive refresh completes,
+  // then the MP4 is removed and HEAD resumes -> 404 must invalidate the newer positive cache entry.
+  {
+    let clock = 1000;
+    let enteredOpen, releaseOpen;
+    const atOpen = new Promise(r => { enteredOpen = r; });
+    const openGate = new Promise(r => { releaseOpen = r; });
+    let pauseNextOpen = true;
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      beforeOpen: async () => {
+        if (!pauseNextOpen) return;
+        pauseNextOpen = false;
+        enteredOpen();
+        await openGate;
+      }
+    });
+    fs.writeFileSync(path.join(f.host, 'intro-zh-16x9.jpg'), 'poster');
+
+    assert.equal(await f.media.enabled(), true);
+    const pausedHead = f.call(NAME, {}, 'HEAD');
+    await atOpen;
+
+    // Advance past expiry and complete a brand-new positive refresh while HEAD is paused at open.
+    clock += DEFAULT_CHECK_TTL_MS;
+    assert.equal(await f.media.enabled(), true);
+
+    // Delete the MP4 and let the paused HEAD fail open -> confirmed miss must beat the newer positive entry.
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseOpen();
+    assert.equal((await pausedHead).status, 404);
+
+    assert.equal(await f.media.enabled(), false, 'newer positive cache entry was invalidated by the confirmed miss');
+    assert.equal((await f.call('intro-zh-16x9.mp4', {}, 'HEAD')).status, 404, 'surviving MP4 is hidden');
+    assert.equal((await f.call('intro-zh-16x9.jpg')).status, 404, 'surviving poster is hidden');
+    await f.settled();
+  }
+
+  // Case 2: An in-flight refresh starts before the confirmed miss (having already lstat'd the deleted MP4)
+  // and settles after the miss -> stale positive result must not be returned or cached.
+  {
+    let clock = 1000;
+    let enteredOpen, releaseOpen;
+    const atOpen = new Promise(r => { enteredOpen = r; });
+    const openGate = new Promise(r => { releaseOpen = r; });
+    let pauseOpen = false;
+    let enteredProbe2, releaseProbe2;
+    const atProbe2 = new Promise(r => { enteredProbe2 = r; });
+    const probe2Gate = new Promise(r => { releaseProbe2 = r; });
+    let pauseOnSecondFile = false;
+    let lstatCallsInRefresh = 0;
+
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      beforeOpen: async () => {
+        if (!pauseOpen) return;
+        pauseOpen = false;
+        enteredOpen();
+        await openGate;
+      },
+      lstat: async p => {
+        if (pauseOnSecondFile) {
+          lstatCallsInRefresh++;
+          if (lstatCallsInRefresh === 2) {
+            pauseOnSecondFile = false;
+            enteredProbe2();
+            await probe2Gate;
+          }
+        }
+        return fs.promises.lstat(p);
+      }
+    });
+    fs.writeFileSync(path.join(f.host, 'intro-zh-16x9.jpg'), 'poster');
+
+    assert.equal(await f.media.enabled(), true);
+    pauseOpen = true;
+    const pausedHead = f.call(NAME, {}, 'HEAD');
+    await atOpen;
+
+    // Expire cache and start an in-flight refresh; pause it AFTER it already checked VIDEOS[0] (NAME).
+    clock += DEFAULT_CHECK_TTL_MS;
+    pauseOnSecondFile = true;
+    const refresh = f.media.enabled();
+    await atProbe2;
+
+    // Remove VIDEOS[0] (NAME) now and release the paused HEAD -> confirmed miss happens mid-refresh.
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseOpen();
+    assert.equal((await pausedHead).status, 404);
+
+    // Let the in-flight refresh finish checking remaining files (which still exist).
+    releaseProbe2();
+    assert.equal(await refresh, false, 'overlapping in-flight refresh must not return a stale positive result');
+    assert.equal(await f.media.enabled(), false, 'subsequent check observes the missing video');
+    assert.equal((await f.call('intro-zh-16x9.mp4', {}, 'HEAD')).status, 404);
+    assert.equal((await f.call('intro-zh-16x9.jpg')).status, 404);
+    await f.settled();
+  }
+
+  // Case 3: A second delayed miss does not clear a fresh negative cache entry.
+  {
+    let clock = 1000;
+    let ops = 0;
+    const releaseQueue = [];
+    let entered = 0;
+    let twoEntered;
+    const bothAtOpen = new Promise(r => { twoEntered = r; });
+
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      lstat: async p => { ops++; return fs.promises.lstat(p); },
+      access: async (p, m) => { ops++; return fs.promises.access(p, m); },
+      beforeOpen: async () => {
+        entered++;
+        if (entered === 2) twoEntered();
+        await new Promise(r => releaseQueue.push(r));
+      }
+    });
+
+    assert.equal(await f.media.enabled(), true);
+    assert.equal(ops, 8);
+    const req1 = f.call(NAME, {}, 'HEAD');
+    const req2 = f.call(NAME, {}, 'HEAD');
+    await bothAtOpen;
+
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseQueue.shift()();
+    assert.equal((await req1).status, 404);
+    assert.equal(await f.media.enabled(), false);
+    const afterNegativeCache = ops;
+
+    // Second delayed miss completes after false is already cached; false cache stays intact (0 extra ops).
+    releaseQueue.shift()();
+    assert.equal((await req2).status, 404);
+    assert.equal(await f.media.enabled(), false);
+    assert.equal(ops, afterNegativeCache, 'delayed miss preserves existing negative cache entry');
+    await f.settled();
+  }
 });
