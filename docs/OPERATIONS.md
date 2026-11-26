@@ -351,7 +351,7 @@ journalctl -u bojin.service --since -24h --no-pager -o cat | grep '^client-error
 
 `/api/ai` supports two providers selected via `AI_PROVIDER` in `/etc/bojin/environment` (any other non-empty value fails startup naming `AI_PROVIDER`):
 
-- `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL` defaulting to `google/gemini-2.5-flash` in code — keep `OPENROUTER_MODEL=google/gemini-3.8-flash` pinned in `/etc/bojin/environment` so backup behavior and thinking limits match direct Gemini, and `OPENROUTER_BASE` locked to `https://openrouter.ai`).
+- `AI_PROVIDER=openrouter` (default when unset/empty): calls OpenRouter (`OPENROUTER_API_KEY`, `OPENROUTER_MODEL` defaulting to `google/gemini-3.8-flash` — `google/gemini-2.5-flash` is scheduled for OpenRouter retirement on 2026-12-01; keep `OPENROUTER_MODEL=google/gemini-3.8-flash` pinned in `/etc/bojin/environment` so backup behavior and thinking limits match direct Gemini, and `OPENROUTER_BASE` locked to `https://openrouter.ai`).
 - `AI_PROVIDER=gemini`: calls Google Gemini API directly via its OpenAI-compatible endpoint (`GEMINI_API_KEY`, `GEMINI_MODEL` defaulting to `gemini-3.8-flash`, `GEMINI_BASE` locked to `https://generativelanguage.googleapis.com`).
 - **Origin & redirect pinning:** `GEMINI_BASE` only accepts exact HTTPS origin `https://generativelanguage.googleapis.com` and `OPENROUTER_BASE` only accepts `https://openrouter.ai` (non-matching hosts, loopback URLs, non-HTTPS URLs, credentials, or query/fragment strings always fail startup), and upstream requests set `redirect: "manual"` so credentials and payloads are never forwarded across origins.
 - **Bounded retries & fallback:** Transient Gemini `5xx`/`UNAVAILABLE` and `429` responses run up to two short backoff retries (`400 ms`, `1000 ms`, skipped once 15 s have elapsed). When `OPENROUTER_API_KEY` is also set, remaining Gemini transient/quota/timeout failures (`5xx`/`UNAVAILABLE`, `429`, or network/read timeouts — never user-input `400`, permanent `401`/`402`/`403`, redirects, safety blocks, or truncation) retry once via OpenRouter within a hard 120 s total deadline (reserving 30 s for fallback; Gemini attempts cap at 90 s), counting as a single request against per-user and global daily caps.
@@ -474,20 +474,25 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 
 ### AI monthly USD budget caps & admin overrides
 
-In addition to daily request count limits (`AI_DAILY_LIMIT=60`, `AI_GLOBAL_DAILY_LIMIT=300`), `lib/ai.js` enforces UTC calendar-month estimated USD caps using the shared pricing table in `lib/ai-pricing.js` (counting actual prompt, completion, and thinking tokens across all retries and OpenRouter fallbacks, with conservative in-flight reservations):
+In addition to daily request count limits (`AI_DAILY_LIMIT=60`, `AI_GLOBAL_DAILY_LIMIT=300`), `lib/ai.js` enforces UTC calendar-month estimated USD caps using the shared pricing table in `lib/ai-pricing.js`. Before every single provider dispatch (initial attempt, JSON-mode retry, Gemini transient retries, and OpenRouter fallback), an atomic conservative upper-bound reservation is persisted in SQLite for that dispatch's UTC month; reservations survive crashes/restarts (finalizing conservatively on expiry instead of refunding) and are replaced only by authoritative usage or confirmed non-billable HTTP rejections (`400/401/403/404/422/429` without usage).
 
 - **Per-user monthly cap (`AI_USER_MONTHLY_USD`, default `5`):** users near 80% see a gentle notice in the AI areas; users at/above their cap are refused before calling upstream with a friendly zh/en message reminding them they can still log manually.
-- **Whole-app monthly budget guard (`AI_GLOBAL_MONTHLY_USD`, default `80`):** sends one phone alert via `ALERT_URL` at 80%, and pauses AI for everyone with one alert at 100%. Resets automatically on the 1st of the next UTC month.
-- **Per-model pricing defaults (USD / 1M tokens):** `gemini-3.8-flash` / `google/gemini-3.8-flash` (`$0.75` input / `$3.75` output+thinking), `google/gemini-2.5-flash` / `gemini-2.5-flash` (`$0.30` input / `$2.50` output+thinking). Override via `AI_MODEL_PRICES_JSON` or provider/global env vars (`AI_INPUT_PRICE_PER_1M`, `AI_OUTPUT_PRICE_PER_1M`, `AI_GEMINI_*`, `AI_OPENROUTER_*`).
+- **Whole-app monthly budget guard (`AI_GLOBAL_MONTHLY_USD`, default `80`):** evaluates 80% and 100% independently, sends one phone alert via `ALERT_URL` at 80% and one at app-wide pause (100%) with separate pending/delivered delivery state, stable `X-Idempotency-Key` dedupe key, and bounded retries (up to 3 attempts). Resets automatically on the 1st of the next UTC month.
+- **Per-model pricing defaults (USD / 1M tokens; reasoning billed as output):** `gemini-3.8-flash` / `google/gemini-3.8-flash` defaults to introductory `$0.75` input / `$3.75` output through `2026-12-31 UTC` and automatically steps to standard undiscounted `$1.50` input / `$7.50` output starting `2027-01-01 UTC` (verify applicable Google AI Studio billing rates before deploying and override via `AI_MODEL_PRICES_JSON` or `AI_*_PRICE_PER_1M` if different). `OPENROUTER_MODEL` defaults to `google/gemini-3.8-flash` (`google/gemini-2.5-flash` is scheduled for OpenRouter retirement on `2026-12-01`).
+- **Mid-month rollout seeding:** when deploying mid-month on a host with existing accrued Google AI Studio / OpenRouter spend (or shared credit usage), seed the current UTC month's baseline immediately with `auth-admin.js ai-seed` (or lower `AI_GLOBAL_MONTHLY_USD` to the remaining headroom for the rollout month).
 
 ```sh
-# List this month's top users by AI spend (anonymized IDs + host-only phone/email) and app total vs $80 budget
-sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-usage
+# Mid-month rollout: seed already-accrued provider spend for the current UTC month (idempotent)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-seed --month 2026-11 --usd 18.50 --note "pre-rollout Google AI Studio spend"
 
-# Inspect or change one user's monthly USD cap (by --phone or --email; use --reset to restore default)
-sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --phone 13800138000 --usd 15
-sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --email tester@example.com --usd 2.5
-sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --email tester@example.com --reset
+# List this month's top users by AI spend (pseudonymous by default; add --show-identity on host for phone/email)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-usage
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-usage --show-identity
+
+# Inspect a user first to obtain their resolved anonId, then pass --confirm-id <anonId> to modify or reset their cap
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --phone 13800138000
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --phone 13800138000 --confirm-id <anonId> --usd 15
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --email tester@example.com --confirm-id <anonId> --reset
 ```
 
 ### Daily trial activity summary

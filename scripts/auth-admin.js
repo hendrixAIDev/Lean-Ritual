@@ -21,8 +21,9 @@ const USAGE = [
   "  node scripts/auth-admin.js invite --phone <E.164 or 11-digit mainland number> [--legacy-user <username>]",
   "  node scripts/auth-admin.js reset-password --phone <E.164 or 11-digit mainland number>",
   "  node scripts/auth-admin.js revoke   (invitation token on stdin)",
-  "  node scripts/auth-admin.js ai-cap --phone|--email <id> [--usd <n>|--reset] [--month YYYY-MM] [--json]",
-  "  node scripts/auth-admin.js ai-usage [--month YYYY-MM] [--limit N] [--json]"
+  "  node scripts/auth-admin.js ai-cap --phone|--email <id> [--usd <n>|--reset] [--confirm-id <anonId>] [--show-identity] [--month YYYY-MM] [--json]",
+  "  node scripts/auth-admin.js ai-usage [--month YYYY-MM] [--limit N] [--show-identity] [--json]",
+  "  node scripts/auth-admin.js ai-seed --month <YYYY-MM> --usd <n> [--note <text>] [--json]"
 ].join("\n");
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -109,6 +110,8 @@ function parseAiCapArgs(args) {
   let email = null;
   let usd = null;
   let reset = false;
+  let confirmId = null;
+  let showIdentity = false;
   let month = new Date().toISOString().slice(0, 7);
   let json = false;
   for (let i = 0; i < args.length; i++) {
@@ -131,6 +134,13 @@ function parseAiCapArgs(args) {
     } else if (arg === "--reset") {
       if (usd !== null || reset) throw new Error(USAGE);
       reset = true;
+    } else if (arg === "--confirm-id" || arg.startsWith("--confirm-id=")) {
+      if (confirmId !== null) throw new Error(USAGE);
+      const res = readFlagValue(args, i, "--confirm-id");
+      confirmId = res.value.trim();
+      i = res.nextIdx;
+    } else if (arg === "--show-identity") {
+      showIdentity = true;
     } else if (arg === "--month" || arg.startsWith("--month=")) {
       const res = readFlagValue(args, i, "--month");
       month = parseMonthFlag(res.value);
@@ -142,12 +152,13 @@ function parseAiCapArgs(args) {
     }
   }
   if (!phone && !email) throw new Error(USAGE);
-  return { phone, email, usd, reset, month, json };
+  return { phone, email, usd, reset, confirmId, showIdentity, month, json };
 }
 
 function parseAiUsageArgs(args) {
   let month = new Date().toISOString().slice(0, 7);
   let limit = 20;
+  let showIdentity = false;
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -160,13 +171,45 @@ function parseAiUsageArgs(args) {
       const n = Number(res.value);
       if (!Number.isSafeInteger(n) || n < 1 || n > 200) throw new Error("--limit must be an integer between 1 and 200");
       limit = n;
+    } else if (arg === "--show-identity") {
+      showIdentity = true;
     } else if (arg === "--json") {
       json = true;
     } else {
       throw new Error(USAGE);
     }
   }
-  return { month, limit, json };
+  return { month, limit, showIdentity, json };
+}
+
+function parseAiSeedArgs(args) {
+  let month = null;
+  let usd = null;
+  let note = "";
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--month" || arg.startsWith("--month=")) {
+      const res = readFlagValue(args, i, "--month");
+      month = parseMonthFlag(res.value);
+      i = res.nextIdx;
+    } else if (arg === "--usd" || arg.startsWith("--usd=")) {
+      if (usd !== null) throw new Error(USAGE);
+      const res = readFlagValue(args, i, "--usd");
+      usd = parseNonNegativeNumber(res.value, NaN, "--usd", 1_000_000);
+      i = res.nextIdx;
+    } else if (arg === "--note" || arg.startsWith("--note=")) {
+      const res = readFlagValue(args, i, "--note");
+      note = String(res.value).slice(0, 200);
+      i = res.nextIdx;
+    } else if (arg === "--json") {
+      json = true;
+    } else {
+      throw new Error(USAGE);
+    }
+  }
+  if (!month || usd === null) throw new Error(USAGE);
+  return { month, usd, note, json };
 }
 
 function hasTable(db, name) {
@@ -179,12 +222,17 @@ function hasColumn(db, table, column) {
 }
 
 function createAnonHelper(env = process.env) {
-  const key = typeof env.AUTH_SECRET === "string" && env.AUTH_SECRET.length >= 16
-    ? env.AUTH_SECRET
-    : crypto.randomBytes(32);
+  if (typeof env.AUTH_SECRET === "string" && env.AUTH_SECRET.length >= 16) {
+    return uid => "u_" + crypto
+      .createHmac("sha256", env.AUTH_SECRET)
+      .update("lean-ritual:ai-admin:v1:")
+      .update(String(uid || ""))
+      .digest("hex")
+      .slice(0, 8);
+  }
   return uid => "u_" + crypto
-    .createHmac("sha256", key)
-    .update("lean-ritual:ai-admin:v1:")
+    .createHash("sha256")
+    .update("lean-ritual:ai-admin-no-secret:v1:")
     .update(String(uid || ""))
     .digest("hex")
     .slice(0, 8);
@@ -234,10 +282,29 @@ function handleAiCap(dataDir, rest) {
   }
   if (!userRow) throw new Error("Account not found");
 
-  const bojinPath = path.join(dataDir, "bojin.db");
+  const anon = createAnonHelper(process.env);
+  const anonId = anon(userRow.id);
   const isWrite = opts.usd !== null || opts.reset;
+
+  // Require an explicit expected account identifier (--confirm-id) before any cap mutation
+  // so a typo in --phone/--email matching another account can never silently modify it.
+  if (isWrite) {
+    if (!opts.confirmId) {
+      throw new Error(
+        `Refusing to modify cap without --confirm-id. Target resolved to ${anonId}; inspect first and re-run with --confirm-id ${anonId}.`
+      );
+    }
+    if (opts.confirmId !== anonId && opts.confirmId !== userRow.id) {
+      throw new Error(
+        `Refusing to modify cap: --confirm-id does not match the resolved account (${anonId}).`
+      );
+    }
+  }
+
+  const bojinPath = path.join(dataDir, "bojin.db");
   let overrideNanos = null;
   let monthRow = null;
+  let reservedNanos = 0;
   let todayCalls = 0;
   const todayUtc = new Date().toISOString().slice(0, 10);
 
@@ -272,6 +339,11 @@ function handleAiCap(dataDir, rest) {
           "SELECT calls, prompt_tokens, completion_tokens, reasoning_tokens, cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?"
         ).get(userRow.id, opts.month);
       }
+      if (hasTable(bojinDb, "ai_budget_reservations")) {
+        reservedNanos = bojinDb.prepare(
+          "SELECT COALESCE(SUM(reserved_nanos), 0) AS n FROM ai_budget_reservations WHERE uid = ? AND month = ?"
+        ).get(userRow.id, opts.month).n;
+      }
       if (hasTable(bojinDb, "ai_usage") && hasColumn(bojinDb, "ai_usage", "day")) {
         todayCalls = bojinDb.prepare("SELECT n FROM ai_usage WHERE uid = ? AND day = ?").get(userRow.id, todayUtc)?.n || 0;
       }
@@ -280,22 +352,22 @@ function handleAiCap(dataDir, rest) {
     }
   }
 
-  const anon = createAnonHelper(process.env);
   const contact = resolveUserContact(userRow);
   const capNanos = overrideNanos !== null ? overrideNanos : budgets.userMonthlyNanos;
-  const spentNanos = monthRow?.cost_nanos || 0;
+  const spentNanos = (monthRow?.cost_nanos || 0) + reservedNanos;
   const capUsd = roundUsd(nanosToUsd(capNanos));
   const spentUsd = roundUsd(nanosToUsd(spentNanos));
+  const reservedUsd = roundUsd(nanosToUsd(reservedNanos));
   const usedPct = capNanos > 0 ? Math.round((spentNanos / capNanos) * 1000) / 10 : null;
   const out = {
-    anonId: anon(userRow.id),
-    email: contact.email,
-    phone: contact.phone,
+    anonId,
+    ...(opts.showIdentity ? { email: contact.email, phone: contact.phone } : {}),
     month: opts.month,
     capUsd,
     capSource: overrideNanos !== null ? "override" : "default",
     defaultCapUsd: budgets.userMonthlyUsd,
     spentUsd,
+    ...(reservedNanos > 0 ? { reservedUsd } : {}),
     usedPct,
     calls: monthRow?.calls || 0,
     promptTokens: monthRow?.prompt_tokens || 0,
@@ -314,11 +386,12 @@ function handleAiCap(dataDir, rest) {
       ? ` (updated to $${capUsd.toFixed(2)})`
       : "";
   const pctStr = usedPct !== null ? `${usedPct.toFixed(1)}%` : "n/a";
+  const identitySuffix = opts.showIdentity ? `  (${escapeTerminalText(formatContact(contact))})` : "";
   console.log([
-    `User:   ${escapeTerminalText(out.anonId)}  (${escapeTerminalText(formatContact(contact))})`,
+    `User:   ${escapeTerminalText(out.anonId)}${identitySuffix}`,
     `Month:  ${out.month} (UTC)`,
     `Cap:    $${capUsd.toFixed(2)} [${out.capSource}]${actionNote}`,
-    `Spend:  $${spentUsd.toFixed(4)} / $${capUsd.toFixed(2)} (${pctStr})`,
+    `Spend:  $${spentUsd.toFixed(4)} / $${capUsd.toFixed(2)} (${pctStr})${reservedNanos > 0 ? ` [incl. $${reservedUsd.toFixed(4)} reserved]` : ""}`,
     `Usage:  ${out.calls} calls (today UTC: ${out.todayCalls}) | tokens: in=${out.promptTokens} out=${out.completionTokens} think=${out.reasoningTokens}`
   ].join("\n"));
 }
@@ -331,6 +404,8 @@ function handleAiUsage(dataDir, rest) {
   const anon = createAnonHelper(process.env);
 
   let globalRow = null;
+  let baselineNanos = 0;
+  let globalReservedNanos = 0;
   let topRows = [];
   const capMap = new Map();
 
@@ -342,6 +417,16 @@ function handleAiUsage(dataDir, rest) {
         globalRow = bojinDb.prepare(
           "SELECT calls, prompt_tokens, completion_tokens, reasoning_tokens, cost_nanos FROM ai_global_monthly_usage WHERE month = ?"
         ).get(opts.month) || null;
+      }
+      if (hasTable(bojinDb, "ai_global_monthly_baseline")) {
+        baselineNanos = bojinDb.prepare(
+          "SELECT baseline_nanos FROM ai_global_monthly_baseline WHERE month = ?"
+        ).get(opts.month)?.baseline_nanos || 0;
+      }
+      if (hasTable(bojinDb, "ai_budget_reservations")) {
+        globalReservedNanos = bojinDb.prepare(
+          "SELECT COALESCE(SUM(reserved_nanos), 0) AS n FROM ai_budget_reservations WHERE month = ?"
+        ).get(opts.month).n;
       }
       if (hasTable(bojinDb, "ai_monthly_usage")) {
         topRows = bojinDb.prepare(
@@ -365,7 +450,7 @@ function handleAiUsage(dataDir, rest) {
   }
 
   const identityMap = new Map();
-  if (topRows.length && fs.existsSync(authPath)) {
+  if (opts.showIdentity && topRows.length && fs.existsSync(authPath)) {
     const authDb = new DatabaseSync(authPath, { readOnly: true });
     try {
       authDb.exec("PRAGMA busy_timeout=5000");
@@ -386,8 +471,11 @@ function handleAiUsage(dataDir, rest) {
     }
   }
 
-  const globalSpentNanos = globalRow?.cost_nanos || 0;
+  const globalLiveNanos = globalRow?.cost_nanos || 0;
+  const globalSpentNanos = globalLiveNanos + baselineNanos + globalReservedNanos;
   const globalSpentUsd = roundUsd(nanosToUsd(globalSpentNanos));
+  const baselineUsd = roundUsd(nanosToUsd(baselineNanos));
+  const reservedUsd = roundUsd(nanosToUsd(globalReservedNanos));
   const globalUsedPct = budgets.globalMonthlyNanos > 0
     ? Math.round((globalSpentNanos / budgets.globalMonthlyNanos) * 1000) / 10
     : null;
@@ -403,8 +491,7 @@ function handleAiUsage(dataDir, rest) {
     return {
       rank: idx + 1,
       anonId: anon(row.uid),
-      email: contact.email,
-      phone: contact.phone,
+      ...(opts.showIdentity ? { email: contact.email, phone: contact.phone } : {}),
       spentUsd,
       capUsd,
       capSource: overrideNanos !== null ? "override" : "default",
@@ -418,8 +505,11 @@ function handleAiUsage(dataDir, rest) {
 
   const payload = {
     month: opts.month,
+    identitiesIncluded: opts.showIdentity,
     global: {
       spentUsd: globalSpentUsd,
+      baselineUsd,
+      reservedUsd,
       budgetUsd: budgets.globalMonthlyUsd,
       usedPct: globalUsedPct,
       paused: globalPaused,
@@ -442,24 +532,84 @@ function handleAiUsage(dataDir, rest) {
     : globalUsedPct !== null && globalUsedPct >= 80
       ? " [>=80%]"
       : "";
+  const extraParts = [];
+  if (baselineNanos > 0) extraParts.push(`baseline=$${baselineUsd.toFixed(2)}`);
+  if (globalReservedNanos > 0) extraParts.push(`reserved=$${reservedUsd.toFixed(4)}`);
+  const extraNote = extraParts.length ? ` [${extraParts.join(", ")}]` : "";
   const lines = [
     `AI Monthly Usage (${opts.month} UTC)`,
-    `App Total: $${globalSpentUsd.toFixed(4)} / $${budgets.globalMonthlyUsd.toFixed(2)} (${globalUsedPct !== null ? globalUsedPct.toFixed(1) + "%" : "n/a"})${statusTag} | ${payload.global.calls} calls | in=${payload.global.promptTokens} out=${payload.global.completionTokens} think=${payload.global.reasoningTokens}`,
+    `App Total: $${globalSpentUsd.toFixed(4)} / $${budgets.globalMonthlyUsd.toFixed(2)} (${globalUsedPct !== null ? globalUsedPct.toFixed(1) + "%" : "n/a"})${statusTag}${extraNote} | ${payload.global.calls} calls | in=${payload.global.promptTokens} out=${payload.global.completionTokens} think=${payload.global.reasoningTokens}`,
     ""
   ];
   if (!users.length) {
     lines.push("No per-user AI spend recorded for this month.");
   } else {
-    lines.push("Top users (host-only identity):");
+    lines.push(opts.showIdentity
+      ? "Top users (host-only identities shown via --show-identity):"
+      : "Top users (pseudonymous; pass --show-identity on host to reveal phone/email):");
     for (const u of users) {
       const capTag = u.capSource === "override" ? " (override)" : "";
       const pctStr = u.usedPct !== null ? `${u.usedPct.toFixed(1)}%` : "n/a";
+      const idCol = opts.showIdentity ? `  ${escapeTerminalText(formatContact(u))}` : "";
       lines.push(
-        `  ${u.rank}. ${escapeTerminalText(u.anonId)}  ${escapeTerminalText(formatContact(u))}  $${u.spentUsd.toFixed(4)} / $${u.capUsd.toFixed(2)}${capTag} (${pctStr})  ${u.calls} calls  in=${u.promptTokens} out=${u.completionTokens} think=${u.reasoningTokens}`
+        `  ${u.rank}. ${escapeTerminalText(u.anonId)}${idCol}  $${u.spentUsd.toFixed(4)} / $${u.capUsd.toFixed(2)}${capTag} (${pctStr})  ${u.calls} calls  in=${u.promptTokens} out=${u.completionTokens} think=${u.reasoningTokens}`
       );
     }
   }
   console.log(lines.join("\n"));
+}
+
+function handleAiSeed(dataDir, rest) {
+  const opts = parseAiSeedArgs(rest);
+  const budgets = parseBudgets(process.env);
+  const bojinPath = path.join(dataDir, "bojin.db");
+  const bojinDb = new DatabaseSync(bojinPath);
+  let liveNanos = 0;
+  try {
+    bojinDb.exec("PRAGMA busy_timeout=5000");
+    ensureAiBudgetSchema(bojinDb);
+    const nowIso = new Date().toISOString();
+    const baselineNanos = usdToNanos(opts.usd);
+    bojinDb.exec("BEGIN IMMEDIATE");
+    try {
+      bojinDb.prepare(
+        `INSERT INTO ai_global_monthly_baseline (month, baseline_nanos, note, updated)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(month) DO UPDATE SET
+           baseline_nanos = excluded.baseline_nanos,
+           note = excluded.note,
+           updated = excluded.updated`
+      ).run(opts.month, baselineNanos, opts.note, nowIso);
+      liveNanos = bojinDb.prepare(
+        "SELECT cost_nanos FROM ai_global_monthly_usage WHERE month = ?"
+      ).get(opts.month)?.cost_nanos || 0;
+      bojinDb.exec("COMMIT");
+    } catch (err) {
+      bojinDb.exec("ROLLBACK");
+      throw err;
+    }
+  } finally {
+    bojinDb.close();
+  }
+
+  const baselineUsd = roundUsd(opts.usd);
+  const liveUsd = roundUsd(nanosToUsd(liveNanos));
+  const totalUsd = roundUsd(baselineUsd + liveUsd);
+  const out = {
+    month: opts.month,
+    baselineUsd,
+    liveUsd,
+    totalUsd,
+    budgetUsd: budgets.globalMonthlyUsd,
+    note: opts.note
+  };
+  if (opts.json) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  console.log(
+    `AI rollout baseline set for ${opts.month} (UTC): baseline=$${baselineUsd.toFixed(2)}, live=$${liveUsd.toFixed(4)}, effective total=$${totalUsd.toFixed(4)} / $${budgets.globalMonthlyUsd.toFixed(2)}${opts.note ? ` (${escapeTerminalText(opts.note)})` : ""}`
+  );
 }
 
 // Operators issue an invitation or a one-time password reset link, never set a
@@ -467,10 +617,10 @@ function handleAiUsage(dataDir, rest) {
 function main() {
   const [command, ...rest] = process.argv.slice(2);
   const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "..", "data"));
-  if (!["invite", "revoke", "reset-password", "ai-cap", "ai-usage"].includes(command)) throw new Error(USAGE);
+  if (!["invite", "revoke", "reset-password", "ai-cap", "ai-usage", "ai-seed"].includes(command)) throw new Error(USAGE);
 
-  if (command === "ai-cap" || command === "ai-usage") {
-    const needsCreateDir = command === "ai-cap" && rest.some(a => a === "--usd" || a.startsWith("--usd=") || a === "--reset");
+  if (command === "ai-cap" || command === "ai-usage" || command === "ai-seed") {
+    const needsCreateDir = command === "ai-seed" || (command === "ai-cap" && rest.some(a => a === "--usd" || a.startsWith("--usd=") || a === "--reset"));
     if (needsCreateDir) fs.mkdirSync(dataDir, { recursive: true });
     if (!fs.existsSync(dataDir)) {
       if (command === "ai-cap") throw new Error("Account not found");
@@ -481,6 +631,7 @@ function main() {
     process.once("exit", releaseDataAccess);
     try {
       if (command === "ai-cap") handleAiCap(dataDir, rest);
+      else if (command === "ai-seed") handleAiSeed(dataDir, rest);
       else handleAiUsage(dataDir, rest);
     } finally {
       releaseDataAccess();

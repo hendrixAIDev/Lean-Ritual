@@ -29,7 +29,7 @@ const CFG = {
   aiProvider: process.env.AI_PROVIDER,
   orKey: process.env.OPENROUTER_API_KEY || "",
   orBase: process.env.OPENROUTER_BASE || "https://openrouter.ai/api/v1",
-  orModel: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
+  orModel: process.env.OPENROUTER_MODEL || "google/gemini-3.8-flash",
   geminiKey: process.env.GEMINI_API_KEY || "",
   geminiBase: process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta/openai",
   geminiModel: process.env.GEMINI_MODEL || "gemini-3.8-flash",
@@ -440,7 +440,10 @@ async function cli(args){
   const retryDeletes = () => { try { for (const {uid} of accountData.pending()) {
     if (!authentication.isUserPresent(uid)) { try {authentication.purgeDeletedArtifacts(uid);accountData.completeDeletion(uid);} catch {console.error("Account deletion cleanup needs attention");} }
   }} catch { console.error("Account deletion retry check failed; will retry"); } };
-  retryDeletes();setInterval(retryDeletes,60000).unref();
+  retryDeletes();
+  const flushAiAlerts = () => { if (aiProxy.enabled) aiProxy.flushAlerts().catch(() => {}); };
+  flushAiAlerts();
+  setInterval(() => { retryDeletes(); flushAiAlerts(); }, 60000).unref();
   const server = http.createServer((req, res) => {
     handle(req, res).catch(e => {
       const status = e.status || 500; if (status >= 500) console.error("request failed", e.code || "server_error");
