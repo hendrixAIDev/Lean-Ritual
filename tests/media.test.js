@@ -21,7 +21,7 @@ async function fixture(t, { beforeOpen, afterOpen, wrap, videos = true, checkTtl
   if (videos) for (const name of VIDEOS) fs.writeFileSync(path.join(host, name), BYTES);
   const handles = [];
   const open = async (file, flags) => {
-    if (beforeOpen) beforeOpen(file);
+    if (beforeOpen) await beforeOpen(file);
     const handle = await fs.promises.open(file, flags);
     handles.push(handle);
     if (afterOpen) await afterOpen(file);
@@ -382,4 +382,148 @@ test('a miss on a required video invalidates the cached true result, while a mis
   assert.equal(await f.media.enabled(), false, 'symlinked video invalidates cached true');
 
   await f.settled();
+});
+
+test('a confirmed video miss wins over both a newer completed refresh and an overlapping in-flight refresh', async t => {
+  // Case 1: HEAD pauses at open, TTL expires and a fresh positive refresh completes,
+  // then the MP4 is removed and HEAD resumes -> 404 must invalidate the newer positive cache entry.
+  {
+    let clock = 1000;
+    let enteredOpen, releaseOpen;
+    const atOpen = new Promise(r => { enteredOpen = r; });
+    const openGate = new Promise(r => { releaseOpen = r; });
+    let pauseNextOpen = true;
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      beforeOpen: async () => {
+        if (!pauseNextOpen) return;
+        pauseNextOpen = false;
+        enteredOpen();
+        await openGate;
+      }
+    });
+    fs.writeFileSync(path.join(f.host, 'intro-zh-16x9.jpg'), 'poster');
+
+    assert.equal(await f.media.enabled(), true);
+    const pausedHead = f.call(NAME, {}, 'HEAD');
+    await atOpen;
+
+    // Advance past expiry and complete a brand-new positive refresh while HEAD is paused at open.
+    clock += DEFAULT_CHECK_TTL_MS;
+    assert.equal(await f.media.enabled(), true);
+
+    // Delete the MP4 and let the paused HEAD fail open -> confirmed miss must beat the newer positive entry.
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseOpen();
+    assert.equal((await pausedHead).status, 404);
+
+    assert.equal(await f.media.enabled(), false, 'newer positive cache entry was invalidated by the confirmed miss');
+    assert.equal((await f.call('intro-zh-16x9.mp4', {}, 'HEAD')).status, 404, 'surviving MP4 is hidden');
+    assert.equal((await f.call('intro-zh-16x9.jpg')).status, 404, 'surviving poster is hidden');
+    await f.settled();
+  }
+
+  // Case 2: An in-flight refresh starts before the confirmed miss (having already lstat'd the deleted MP4)
+  // and settles after the miss -> stale positive result must not be returned or cached.
+  {
+    let clock = 1000;
+    let enteredOpen, releaseOpen;
+    const atOpen = new Promise(r => { enteredOpen = r; });
+    const openGate = new Promise(r => { releaseOpen = r; });
+    let pauseOpen = false;
+    let enteredProbe2, releaseProbe2;
+    const atProbe2 = new Promise(r => { enteredProbe2 = r; });
+    const probe2Gate = new Promise(r => { releaseProbe2 = r; });
+    let pauseOnSecondFile = false;
+    let lstatCallsInRefresh = 0;
+
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      beforeOpen: async () => {
+        if (!pauseOpen) return;
+        pauseOpen = false;
+        enteredOpen();
+        await openGate;
+      },
+      lstat: async p => {
+        if (pauseOnSecondFile) {
+          lstatCallsInRefresh++;
+          if (lstatCallsInRefresh === 2) {
+            pauseOnSecondFile = false;
+            enteredProbe2();
+            await probe2Gate;
+          }
+        }
+        return fs.promises.lstat(p);
+      }
+    });
+    fs.writeFileSync(path.join(f.host, 'intro-zh-16x9.jpg'), 'poster');
+
+    assert.equal(await f.media.enabled(), true);
+    pauseOpen = true;
+    const pausedHead = f.call(NAME, {}, 'HEAD');
+    await atOpen;
+
+    // Expire cache and start an in-flight refresh; pause it AFTER it already checked VIDEOS[0] (NAME).
+    clock += DEFAULT_CHECK_TTL_MS;
+    pauseOnSecondFile = true;
+    const refresh = f.media.enabled();
+    await atProbe2;
+
+    // Remove VIDEOS[0] (NAME) now and release the paused HEAD -> confirmed miss happens mid-refresh.
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseOpen();
+    assert.equal((await pausedHead).status, 404);
+
+    // Let the in-flight refresh finish checking remaining files (which still exist).
+    releaseProbe2();
+    assert.equal(await refresh, false, 'overlapping in-flight refresh must not return a stale positive result');
+    assert.equal(await f.media.enabled(), false, 'subsequent check observes the missing video');
+    assert.equal((await f.call('intro-zh-16x9.mp4', {}, 'HEAD')).status, 404);
+    assert.equal((await f.call('intro-zh-16x9.jpg')).status, 404);
+    await f.settled();
+  }
+
+  // Case 3: A second delayed miss does not clear a fresh negative cache entry.
+  {
+    let clock = 1000;
+    let ops = 0;
+    const releaseQueue = [];
+    let entered = 0;
+    let twoEntered;
+    const bothAtOpen = new Promise(r => { twoEntered = r; });
+
+    const f = await fixture(t, {
+      checkTtlMs: DEFAULT_CHECK_TTL_MS,
+      now: () => clock,
+      lstat: async p => { ops++; return fs.promises.lstat(p); },
+      access: async (p, m) => { ops++; return fs.promises.access(p, m); },
+      beforeOpen: async () => {
+        entered++;
+        if (entered === 2) twoEntered();
+        await new Promise(r => releaseQueue.push(r));
+      }
+    });
+
+    assert.equal(await f.media.enabled(), true);
+    assert.equal(ops, 8);
+    const req1 = f.call(NAME, {}, 'HEAD');
+    const req2 = f.call(NAME, {}, 'HEAD');
+    await bothAtOpen;
+
+    fs.unlinkSync(path.join(f.host, NAME));
+    releaseQueue.shift()();
+    assert.equal((await req1).status, 404);
+    assert.equal(await f.media.enabled(), false);
+    const afterNegativeCache = ops;
+
+    // Second delayed miss completes after false is already cached; false cache stays intact (0 extra ops).
+    releaseQueue.shift()();
+    assert.equal((await req2).status, 404);
+    assert.equal(await f.media.enabled(), false);
+    assert.equal(ops, afterNegativeCache, 'delayed miss preserves existing negative cache entry');
+    await f.settled();
+  }
 });

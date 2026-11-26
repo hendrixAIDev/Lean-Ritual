@@ -320,7 +320,12 @@ sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4   # expect 206
 ```
 
-Availability checks are cached for 30 seconds (`MEDIA_CHECK_TTL_MS`, single-flight coalesced) and invalidated immediately if a required MP4 fails to open. To hide the video again, remove or rename any one of the four MP4s; the section disappears within 30 seconds (or immediately on a miss for that video), with no restart. To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Browsers that already cached the old file may keep it for up to 7 days.
+Availability checks are cached in memory (single-flight coalesced) for `MEDIA_CHECK_TTL_MS` milliseconds — **30000 ms (30 s) by default**, configurable in `/etc/bojin/environment` as an integer from `1` to `300000` (up to 300 s; out-of-range or non-integer values fail startup, and changing the value requires restarting `bojin.service`). The configured window applies in both directions:
+
+- **Turning on without a restart:** If the server previously cached `false` while files were incomplete, adding the fourth MP4 takes effect once the cached entry expires (up to `MEDIA_CHECK_TTL_MS`, 30 s by default).
+- **Turning off without a restart:** Removing or renaming any one of the four MP4s hides the section once the cached entry expires (up to `MEDIA_CHECK_TTL_MS`, 30 s by default), or immediately as soon as a qualifying `GET`/`HEAD` request hits that missing/invalid MP4 (a confirmed miss invalidates any active or in-flight positive result). Until expiry or such a miss, fresh landing-page responses can still include the player and load its poster.
+
+To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Because the `/media/` URLs stay the same, browsers with a cached copy of an old MP4 or poster may keep it for up to 7 days.
 
 ## Monitoring and account operations
 
