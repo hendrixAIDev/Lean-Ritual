@@ -93,7 +93,11 @@ test('invalid numbers are still the server\'s call: they reach lib/phone.js and 
 
 test('login.html: one labelled dropdown on the phone field, hidden until the script fills it, and no inline code', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public/login.html'), 'utf8');
-  assert.match(html, /<script src="\/site\/phone-country\.js"><\/script>\n<script>/, 'loaded before the page script');
+  // In <head>: the browser does not paint the sign-in layout while it waits for script files, so the
+  // invite form opens in place instead of jumping (layout shift was 0.77 on phones before).
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.match(head, /<script src="\/client-errors\.js" referrerpolicy="no-referrer"><\/script>\n<script src="\/site\/phone-country\.js"><\/script>/);
+  assert.equal((html.slice(html.indexOf('<body>')).match(/<script src=/g) || []).length, 0, 'no script file in the body delays the page script');
   assert.match(html, /<div class="phone-field" id="phw" role="group" aria-labelledby="lbl-ph" hidden><label class="field-label" id="lbl-ph" for="ph">手机号<\/label><div class="phone-row"><select id="cc" autocomplete="tel-country-code" aria-label="国家或地区代码" hidden><\/select><input id="ph" type="tel"/);
   assert.equal((html.match(/type="tel"/g) || []).length, 1, 'login.html has one phone field (sign-in and invite sign-up share it)');
   assert.doesNotMatch(SRC, /innerHTML|eval\(|new Function/);
