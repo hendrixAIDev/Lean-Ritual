@@ -20,6 +20,7 @@ const {
   parseBudgets,
   resolveModelRate,
   splitOutputTokens,
+  estimateOutputUpperBoundTokens,
   calcUsageCostUsd,
   usdToNanos,
   nanosToUsd,
@@ -123,9 +124,9 @@ test("shared ai-pricing defaults, Jan 1 2027 standard rate transition, env overr
 });
 
 test("Finding 1: per-attempt reservation prevents retries and OpenRouter fallback from exceeding tight user cap OR tight global cap", async () => {
-  // 1A. Tight user cap ($0.008) with Codex's exact reproduction:
+  // 1A. Tight user cap ($0.01) with Codex's exact reproduction:
   // Gemini attempt 1 fails with 503 after consuming 2,000 output tokens ($0.0075).
-  // OpenRouter fallback MUST be refused BEFORE dispatch so total spend stays <= $0.008!
+  // OpenRouter fallback MUST be refused BEFORE dispatch so total spend stays <= $0.01!
   {
     const db = makeDb();
     let clock = Date.parse("2026-11-26T12:00:00.000Z");
@@ -133,13 +134,14 @@ test("Finding 1: per-attempt reservation prevents retries and OpenRouter fallbac
     const proxy = createAIProxy(db, {
       aiProvider: "gemini",
       geminiKey: "g-key",
-      geminiModel: "gemini-3.8-flash", // $0.75/1M in, $3.75/1M out -> 2000 maxTokens reserve ~$0.0077
+      geminiModel: "gemini-3.8-flash", // $0.75/1M in, $3.75/1M out -> 2000 maxTokens (low) reserve ~$0.0096
       orKey: "or-key",
-      orModel: "google/gemini-2.5-flash", // $0.30/1M in, $2.50/1M out -> 2000 maxTokens reserve ~$0.0051
+      orModel: "google/gemini-2.5-flash", // $0.30/1M in, $2.50/1M out -> 2000 maxTokens (low) reserve ~$0.0063
       aiDaily: 10,
       aiGlobalDaily: 50,
       aiMaxTokens: 2000,
-      aiUserMonthlyUsd: 0.008,
+      aiReasoningEffort: "low",
+      aiUserMonthlyUsd: 0.01,
       aiGlobalMonthlyUsd: 80.0,
       geminiRetryDelays: [0],
       now: () => clock,
@@ -165,14 +167,14 @@ test("Finding 1: per-attempt reservation prevents retries and OpenRouter fallbac
       );
       assert.equal(dispatched.length, 1, "retry and fallback must be blocked before dispatch when cap would be exceeded");
       const spent = db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?").get("u_tight", "2026-11").cost_nanos;
-      assert.ok(nanosToUsd(spent) <= 0.008, `user spend ${nanosToUsd(spent)} exceeded $0.008 cap`);
+      assert.ok(nanosToUsd(spent) <= 0.01, `user spend ${nanosToUsd(spent)} exceeded $0.01 cap`);
     } finally {
       db.close();
     }
   }
 
-  // 1B. Tight global cap ($0.008) independently (user cap is $5.00):
-  // Two concurrent users race AND the admitted call hits a 503 retry/fallback -> global spend stays <= $0.008!
+  // 1B. Tight global cap ($0.01) independently (user cap is $5.00):
+  // Two concurrent users race AND the admitted call hits a 503 retry/fallback -> global spend stays <= $0.01!
   {
     const db = makeDb();
     let clock = Date.parse("2026-11-26T12:00:00.000Z");
@@ -191,8 +193,9 @@ test("Finding 1: per-attempt reservation prevents retries and OpenRouter fallbac
       aiDaily: 10,
       aiGlobalDaily: 50,
       aiMaxTokens: 2000,
+      aiReasoningEffort: "low",
       aiUserMonthlyUsd: 5.0,
-      aiGlobalMonthlyUsd: 0.008,
+      aiGlobalMonthlyUsd: 0.01,
       geminiRetryDelays: [0],
       now: () => clock,
       sleep: async () => {},
@@ -229,7 +232,7 @@ test("Finding 1: per-attempt reservation prevents retries and OpenRouter fallbac
       await assert.rejects(p1, e => e.status === 503 && e.code === "ai_global_monthly_cap");
       assert.equal(dispatched.length, 1, "neither retry nor fallback may dispatch past global cap");
       const gSpent = db.prepare("SELECT cost_nanos FROM ai_global_monthly_usage WHERE month = ?").get("2026-11").cost_nanos;
-      assert.ok(nanosToUsd(gSpent) <= 0.008, `global spend ${nanosToUsd(gSpent)} exceeded $0.008 cap`);
+      assert.ok(nanosToUsd(gSpent) <= 0.01, `global spend ${nanosToUsd(gSpent)} exceeded $0.01 cap`);
     } finally {
       db.close();
     }
@@ -248,7 +251,8 @@ test("Finding 2: crash & restart preserve spend headroom (before and after expir
     geminiKey: "g-key",
     aiDaily: 50,
     aiGlobalDaily: 50,
-    aiMaxTokens: 500, // reserve ~$0.79 per call (256 overhead + 32 msg + bytes + 500 output = ~790 tokens = $0.79)
+    aiMaxTokens: 500, // low effort reserve ~$0.92 per call (256+32+bytes + 500+128 output)
+    aiReasoningEffort: "low",
     aiUserMonthlyUsd: 1.0,
     aiGlobalMonthlyUsd: 1.0,
     aiPricing: pricing,
@@ -396,7 +400,8 @@ test("Finding 3: account deletion during an in-flight AI call preserves global e
     geminiKey: "g-key",
     aiDaily: 50,
     aiGlobalDaily: 50,
-    aiMaxTokens: 500, // reserve ~$0.79
+    aiMaxTokens: 500, // low effort reserve ~$0.92
+    aiReasoningEffort: "low",
     aiUserMonthlyUsd: 5.0,
     aiGlobalMonthlyUsd: 1.0, // only room for 1 in-flight call!
     aiPricing: pricing,
@@ -524,8 +529,10 @@ test("Finding 6: oversized request does not claim 100% alert, jump across 80%->1
     }, async () => makeOkRes("ok", { prompt_tokens: 600, completion_tokens: 600 })); // $1.20 jumps 0% -> 120%!
 
     try {
-      // Attempt 1 of delivery fails with 503 -> BOTH 80% and 100% attempted and remain status='pending'
+      // Attempt 1 of delivery is scheduled asynchronously off the request path and fails with 503
+      // -> drain via flushAlerts(); BOTH 80% and 100% attempted and remain status='pending'
       await proxy({ id: "u1" }, { messages: [{ content: "jump" }] });
+      await proxy.flushAlerts();
       assert.equal(deliveries.length, 2);
       assert.deepEqual(deliveries.map(d => d.key), ["ai-budget:2026-11:80", "ai-budget:2026-11:100"]);
       const rowsPending = db.prepare("SELECT threshold, status, attempts FROM ai_budget_alerts ORDER BY threshold").all().map(r => ({ ...r }));
@@ -580,10 +587,11 @@ test("Finding 6: oversized request does not claim 100% alert, jump across 80%->1
       alertLog: () => {},
       now: () => clock,
       log: () => {}
-    }, async () => makeOkRes("ok", { prompt_tokens: 2250, completion_tokens: 2000 })); // $4.25 / $5.00 = 85% (only 80% alert)
+    }, async () => makeOkRes("ok", { prompt_tokens: 2050, completion_tokens: 2000 })); // $4.05 / $5.00 = 81% (only 80% alert; $0.95 remaining >= $0.90 min reserve)
 
     try {
       await proxy({ id: "u1" }, { messages: [{ content: "x" }] });
+      await proxy.flushAlerts();
       assert.equal(alertPosts, 1);
       clock += 6000;
       await proxy.flushAlerts();
@@ -1130,6 +1138,7 @@ test("HTTP end-to-end: connected & disconnected clients settle upstream cost, /a
     GEMINI_API_KEY: "test-gemini-key",
     OPENROUTER_API_KEY: "",
     AI_MAX_OUTPUT_TOKENS: "50",
+    AI_REASONING_EFFORT: "low",
     AI_INPUT_PRICE_PER_1M: "1000",
     AI_OUTPUT_PRICE_PER_1M: "1000",
     AI_USER_MONTHLY_USD: "1.5",
@@ -1209,9 +1218,12 @@ test("HTTP end-to-end: connected & disconnected clients settle upstream cost, /a
   assert.equal(JSON.parse(r2.headers.get("x-bojin-ai-budget")).usedPct, 60);
   assert.equal(alertsSeen.length, 0);
 
-  // 3. Call 3 by User C ($0.90 -> global $2.70 / $2.50 = 108% -> fires BOTH 80% AND 100% alerts!)
+  // 3. Call 3 by User C ($0.90 -> global $2.70 / $2.50 = 108% -> fires BOTH 80% AND 100% alerts asynchronously!)
   const r3 = await req("/api/ai", { messages: [{ content: "meal 3" }] }, cookieC);
   assert.equal(r3.status, 200);
+  for (let i = 0; i < 100 && alertsSeen.length < 2; i++) {
+    await new Promise(r => setTimeout(r, 20));
+  }
   assert.equal(alertsSeen.length, 2);
   assert.match(alertsSeen[0].title, /80%/);
   assert.match(alertsSeen[1].title, /100%/);
@@ -1224,4 +1236,287 @@ test("HTTP end-to-end: connected & disconnected clients settle upstream cost, /a
   assert.match(j4.message, /paused.*manually/i);
   assert.equal(aiHits, 3);
   assert.equal(alertsSeen.length, 2);
+});
+
+test("Re-review Finding 1: output reservation covers thinking & provider overrun (max_tokens=300 -> 302/301 reasoning) and extreme overruns settle immediately against next admission", async () => {
+  // Unit check on estimateOutputUpperBoundTokens
+  assert.equal(estimateOutputUpperBoundTokens(300, { reasoningEffort: "low" }), 428);
+  assert.equal(estimateOutputUpperBoundTokens(300, {}), 812);
+  assert.equal(estimateOutputUpperBoundTokens(2000, { reasoningEffort: "low" }), 2500);
+  assert.equal(estimateOutputUpperBoundTokens(2000, { reasoningEffort: "high" }), 4000);
+
+  // 1A. Codex exact reproduction: OpenRouter request with max_tokens=300 returning 302 completion (301 reasoning) tokens.
+  // At simultaneous $0.001344 caps (where naive max_tokens=300 reservation previously admitted and overspent to $0.0013515),
+  // admission MUST now be refused before calling upstream (for both effort="low" and unset effort).
+  for (const reasoningEffort of ["low", undefined]) {
+    const db = makeDb();
+    const clock = Date.parse("2026-11-26T12:00:00.000Z");
+    let calls = 0;
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 300,
+      aiReasoningEffort: reasoningEffort,
+      aiUserMonthlyUsd: 0.001344,
+      aiGlobalMonthlyUsd: 0.001344,
+      now: () => clock,
+      log: () => {}
+    }, async () => {
+      calls++;
+      return makeOkRes("ok", {
+        prompt_tokens: 292,
+        completion_tokens: 302,
+        completion_tokens_details: { reasoning_tokens: 301 }
+      });
+    });
+    try {
+      await assert.rejects(
+        proxy({ id: "u_overrun" }, { messages: [{ content: "test" }] }),
+        e => e.status === 503 && e.code === "ai_global_monthly_cap"
+      );
+      assert.equal(calls, 0, "cap of $0.001344 must refuse before calling upstream when thinking/overrun reserve exceeds cap");
+    } finally {
+      db.close();
+    }
+  }
+
+  // With cap matching the new upper-bound reservation, admission succeeds and 302 completion / 301 reasoning settles strictly <= cap!
+  {
+    const db = makeDb();
+    const clock = Date.parse("2026-11-26T12:00:00.000Z");
+    const proxyProbe = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 300,
+      aiReasoningEffort: "low",
+      now: () => clock,
+      log: () => {}
+    }, async () => makeOkRes("ok", null));
+    const reserveUsd = nanosToUsd(proxyProbe.estimateAttemptReserveNanos("openrouter", [{ role: "user", content: "test" }], [], clock).reserveNanos);
+
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 300,
+      aiReasoningEffort: "low",
+      aiUserMonthlyUsd: reserveUsd,
+      aiGlobalMonthlyUsd: reserveUsd,
+      now: () => clock,
+      log: () => {}
+    }, async () => makeOkRes("ok", {
+      prompt_tokens: 292,
+      completion_tokens: 302,
+      completion_tokens_details: { reasoning_tokens: 301 }
+    }));
+    try {
+      const res = await proxy({ id: "u_fit" }, { messages: [{ content: "test" }] });
+      assert.deepEqual(res, { text: "ok", truncated: false });
+      const spentUsd = nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?").get("u_fit", "2026-11").cost_nanos);
+      assert.equal(roundUsd(spentUsd), 0.001352);
+      assert.ok(spentUsd <= reserveUsd, `settled ${spentUsd} must stay within reservation/cap ${reserveUsd}`);
+    } finally {
+      db.close();
+    }
+  }
+
+  // 1B. Extreme provider overrun (provider ignores max_tokens completely and bills beyond reserve & cap):
+  // Full actual costNanos is settled immediately into monthly spend (never clamped), blocking the next admission and firing alerts!
+  {
+    const db = makeDb();
+    const clock = Date.parse("2026-11-26T12:00:00.000Z");
+    const pricing = parsePricing({ AI_INPUT_PRICE_PER_1M: "1000", AI_OUTPUT_PRICE_PER_1M: "1000" });
+    const alerts = [];
+    let calls = 0;
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 100, // low effort reserve ~$0.52 (288+4 + 100+128 = 520 tokens)
+      aiReasoningEffort: "low",
+      aiUserMonthlyUsd: 1.0,
+      aiGlobalMonthlyUsd: 1.0,
+      aiPricing: pricing,
+      alertUrl: "https://ntfy.example.com/overrun-alert",
+      alertFetcher: async (url, init) => { alerts.push(init.headers["X-Idempotency-Key"]); return { status: 200, ok: true }; },
+      alertLog: () => {},
+      now: () => clock,
+      log: () => {}
+    }, async () => {
+      calls++;
+      // Provider returns 1100 total tokens ($1.10 > $0.52 reserve AND > $1.00 cap)
+      return makeOkRes("overrun", { prompt_tokens: 200, completion_tokens: 900 });
+    });
+    try {
+      await proxy({ id: "u_ext" }, { messages: [{ content: "test" }] });
+      await proxy.flushAlerts();
+      assert.equal(calls, 1);
+      const uSpent = nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?").get("u_ext", "2026-11").cost_nanos);
+      const gSpent = nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_global_monthly_usage WHERE month = ?").get("2026-11").cost_nanos);
+      assert.equal(roundUsd(uSpent), 1.1);
+      assert.equal(roundUsd(gSpent), 1.1);
+      assert.deepEqual(alerts, ["ai-budget:2026-11:80", "ai-budget:2026-11:100"]);
+
+      // Next admission is immediately refused before calling upstream!
+      await assert.rejects(
+        proxy({ id: "u_ext" }, { messages: [{ content: "next" }] }),
+        e => e.status === 503 && e.code === "ai_global_monthly_cap"
+      );
+      assert.equal(calls, 1);
+    } finally {
+      db.close();
+    }
+  }
+});
+
+test("Re-review Finding 2: slow pending alert cannot push provider dispatch into next UTC month, and pre-send month/rate boundary recheck releases and re-admits", async () => {
+  // 2A. Codex exact reproduction: December is seeded at $80 (full cap), a pending November alert webhook delays 200ms
+  // (advancing clock past 00:00:00Z if awaited on admission). Alert delivery MUST run asynchronously off the request path
+  // so provider dispatch happens immediately in November and is never delayed into December!
+  {
+    const db = makeDb();
+    ensureAiBudgetSchema(db);
+    let clock = Date.parse("2026-11-30T23:59:59.900Z");
+    // Seed December at full $80 cap
+    db.prepare("INSERT INTO ai_global_monthly_baseline (month, baseline_nanos, note, updated) VALUES (?, ?, ?, ?)")
+      .run("2026-12", usdToNanos(80), "december pre-seeded full", "2026-11-30T23:00:00.000Z");
+    // Seed a pending November 80% alert ready for immediate claim
+    db.prepare(
+      `INSERT INTO ai_budget_alerts (month, threshold, status, attempts, next_attempt_at, dedupe_key, sent_at, delivered_at, spend_nanos, cap_nanos)
+       VALUES ('2026-11', 80, 'pending', 0, 0, 'ai-budget:2026-11:80', '2026-11-30T23:00:00.000Z', NULL, ?, ?)`
+    ).run(usdToNanos(65), usdToNanos(80));
+
+    let alertFinished = false;
+    let dispatchTimeMs = null;
+    let alertStartedBeforeDispatch = false;
+
+    const proxy = createAIProxy(db, {
+      aiProvider: "gemini",
+      geminiKey: "g-key",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 200,
+      aiUserMonthlyUsd: 5.0,
+      aiGlobalMonthlyUsd: 80.0,
+      alertUrl: "https://ntfy.example.com/slow-alert",
+      alertFetcher: async () => {
+        if (dispatchTimeMs === null) alertStartedBeforeDispatch = true;
+        await new Promise(r => setTimeout(r, 150));
+        clock = Date.parse("2026-12-01T00:00:00.150Z");
+        alertFinished = true;
+        return { status: 200, ok: true };
+      },
+      alertLog: () => {},
+      now: () => clock,
+      log: () => {}
+    }, async () => {
+      dispatchTimeMs = clock;
+      assert.equal(alertFinished, false, "provider fetch must NOT wait for slow pending alert webhook");
+      return makeOkRes("nov ok", { prompt_tokens: 100, completion_tokens: 100 });
+    });
+
+    try {
+      const res = await proxy({ id: "u_fast" }, { messages: [{ content: "hi" }] });
+      assert.deepEqual(res, { text: "nov ok", truncated: false });
+      assert.equal(alertStartedBeforeDispatch, false, "alert delivery must be scheduled asynchronously off the admission path");
+      assert.equal(new Date(dispatchTimeMs).toISOString(), "2026-11-30T23:59:59.900Z", "provider dispatched immediately in November");
+      await proxy.flushAlerts();
+      assert.equal(alertFinished, true);
+      assert.equal(db.prepare("SELECT status FROM ai_budget_alerts WHERE month = '2026-11' AND threshold = 80").get().status, "delivered");
+    } finally {
+      db.close();
+    }
+  }
+
+  // 2B. Pre-dispatch month boundary re-check: clock crosses 2026-11-30T23:59:59.900Z -> 2026-12-01T00:00:00.100Z
+  // between reservation and provider send while December is capped at $80 -> MUST release November reservation,
+  // re-admit against December, and REFUSE before calling fetcher!
+  {
+    const db = makeDb();
+    ensureAiBudgetSchema(db);
+    db.prepare("INSERT INTO ai_global_monthly_baseline (month, baseline_nanos, note, updated) VALUES (?, ?, ?, ?)")
+      .run("2026-12", usdToNanos(80), "december capped", "2026-11-30T23:00:00.000Z");
+
+    const novMs = Date.parse("2026-11-30T23:59:59.900Z");
+    const decMs = Date.parse("2026-12-01T00:00:00.100Z");
+    let nowCalls = 0;
+    // Call 1: started, Call 2: remaining check, Call 3: reserveAttemptSync (Nov), Call 4+: pre-dispatch sendMs check (Dec!)
+    const tickingNow = () => {
+      nowCalls++;
+      return nowCalls <= 3 ? novMs : decMs;
+    };
+
+    let upstreamCalls = 0;
+    const proxy = createAIProxy(db, {
+      aiProvider: "gemini",
+      geminiKey: "g-key",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 200,
+      aiUserMonthlyUsd: 5.0,
+      aiGlobalMonthlyUsd: 80.0,
+      now: tickingNow,
+      log: () => {}
+    }, async () => {
+      upstreamCalls++;
+      return makeOkRes("should never dispatch", { prompt_tokens: 100, completion_tokens: 100 });
+    });
+
+    try {
+      await assert.rejects(
+        proxy({ id: "u_roll" }, { messages: [{ content: "boundary" }] }),
+        e => e.status === 503 && e.code === "ai_global_monthly_cap"
+      );
+      assert.equal(upstreamCalls, 0, "provider must NOT be called when month crossed into a capped December before send");
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ai_budget_reservations").get().n, 0, "stale November reservation must be released");
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ai_usage").get().n, 0, "unused November daily count must be rolled back");
+    } finally {
+      db.close();
+    }
+  }
+
+  // 2C. Pre-dispatch pricing step-up boundary re-check: clock crosses 2026-12-31T23:59:59.900Z -> 2027-01-01T00:00:00.100Z
+  // ($0.75/$3.75 -> $1.50/$7.50) between reservation and send -> releases 2026-12 reservation, re-admits and settles in 2027-01 at $1.50/$7.50!
+  {
+    const db = makeDb();
+    const dec2026Ms = Date.parse("2026-12-31T23:59:59.900Z");
+    const jan2027Ms = Date.parse("2027-01-01T00:00:00.100Z");
+    let nowCalls = 0;
+    const tickingNow = () => {
+      nowCalls++;
+      return nowCalls <= 3 ? dec2026Ms : jan2027Ms;
+    };
+
+    const proxy = createAIProxy(db, {
+      aiProvider: "gemini",
+      geminiKey: "g-key",
+      geminiModel: "gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 200,
+      aiUserMonthlyUsd: 5.0,
+      aiGlobalMonthlyUsd: 80.0,
+      now: tickingNow,
+      log: () => {}
+    }, async () => makeOkRes("2027 ok", { prompt_tokens: 1_000_000, completion_tokens: 0 })); // $1.50 at 2027 rate vs $0.75 at 2026 rate
+
+    try {
+      const res = await proxy({ id: "u_2027" }, { messages: [{ content: "new year" }] });
+      assert.deepEqual(res, { text: "2027 ok", truncated: false });
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ai_monthly_usage WHERE month = '2026-12'").get().n, 0);
+      const janRow = db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = 'u_2027' AND month = '2027-01'").get();
+      assert.equal(roundUsd(nanosToUsd(janRow.cost_nanos)), 1.5, "re-admitted 2027 call must settle at 2027 $1.50/1M rate");
+    } finally {
+      db.close();
+    }
+  }
 });
