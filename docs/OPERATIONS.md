@@ -302,9 +302,9 @@ Anonymous visitors to `/` see `public/landing.html`; signed-in users still get t
 | `/media/intro-zh-16x9.mp4` | desktop, Chinese |
 | `/media/intro-en-9x16.mp4` | phone, English |
 | `/media/intro-en-16x9.mp4` | desktop, English |
-| `/media/intro-<lang>-<shape>.jpg` | optional poster; falls back to the one bundled in `public/media/` |
+| `/media/intro-<lang>-<shape>.jpg` | matching poster in `MEDIA_DIR` (no bundled fallback) |
 
-The MP4s stay out of Git, release bundles and `DATA_DIR` snapshots. Only these eight names are served; symlinks are refused, so install real files. Responses support Range (206) on GET, `ETag`/`Last-Modified` and `Cache-Control: public, max-age=604800`. A browser downloads a video only after the visitor presses play.
+Both the MP4s and their posters stay out of Git, release bundles and `DATA_DIR` snapshots. Only these eight names are served; symlinks are refused, so install real files. Responses support Range (206) on GET, `ETag`/`Last-Modified` and `Cache-Control: public, max-age=604800`. A browser downloads a video only after the visitor presses play.
 
 Once approved cuts exist (as root, from the folder holding them):
 
@@ -312,14 +312,15 @@ Once approved cuts exist (as root, from the folder holding them):
 install -d -o root -g bojin -m 0750 /var/lib/bojin-media
 for f in intro-zh-9x16 intro-zh-16x9 intro-en-9x16 intro-en-16x9; do
   install -o root -g bojin -m 0640 "$f.mp4" "/var/lib/bojin-media/$f.mp4"
+  install -o root -g bojin -m 0640 "$f.jpg" "/var/lib/bojin-media/$f.jpg"
 done
 grep -q '^MEDIA_DIR=' /etc/bojin/environment || echo 'MEDIA_DIR=/var/lib/bojin-media' >> /etc/bojin/environment
-systemctl restart bojin
+sudo /usr/local/sbin/bojin-maintenance-lock -- systemctl restart bojin.service
 # Must be a GET: Range is ignored on HEAD, so `curl -I` would report 200.
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-1' https://leanritual.app/media/intro-zh-9x16.mp4   # expect 206
 ```
 
-To hide the video again, remove or rename any one of the four MP4s; the next page load omits the section, with no restart. To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Browsers that already cached the old file may keep it for up to 7 days.
+Availability checks are cached for 30 seconds (`MEDIA_CHECK_TTL_MS`, single-flight coalesced) and invalidated immediately if a required MP4 fails to open. To hide the video again, remove or rename any one of the four MP4s; the section disappears within 30 seconds (or immediately on a miss for that video), with no restart. To publish a new cut, replace the same file name with `install` (it writes a new file, so viewers mid-stream keep the old one; don't `cp` over it in place). Browsers that already cached the old file may keep it for up to 7 days.
 
 ## Monitoring and account operations
 

@@ -23,7 +23,14 @@ async function startServer(t, base, withVideos) {
   const mediaDir = path.join(dir, 'media');
   fs.mkdirSync(mediaDir);
   // Not a playable video on purpose: proves the request happens only after play and that errors are handled.
-  if (withVideos) for (const name of ['intro-zh-9x16.mp4', 'intro-zh-16x9.mp4', 'intro-en-9x16.mp4', 'intro-en-16x9.mp4']) fs.writeFileSync(path.join(mediaDir, name), Buffer.alloc(2048));
+  let poster = null;
+  if (withVideos) {
+    poster = await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 5, g: 10, b: 8 } } }).jpeg().toBuffer();
+    for (const baseName of ['intro-zh-9x16', 'intro-zh-16x9', 'intro-en-9x16', 'intro-en-16x9']) {
+      fs.writeFileSync(path.join(mediaDir, baseName + '.mp4'), Buffer.alloc(2048));
+      fs.writeFileSync(path.join(mediaDir, baseName + '.jpg'), poster);
+    }
+  }
   const env = { ...process.env, DATA_DIR: path.join(dir, 'data'), MEDIA_DIR: withVideos ? mediaDir : '', PORT: new URL(base).port, HOST: '127.0.0.1', AUTH_BASE_URL: base,
     AUTH_SECRET: 'browser-landing-secret-at-least-32-characters', COOKIE_SECURE: '0', TRUST_PROXY: '0', MAIL_MODE: 'file', OPENROUTER_API_KEY: '', GEMINI_API_KEY: '' };
   const child = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -38,6 +45,7 @@ async function startServer(t, base, withVideos) {
     child.stdout.once('data', () => { clearTimeout(timer); resolve(); });
     child.once('exit', () => { clearTimeout(timer); reject(new Error(errors)); });
   });
+  return { poster };
 }
 
 /** A page that records console errors, CSP violations, third-party and media requests. */
@@ -122,7 +130,7 @@ async function contrastFailures(page, fullPage) {
 
 test('landing page in a real browser', { skip: playwright ? false : 'Playwright is not installed', timeout: 900000 }, async t => {
   await startServer(t, BASE, false);
-  await startServer(t, SHOWN, true);
+  const shown = await startServer(t, SHOWN, true);
   const webkit = process.env.BROWSER === 'webkit';
   const browser = webkit ? await playwright.webkit.launch() : await playwright.chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox'] });
   t.after(() => browser.close());
@@ -150,6 +158,8 @@ test('landing page in a real browser', { skip: playwright ? false : 'Playwright 
 
   await t.test('video shown: no console errors, CSP violations or third-party requests; no media until play', async () => {
     const { context, page, log } = await watchedPage(browser, { viewport: { width: 390, height: 844 }, locale: 'zh-CN' });
+    const posterResponses = [];
+    page.on('response', r => { if (r.url().endsWith('/media/intro-zh-9x16.jpg')) posterResponses.push(r.status()); });
     await page.goto(SHOWN + '/');
     await settle(page);
     assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
@@ -157,6 +167,10 @@ test('landing page in a real browser', { skip: playwright ? false : 'Playwright 
     assert.deepEqual(log.media, [], 'no MP4 request before play');
     assert.equal(await page.locator('#film').getAttribute('src'), null);
     assert.equal(await page.locator('#film').getAttribute('poster'), '/media/intro-zh-9x16.jpg');
+    assert.ok(posterResponses.length >= 1 && posterResponses.every(s => s === 200), 'poster served from MEDIA_DIR: ' + posterResponses);
+    const posterRes = await fetch(SHOWN + '/media/intro-zh-9x16.jpg');
+    assert.equal(posterRes.status, 200);
+    assert.ok(Buffer.from(await posterRes.arrayBuffer()).equals(shown.poster), 'poster bytes come from MEDIA_DIR');
     await page.locator('#play').click();
     await page.waitForFunction(() => document.getElementById('film-note').textContent.length > 0);
     // Engines differ in how often they probe a file they cannot decode; only this one file may be asked for.

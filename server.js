@@ -153,7 +153,7 @@ function serveStatic(req, res, user){
     if (!user) { res.writeHead(302, { Location: "/login.html" }); return res.end(); }
   }
   if (rel === "/landing.html") return sendLanding(res);
-  // Posters are public only through the media route, however the path is spelled.
+  // Media assets are public only through the media route, however the path is spelled.
   if (rel.toLowerCase().startsWith("/media/")) { res.writeHead(404, { "Cache-Control": "no-cache" }); return res.end(); }
   fs.stat(f, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); return res.end("没有这个页面"); }
@@ -163,7 +163,8 @@ function serveStatic(req, res, user){
   });
 }
 
-const media = require("./lib/media").createMedia({ mediaDir: CFG.mediaDir, posterDir: path.join(CFG.publicDir, "media") });
+const { createMedia, mediaOptions } = require("./lib/media");
+const media = createMedia({ mediaDir: CFG.mediaDir, ...mediaOptions() });
 const { renderLanding } = require("./lib/landing");
 async function sendLanding(res){
   const body = await renderLanding(CFG.publicDir, await media.enabled());
