@@ -1,7 +1,8 @@
 # Third-party notices
 
-Lean Ritual ships the third-party material below. This file travels with the source and with every
-release package (ops/package-release.py includes it).
+Lean Ritual ships the third-party material below. This file travels with the source; `npm run build`
+copies it to `public/vendor/THIRD_PARTY_NOTICES.md`, and ops/package-release.py refuses to package a
+build without that copy, so every release carries it.
 
 ## Phone numbering metadata (`public/site/phone-rules.js`, `tests/fixtures/phone-examples.json`)
 

@@ -6,7 +6,8 @@
 // with tools/phone-rules/generate.js (see that file). Everything else is written by hand.
 // Licences: the generated table is derived from libphonenumber-js (MIT, Copyright (c) 2016
 // @catamphetamine) and Google libphonenumber (Apache-2.0, Copyright (C) The Libphonenumber Authors).
-// Full texts and attribution: THIRD_PARTY_NOTICES.md at the repository root and in every release package.
+// Full texts and attribution: THIRD_PARTY_NOTICES.md at the repository root; build.js copies it to
+// public/vendor/THIRD_PARTY_NOTICES.md, which every release package carries.
 (function (root, factory) {
   "use strict";
   var api = factory();

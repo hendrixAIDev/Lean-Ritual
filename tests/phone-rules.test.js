@@ -138,9 +138,14 @@ test('the phone metadata ships with its licences: MIT (libphonenumber-js) and Ap
   assert.match(head, /libphonenumber-js \(MIT/);
   assert.match(head, /Google libphonenumber \(Apache-2\.0/);
   assert.match(head, /THIRD_PARTY_NOTICES\.md/);
-  // ...and the release package carries the notices (ops/package-release.py's allowlist).
+  // ...and every release carries them: the build copies them into public/ (an entry hosts' installed deploy
+  // scripts accept), and packaging refuses a build without that copy.
+  assert.match(fs.readFileSync(path.join(ROOT, 'build.js'), 'utf8'), /copyFileSync\(path\.join\(__dirname, "THIRD_PARTY_NOTICES\.md"\), path\.join\(vendorDir, "THIRD_PARTY_NOTICES\.md"\)\)/);
   const release = fs.readFileSync(path.join(ROOT, 'ops/package-release.py'), 'utf8');
-  assert.match(release.match(/required = \[[^\]]*\]/)[0], /"THIRD_PARTY_NOTICES\.md"/);
+  assert.match(release, /"public\/vendor\/THIRD_PARTY_NOTICES\.md"/);
+  assert.match(release.match(/required = \[[^\]]*\]/)[0], /"public"/);
+  const built = path.join(ROOT, 'public/vendor/THIRD_PARTY_NOTICES.md');
+  if (fs.existsSync(built)) assert.equal(fs.readFileSync(built, 'utf8'), notices, 'the built copy matches (run npm run build)');
 });
 
 test('login.html: one labelled dropdown on the phone field, the rules and page code in files, no inline script', () => {

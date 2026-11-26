@@ -12,6 +12,8 @@ fs.mkdirSync(vendorDir, {recursive: true});
 for (const [source, target] of [["dist/heic2any.min.js", "heic2any.min.js"], ["LICENSE.md", "heic2any-LICENSE.md"]]) {
   fs.copyFileSync(path.join(__dirname, "node_modules/heic2any", source), path.join(vendorDir, target));
 }
+// Third-party licence notices (phone metadata and others) ship with every release, inside public/.
+fs.copyFileSync(path.join(__dirname, "THIRD_PARTY_NOTICES.md"), path.join(vendorDir, "THIRD_PARTY_NOTICES.md"));
 // Extract only the pinned bundle's literal worker payload, never execute vendor code.
 const heicPath = path.join(vendorDir, "heic2any.min.js");
 const heic = fs.readFileSync(heicPath, "utf8");
