@@ -721,100 +721,6 @@ function buildAnimatedOutroHtml(card, { width, height, isWide }) {
 </body></html>`;
 }
 
-async function renderPoster(browser, { poster, screenshotPath, outPath, wide = false }) {
-  const imgB64 = fs.readFileSync(screenshotPath).toString('base64');
-  const width = wide ? W16_CANVAS_W : CANVAS_W;
-  const height = wide ? W16_CANVAS_H : CANVAS_H;
-
-  const html = wide
-    ? `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  html, body {
-    margin: 0; padding: 0; width: ${width}px; height: ${height}px;
-    font-family: ${FONT_STACK}; -webkit-font-smoothing: antialiased;
-    background: radial-gradient(circle at 24% 48%, rgba(16,163,132,0.42), transparent 52%),
-                linear-gradient(155deg, #142B23 0%, #0C1714 55%, #08100E 100%);
-    color: #FFFFFF; overflow: hidden;
-    display: flex; align-items: center;
-  }
-  .left {
-    width: 720px; display: flex; justify-content: center; align-items: center;
-  }
-  .phone-stage {
-    width: 444px; border-radius: 38px; padding: 11px;
-    background: #172420; border: 2px solid #486D62;
-    box-shadow: 0 32px 72px rgba(0,0,0,0.62);
-  }
-  .phone-stage img { display: block; width: 100%; border-radius: 28px; }
-  .right {
-    flex: 1; padding: 0 110px 0 40px;
-    display: flex; flex-direction: column; align-items: flex-start; gap: 30px;
-  }
-  .brand-row { display: inline-flex; align-items: center; gap: 18px; }
-  .mini-icon { width: 68px; height: 68px; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 26px rgba(12,117,96,0.45); }
-  .mini-icon svg { width: 100%; height: 100%; display: block; }
-  .eyebrow { font-size: 28px; font-weight: 700; letter-spacing: 0.14em; color: #6EE7B7; }
-  h1 { margin: 0; font-size: 74px; font-weight: 800; line-height: 1.18; text-wrap: balance; }
-  .sub { margin: 0; font-size: 32px; color: #C5DBD3; font-weight: 500; line-height: 1.45; }
-  .badge {
-    padding: 15px 34px; border-radius: 999px;
-    background: rgba(12,117,96,0.88); border: 1.5px solid rgba(167,243,208,0.55);
-    font-size: 26px; font-weight: 600; color: #FFFFFF;
-    box-shadow: 0 12px 30px rgba(12,117,96,0.4);
-  }
-</style></head><body>
-  <div class="left"><div class="phone-stage"><img src="data:image/png;base64,${imgB64}" alt=""/></div></div>
-  <div class="right">
-    <div class="brand-row"><div class="mini-icon">${ICON_SVG}</div><div class="eyebrow">${escHtml(poster.eyebrow)}</div></div>
-    <h1>${escHtml(poster.headline)}</h1>
-    <p class="sub">${escHtml(poster.subline)}</p>
-    ${poster.badge ? `<div class="badge">${escHtml(poster.badge)}</div>` : ''}
-  </div>
-</body></html>`
-    : `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  html, body {
-    margin: 0; padding: 0; width: ${width}px; height: ${height}px;
-    font-family: ${FONT_STACK}; -webkit-font-smoothing: antialiased;
-    background: radial-gradient(circle at 50% 16%, rgba(16,163,132,0.45), transparent 55%),
-                linear-gradient(160deg, #142B23 0%, #0C1714 60%, #08100E 100%);
-    color: #FFFFFF; overflow: hidden;
-  }
-  .header {
-    padding: 80px 72px 0;
-    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px;
-  }
-  .brand-row { display: inline-flex; align-items: center; gap: 18px; }
-  .mini-icon { width: 64px; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 22px rgba(12,117,96,0.4); }
-  .mini-icon svg { width: 100%; height: 100%; display: block; }
-  .eyebrow { font-size: 28px; font-weight: 700; letter-spacing: 0.14em; color: #6EE7B7; }
-  h1 { margin: 0; font-size: 66px; font-weight: 800; line-height: 1.22; text-wrap: balance; }
-  .sub { margin: 0; font-size: 29px; color: #BFD4CC; font-weight: 500; }
-  .badge {
-    padding: 10px 28px; border-radius: 999px;
-    background: rgba(12,117,96,0.86); border: 1.5px solid rgba(167,243,208,0.52);
-    font-size: 24px; font-weight: 600; color: #FFFFFF;
-  }
-  .phone-stage {
-    position: absolute; left: 50%; transform: translateX(-50%); top: 472px;
-    width: 720px; border-radius: 48px; padding: 14px;
-    background: #172420; border: 2px solid #486D62;
-    box-shadow: 0 36px 80px rgba(0,0,0,0.62);
-  }
-  .phone-stage img { display: block; width: 100%; border-radius: 36px; }
-</style></head><body>
-  <div class="header">
-    <div class="brand-row"><div class="mini-icon">${ICON_SVG}</div><div class="eyebrow">${escHtml(poster.eyebrow)}</div></div>
-    <h1>${escHtml(poster.headline)}</h1>
-    <p class="sub">${escHtml(poster.subline)}</p>
-    ${poster.badge ? `<div class="badge">${escHtml(poster.badge)}</div>` : ''}
-  </div>
-  <div class="phone-stage"><img src="data:image/png;base64,${imgB64}" alt=""/></div>
-</body></html>`;
-
-  await renderHtmlImage(browser, { width, height, html, outPath, type: 'jpeg', quality: 91 });
-}
-
 async function renderMealPhoto(browser, kind, outPath) {
   const isBreakfast = kind === 'breakfast';
   const html = isBreakfast
@@ -1072,6 +978,5 @@ module.exports = {
   W16_PANEL_W,
   W16_PANEL_H,
   generateSharedAssets,
-  generateLangAssets,
-  renderPoster
+  generateLangAssets
 };

@@ -19,7 +19,8 @@ See [ASSETS.md](./ASSETS.md) for the complete asset & license manifest.
   - **`say`** — local macOS `/usr/bin/say` fallback.
   - **`auto`** (default) — uses iFLYTEK (`x6_xiaoqiChat_pro`, natural delivery) for `zh` when `~/.openclaw/.env.iflytek` credentials are configured (falling back to Gemini TTS), ElevenLabs for `en` when an ElevenLabs API key is configured, and free local Kokoro otherwise. Per-language overrides such as `--tts-zh iflytek`, `--tts-zh gemini`, or `--tts zh=iflytek,en=elevenlabs` are also supported.
 - Generates an original warm Rhodes/ambient background music bed + tactile UI taps, transition swooshes, confirmation chimes, and callout pops (`sound_design.py`, CC0 / original), mixing BGM through `sidechaincompress` so music ducks cleanly under narration.
-- Verifies duration (`75–135s`), resolution, codecs (`h264`/`aac`), and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
+- Extracts each cut's poster directly from the settled opening title-card frame (pre-progress-bar, full resolution) and embeds it into the MP4 as `attached_pic` cover art while keeping `+faststart`.
+- Verifies duration (`65–135s`), resolution, codecs (`h264`/`aac`), embedded cover stream, and file size (`≤ 25 MB`) with `ffprobe`, and generates posters, 4×4 contact sheets, script markdown, and verification frames.
 
 ## Prerequisites
 
@@ -54,7 +55,7 @@ npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 
 - `lean-ritual-intro-zh.mp4` / `lean-ritual-intro-en.mp4` (1080×1920 vertical)
 - `lean-ritual-intro-zh-16x9.mp4` / `lean-ritual-intro-en-16x9.mp4` (1920×1080 widescreen)
-- `poster-zh.jpg` / `poster-en.jpg` & `poster-zh-16x9.jpg` / `poster-en-16x9.jpg`
+- `poster-zh.jpg` / `poster-en.jpg` & `poster-zh-16x9.jpg` / `poster-en-16x9.jpg` (settled opening title-card frame, also embedded as MP4 `attached_pic` cover art)
 - `sheet-zh.jpg` / `sheet-en.jpg` & `sheet-zh-16x9.jpg` / `sheet-en-16x9.jpg` (4×4 contact sheets)
 - `script-zh.md` / `script-en.md`
 - `frames/<video>-frame-{1..6}.jpg`
@@ -65,7 +66,7 @@ npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 - `storyboard.js` — Chinese & English copy, captions, callouts, narration scripts, voice configs, and AI mock responses
 - `seed.js` — disposable local server + 3-week synthetic account seeder (preloads `demo-ai-block.js` so any unintercepted external AI request fails closed locally)
 - `demo-ai-block.js` — demo-server-only preload that blocks non-loopback outbound HTTP(S)/fetch requests so the demo server can never contact external AI providers
-- `assets.js` — Chromium-rendered animated title/outro cards, 9:16 & 16:9 frame shells, modular overlays, posters, and meal photos
+- `assets.js` — Chromium-rendered animated title/outro cards, 9:16 & 16:9 frame shells, modular overlays, and meal photos
 - `record.js` — Playwright lossless CDP PNG mobile recorder (1-Minute Setup + 5 seeded walkthrough scenes) with tap ripples, focus highlights, cubic-eased scrolling, UI event timestamps, and AI route mocks
 - `transitions.js` — 3D perspective swing / whip-blur / depth-parallax transition bridges, kinetic per-word captions, and live number count-up callout sequences
 - `tts_iflytek.js` — iFLYTEK 超拟人语音合成 WebSocket client (`x6_xiaoqiChat_pro` natural default) with runtime env loader and per-line SHA-256 WAV cache
@@ -73,6 +74,6 @@ npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 - `tts_elevenlabs.js` — ElevenLabs REST API client (`eleven_v3` / `eleven_multilingual_v2`) with env-file key loader and per-line SHA-256 WAV cache
 - `tts_kokoro.py` — local Kokoro-82M neural TTS batch synthesizer (via `sherpa-onnx`)
 - `sound_design.py` — procedural studio BGM & UI foley SFX synthesizer
-- `compose.js` — fixed-frame `ffmpeg` compositing, animated overlays, `xfade` transitions, sidechain-ducked audio mastering, verification, and contact sheet generation
+- `compose.js` — fixed-frame `ffmpeg` compositing, animated overlays, `xfade` transitions, sidechain-ducked audio mastering, title-card poster extraction, `attached_pic` cover embedding, verification, and contact sheet generation
 - `playwright-loader.js` — Playwright/Chromium discovery helper
 - `ASSETS.md` — asset sources and commercial licenses

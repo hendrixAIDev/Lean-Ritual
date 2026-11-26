@@ -333,7 +333,6 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
 
   const beatSplits = [];
   const events = [];
-  let posterShotPath = null;
 
   try {
     await page.goto(srv.base + '/', { waitUntil: 'networkidle' });
@@ -372,8 +371,7 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
       events.push({ t: (Date.now() - sceneReadyAt) / 1000, kind });
     };
 
-    const res = await run(page, { markBeat, markEvent });
-    if (res?.posterShotPath) posterShotPath = res.posterShotPath;
+    await run(page, { markBeat, markEvent });
 
     const sceneDuration = (Date.now() - sceneReadyAt) / 1000;
 
@@ -400,8 +398,7 @@ async function recordSingleScene({ browser, srv, storageState, uid, sb, rawDir, 
       trimStart: 0,
       recordedDuration: sceneDuration,
       beatSplits,
-      events,
-      posterShotPath
+      events
     };
   } catch (err) {
     recording = false;
@@ -481,15 +478,13 @@ async function recordAllScenes({
     })
   );
 
-  // Scene 2: Today — Daily Check-in (also captures rich Week 4 Today poster screenshot)
+  // Scene 2: Today — Daily Check-in
   if (want('checkin')) scenes.push(
     await recordSingleScene({
       ...baseOpts,
       sceneId: 'checkin',
       startTab: 'today',
       run: async (page, { markBeat, markEvent }) => {
-        const posterShotPath = path.join(rawDir, `poster-screen-${sb.lang}.png`);
-        await page.screenshot({ path: posterShotPath });
         await page.waitForTimeout(260);
         const checkinCard = page.locator('#c-weight').locator('xpath=ancestor::section[contains(@class,"card")]');
         await smoothCenter(page, checkinCard, 620, -10);
@@ -511,7 +506,6 @@ async function recordAllScenes({
         markEvent('chime');
         await highlightEl(page, checkinCard, 4);
         await page.waitForTimeout(1550);
-        return { posterShotPath };
       }
     })
   );
