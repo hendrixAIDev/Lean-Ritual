@@ -6,6 +6,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '../..');
 const ICON_SVG = fs.readFileSync(path.join(ROOT, 'public/icons/icon.svg'), 'utf8');
 
+// 9:16 Vertical Layout (1080x1920)
 const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 const PHONE_W = 740;
@@ -13,6 +14,22 @@ const PHONE_H = 1602;
 const PHONE_X = Math.round((CANVAS_W - PHONE_W) / 2); // 170
 const PHONE_Y = 104;
 const PHONE_R = 40;
+const TOP_BAND_H = 100;
+const CAP_BAND_H = 210;
+const CAP_BAND_Y = CANVAS_H - CAP_BAND_H; // 1710
+
+// 16:9 Widescreen Layout (1920x1080)
+const W16_CANVAS_W = 1920;
+const W16_CANVAS_H = 1080;
+const W16_PHONE_W = 444;
+const W16_PHONE_H = 960;
+const W16_PHONE_X = 148;
+const W16_PHONE_Y = 60;
+const W16_PHONE_R = 28;
+const W16_PANEL_X = 680;
+const W16_PANEL_Y = 140;
+const W16_PANEL_W = 1140;
+const W16_PANEL_H = 820;
 
 const FONT_STACK = `"PingFang SC", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif`;
 
@@ -39,9 +56,33 @@ async function renderHtmlImage(browser, { width, height, html, outPath, transpar
   }
 }
 
-async function renderFrameShell(browser, outPath) {
-  // Opaque studio backdrop + sleek phone bezel with an antialiased transparent rounded-rect cutout
-  // so the phone video sits behind it and gets crisp rounded corners with zero aliasing.
+async function renderAnimatedCardVideo(browser, { width, height, html, durationSec, rawDir }) {
+  fs.mkdirSync(rawDir, { recursive: true });
+  const context = await browser.newContext({
+    viewport: { width, height },
+    deviceScaleFactor: 1,
+    recordVideo: { dir: rawDir, size: { width, height } }
+  });
+  const createdAt = Date.now();
+  const page = await context.newPage();
+  try {
+    await page.setContent(html, { waitUntil: 'load' });
+    await page.waitForTimeout(180);
+    const playAt = Date.now();
+    const trimStart = Math.max(0.15, (playAt - createdAt) / 1000);
+    await page.evaluate(() => document.body.classList.add('play'));
+    await page.waitForTimeout(Math.round((durationSec + 0.45) * 1000));
+    const video = page.video();
+    await context.close();
+    const videoPath = await video.path();
+    return { videoPath, trimStart };
+  } catch (err) {
+    await context.close().catch(() => {});
+    throw err;
+  }
+}
+
+async function renderFrameShell9x16(browser, outPath) {
   const bx = PHONE_X - 14;
   const by = PHONE_Y - 14;
   const bw = PHONE_W + 28;
@@ -55,339 +96,726 @@ async function renderFrameShell(browser, outPath) {
 </style></head><body>
 <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_W}" height="${CANVAS_H}" viewBox="0 0 ${CANVAS_W} ${CANVAS_H}">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%" stop-color="#13221D"/>
-      <stop offset="52%" stop-color="#0D1613"/>
-      <stop offset="100%" stop-color="#0A1210"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.45" y2="1">
+      <stop offset="0%" stop-color="#142922"/>
+      <stop offset="48%" stop-color="#0C1714"/>
+      <stop offset="100%" stop-color="#08100E"/>
     </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="12%" r="60%">
-      <stop offset="0%" stop-color="#0C7560" stop-opacity="0.34"/>
+    <radialGradient id="glowTop" cx="50%" cy="10%" r="58%">
+      <stop offset="0%" stop-color="#12A184" stop-opacity="0.34"/>
       <stop offset="100%" stop-color="#0C7560" stop-opacity="0"/>
     </radialGradient>
+    <radialGradient id="glowBot" cx="50%" cy="94%" r="52%">
+      <stop offset="0%" stop-color="#0C7560" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0C7560" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="rgba(116,224,193,0.045)" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="bezelRim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#588074"/>
+      <stop offset="45%" stop-color="#283C36"/>
+      <stop offset="100%" stop-color="#44685E"/>
+    </linearGradient>
     <mask id="cutout">
       <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="white"/>
       <rect x="${PHONE_X}" y="${PHONE_Y}" width="${PHONE_W}" height="${PHONE_H}" rx="${PHONE_R}" ry="${PHONE_R}" fill="black"/>
     </mask>
-    <filter id="bezelShadow" x="-10%" y="-5%" width="120%" height="110%">
-      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#000000" flood-opacity="0.55"/>
+    <filter id="bezelShadow" x="-14%" y="-6%" width="128%" height="114%">
+      <feDropShadow dx="0" dy="26" stdDeviation="32" flood-color="#000000" flood-opacity="0.62"/>
     </filter>
   </defs>
   <g mask="url(#cutout)">
     <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#bg)"/>
-    <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#glow)"/>
-    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${br}" ry="${br}" fill="#1A2622" stroke="#364B44" stroke-width="2.5" filter="url(#bezelShadow)"/>
-    <rect x="${PHONE_X - 4}" y="${PHONE_Y - 4}" width="${PHONE_W + 8}" height="${PHONE_H + 8}" rx="${PHONE_R + 4}" ry="${PHONE_R + 4}" fill="#090F0D"/>
+    <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#grid)"/>
+    <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#glowTop)"/>
+    <rect width="${CANVAS_W}" height="${CANVAS_H}" fill="url(#glowBot)"/>
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${br}" ry="${br}" fill="#172420" stroke="url(#bezelRim)" stroke-width="3" filter="url(#bezelShadow)"/>
+    <rect x="${PHONE_X - 4}" y="${PHONE_Y - 4}" width="${PHONE_W + 8}" height="${PHONE_H + 8}" rx="${PHONE_R + 4}" ry="${PHONE_R + 4}" fill="#080E0C"/>
   </g>
-  <rect x="${PHONE_X}" y="${PHONE_Y}" width="${PHONE_W}" height="${PHONE_H}" rx="${PHONE_R}" ry="${PHONE_R}" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+  <rect x="${PHONE_X}" y="${PHONE_Y}" width="${PHONE_W}" height="${PHONE_H}" rx="${PHONE_R}" ry="${PHONE_R}" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="2"/>
 </svg>
 </body></html>`;
 
   await renderHtmlImage(browser, { width: CANVAS_W, height: CANVAS_H, html, outPath, transparent: true });
 }
 
-async function renderCaptionOverlay(browser, { chapter, caption, tipBadge, outPath }) {
-  const topChip = tipBadge
-    ? `<div class="top-tip"><span class="dot"></span>${escHtml(tipBadge)}</div>`
-    : `<div class="chapter">${escHtml(chapter)}</div>`;
+async function renderFrameShell16x9(browser, outPath) {
+  const bx = W16_PHONE_X - 11;
+  const by = W16_PHONE_Y - 11;
+  const bw = W16_PHONE_W + 22;
+  const bh = W16_PHONE_H + 22;
+  const br = W16_PHONE_R + 9;
 
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body { margin: 0; padding: 0; width: ${W16_CANVAS_W}px; height: ${W16_CANVAS_H}px; background: transparent; overflow: hidden; font-family: ${FONT_STACK}; }
+  svg.shell { position: absolute; inset: 0; width: ${W16_CANVAS_W}px; height: ${W16_CANVAS_H}px; display: block; }
+  .brand-mark {
+    position: absolute;
+    top: 56px;
+    right: 88px;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    opacity: 0.92;
+  }
+  .brand-icon {
+    width: 44px; height: 44px; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 6px 18px rgba(12,117,96,0.38);
+  }
+  .brand-icon svg { width: 100%; height: 100%; display: block; }
+  .brand-text {
+    font-size: 21px; font-weight: 700; letter-spacing: 0.14em; color: #7EE2C4;
+  }
+  .url-foot {
+    position: absolute;
+    bottom: 52px;
+    right: 88px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: rgba(182, 214, 203, 0.72);
+  }
+</style></head><body>
+<svg class="shell" xmlns="http://www.w3.org/2000/svg" width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" viewBox="0 0 ${W16_CANVAS_W} ${W16_CANVAS_H}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#142B23"/>
+      <stop offset="48%" stop-color="#0C1714"/>
+      <stop offset="100%" stop-color="#08100E"/>
+    </linearGradient>
+    <radialGradient id="glowLeft" cx="22%" cy="46%" r="48%">
+      <stop offset="0%" stop-color="#12A184" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#0C7560" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowRight" cx="80%" cy="22%" r="44%">
+      <stop offset="0%" stop-color="#0C7560" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0C7560" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="rgba(116,224,193,0.045)" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="bezelRim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#588074"/>
+      <stop offset="45%" stop-color="#283C36"/>
+      <stop offset="100%" stop-color="#44685E"/>
+    </linearGradient>
+    <mask id="cutout">
+      <rect width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" fill="white"/>
+      <rect x="${W16_PHONE_X}" y="${W16_PHONE_Y}" width="${W16_PHONE_W}" height="${W16_PHONE_H}" rx="${W16_PHONE_R}" ry="${W16_PHONE_R}" fill="black"/>
+    </mask>
+    <filter id="bezelShadow" x="-18%" y="-8%" width="136%" height="118%">
+      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#000000" flood-opacity="0.62"/>
+    </filter>
+  </defs>
+  <g mask="url(#cutout)">
+    <rect width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" fill="url(#bg)"/>
+    <rect width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" fill="url(#grid)"/>
+    <rect width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" fill="url(#glowLeft)"/>
+    <rect width="${W16_CANVAS_W}" height="${W16_CANVAS_H}" fill="url(#glowRight)"/>
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${br}" ry="${br}" fill="#172420" stroke="url(#bezelRim)" stroke-width="2.5" filter="url(#bezelShadow)"/>
+    <rect x="${W16_PHONE_X - 3}" y="${W16_PHONE_Y - 3}" width="${W16_PHONE_W + 6}" height="${W16_PHONE_H + 6}" rx="${W16_PHONE_R + 3}" ry="${W16_PHONE_R + 3}" fill="#080E0C"/>
+  </g>
+  <rect x="${W16_PHONE_X}" y="${W16_PHONE_Y}" width="${W16_PHONE_W}" height="${W16_PHONE_H}" rx="${W16_PHONE_R}" ry="${W16_PHONE_R}" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.5"/>
+</svg>
+<div class="brand-mark">
+  <div class="brand-icon">${ICON_SVG}</div>
+  <div class="brand-text">LEAN RITUAL · 薄肌日课</div>
+</div>
+<div class="url-foot">leanritual.app</div>
+</body></html>`;
+
+  await renderHtmlImage(browser, { width: W16_CANVAS_W, height: W16_CANVAS_H, html, outPath, transparent: true });
+}
+
+async function renderTopChip9x16(browser, { text, variant = 'chapter', outPath }) {
+  const isCallout = variant === 'callout';
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
   html, body {
     margin: 0; padding: 0;
-    width: ${CANVAS_W}px; height: ${CANVAS_H}px;
+    width: ${CANVAS_W}px; height: ${TOP_BAND_H}px;
     background: transparent;
     font-family: ${FONT_STACK};
     -webkit-font-smoothing: antialiased;
+    display: flex; justify-content: center; align-items: center;
     overflow: hidden;
   }
-  .top-wrap {
-    position: absolute;
-    top: 24px; left: 0; right: 0;
-    display: flex; justify-content: center; align-items: center;
-    height: 58px;
-  }
-  .chapter {
-    padding: 10px 26px;
-    border-radius: 999px;
-    background: rgba(12, 117, 96, 0.22);
-    border: 1.5px solid rgba(63, 191, 158, 0.42);
-    color: #D7F2E9;
-    font-size: 25px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.28);
-  }
-  .top-tip {
+  .pill {
     display: inline-flex;
     align-items: center;
     gap: 12px;
-    padding: 11px 28px;
+    padding: ${isCallout ? '12px 30px' : '10px 28px'};
     border-radius: 999px;
-    background: rgba(12, 117, 96, 0.92);
-    border: 1.5px solid rgba(173, 240, 219, 0.55);
-    color: #FFFFFF;
-    font-size: 24px;
+    background: ${isCallout ? 'linear-gradient(135deg, rgba(12,117,96,0.95), rgba(16,143,118,0.94))' : 'rgba(13, 28, 23, 0.84)'};
+    border: 1.5px solid ${isCallout ? 'rgba(167, 243, 208, 0.65)' : 'rgba(78, 212, 176, 0.44)'};
+    color: ${isCallout ? '#FFFFFF' : '#DDF6EE'};
+    font-size: ${isCallout ? '24px' : '25px'};
     font-weight: 600;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.38);
+    letter-spacing: ${isCallout ? '0.02em' : '0.05em'};
+    box-shadow: ${isCallout ? '0 10px 28px rgba(12, 117, 96, 0.45)' : '0 8px 24px rgba(0, 0, 0, 0.34)'};
   }
-  .top-tip .dot {
+  .dot {
     width: 10px; height: 10px; border-radius: 50%;
-    background: #A7F3D0; flex: none;
+    background: ${isCallout ? '#A7F3D0' : '#34D399'};
+    box-shadow: 0 0 12px rgba(110, 231, 183, 0.9);
+    flex: none;
   }
-  .cap-wrap {
-    position: absolute;
-    top: 1726px;
-    bottom: 24px;
-    left: 44px;
-    right: 44px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+</style></head><body>
+  <div class="pill"><span class="dot"></span><span>${escHtml(text)}</span></div>
+</body></html>`;
+
+  await renderHtmlImage(browser, { width: CANVAS_W, height: TOP_BAND_H, html, outPath, transparent: true });
+}
+
+async function renderCaptionStrip9x16(browser, { caption, outPath }) {
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body {
+    margin: 0; padding: 0;
+    width: ${CANVAS_W}px; height: ${CAP_BAND_H}px;
+    background: transparent;
+    font-family: ${FONT_STACK};
+    -webkit-font-smoothing: antialiased;
+    display: flex; justify-content: center; align-items: center;
+    overflow: hidden;
   }
   .cap-pill {
-    max-width: 980px;
-    padding: 20px 36px;
+    max-width: 970px;
+    padding: 22px 38px;
     border-radius: 26px;
-    background: rgba(10, 17, 15, 0.86);
-    border: 1.5px solid rgba(63, 191, 158, 0.34);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-    color: #F4FAF7;
+    background: linear-gradient(180deg, rgba(13, 24, 20, 0.92), rgba(9, 16, 14, 0.94));
+    border: 1.5px solid rgba(78, 212, 176, 0.38);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    color: #F6FCF9;
     font-size: 35px;
     font-weight: 600;
     line-height: 1.38;
     text-align: center;
     text-wrap: balance;
+    position: relative;
+  }
+  .cap-pill::before {
+    content: "";
+    position: absolute;
+    left: 28%; right: 28%; top: 0; height: 3px;
+    border-radius: 0 0 4px 4px;
+    background: linear-gradient(90deg, transparent, #34D399, transparent);
   }
 </style></head><body>
-  <div class="top-wrap">${topChip}</div>
-  <div class="cap-wrap"><div class="cap-pill">${escHtml(caption)}</div></div>
+  <div class="cap-pill">${escHtml(caption)}</div>
 </body></html>`;
 
-  await renderHtmlImage(browser, { width: CANVAS_W, height: CANVAS_H, html, outPath, transparent: true });
+  await renderHtmlImage(browser, { width: CANVAS_W, height: CAP_BAND_H, html, outPath, transparent: true });
 }
 
-async function renderTitleCard(browser, card, outPath) {
-  const pillsHtml = (card.pills || []).map(p => `<span class="pill">${escHtml(p)}</span>`).join('');
+async function renderPanel16x9(browser, { sceneIdx, totalScenes, chapter, caption, callout, outPath }) {
+  const dotsHtml = Array.from({ length: totalScenes }, (_, i) => {
+    const cls = i === sceneIdx ? 'dot active' : i < sceneIdx ? 'dot done' : 'dot';
+    return `<span class="${cls}"></span>`;
+  }).join('');
+
+  const calloutHtml = callout
+    ? `<div class="callout"><span class="cd"></span><span>${escHtml(callout)}</span></div>`
+    : '';
+
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
   html, body {
     margin: 0; padding: 0;
-    width: ${CANVAS_W}px; height: ${CANVAS_H}px;
+    width: ${W16_PANEL_W}px; height: ${W16_PANEL_H}px;
+    background: transparent;
     font-family: ${FONT_STACK};
     -webkit-font-smoothing: antialiased;
-    background: radial-gradient(circle at 50% 24%, rgba(12,117,96,0.45), transparent 58%),
-                linear-gradient(160deg, #13241E 0%, #0D1714 55%, #09110E 100%);
+    display: flex; flex-direction: column; justify-content: center;
+    overflow: hidden;
+  }
+  .stack {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 34px;
+    padding: 20px 30px;
+  }
+  .chapter {
+    display: inline-flex; align-items: center; gap: 14px;
+    padding: 12px 26px;
+    border-radius: 999px;
+    background: rgba(16, 143, 118, 0.2);
+    border: 1.5px solid rgba(78, 212, 176, 0.45);
+    color: #9CF0D7;
+    font-size: 25px; font-weight: 700; letter-spacing: 0.06em;
+  }
+  .chapter .num {
+    color: #34D399;
+    font-variant-numeric: tabular-nums;
+  }
+  h2 {
+    margin: 0;
+    font-size: 56px;
+    font-weight: 800;
+    line-height: 1.28;
+    color: #FFFFFF;
+    text-wrap: balance;
+    max-width: 1020px;
+    text-shadow: 0 8px 30px rgba(0, 0, 0, 0.32);
+  }
+  .callout {
+    display: inline-flex; align-items: center; gap: 14px;
+    padding: 16px 32px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, rgba(12, 117, 96, 0.9), rgba(17, 148, 122, 0.85));
+    border: 1.5px solid rgba(167, 243, 208, 0.55);
+    box-shadow: 0 12px 32px rgba(12, 117, 96, 0.35);
+    color: #FFFFFF;
+    font-size: 28px; font-weight: 600;
+  }
+  .callout .cd {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: #A7F3D0; box-shadow: 0 0 12px #A7F3D0;
+    flex: none;
+  }
+  .dots {
+    display: flex; align-items: center; gap: 12px; margin-top: 12px;
+  }
+  .dot {
+    width: 14px; height: 8px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .dot.done {
+    width: 18px;
+    background: rgba(52, 211, 153, 0.55);
+  }
+  .dot.active {
+    width: 48px;
+    background: linear-gradient(90deg, #10B981, #6EE7B7);
+    box-shadow: 0 0 16px rgba(52, 211, 153, 0.65);
+  }
+</style></head><body>
+  <div class="stack">
+    <div class="chapter"><span class="num">${String(sceneIdx + 1).padStart(2, '0')} / ${String(totalScenes).padStart(2, '0')}</span><span>${escHtml(String(chapter || '').replace(/^\d+\s*[·•-]\s*/, ''))}</span></div>
+    <h2>${escHtml(caption)}</h2>
+    ${calloutHtml}
+    <div class="dots">${dotsHtml}</div>
+  </div>
+</body></html>`;
+
+  await renderHtmlImage(browser, { width: W16_PANEL_W, height: W16_PANEL_H, html, outPath, transparent: true });
+}
+
+function buildAnimatedTitleHtml(card, { width, height, isWide }) {
+  const pillsHtml = (card.pills || [])
+    .map((p, i) => `<span class="pill" style="--d:${(0.75 + i * 0.14).toFixed(2)}s">${escHtml(p)}</span>`)
+    .join('');
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body {
+    margin: 0; padding: 0;
+    width: ${width}px; height: ${height}px;
+    font-family: ${FONT_STACK};
+    -webkit-font-smoothing: antialiased;
+    background: linear-gradient(155deg, #132821 0%, #0B1613 55%, #070E0C 100%);
     color: #F2F7F5;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     text-align: center;
     overflow: hidden;
+    position: relative;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(116,224,193,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(116,224,193,0.05) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(circle at 50% 45%, black 15%, transparent 72%);
+  }
+  .orb {
+    position: absolute;
+    width: ${isWide ? 900 : 820}px;
+    height: ${isWide ? 900 : 820}px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(16, 163, 132, 0.38) 0%, rgba(12, 117, 96, 0.1) 48%, transparent 72%);
+    top: ${isWide ? -180 : 180}px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.88);
+    opacity: 0.7;
+  }
+  body.play .orb {
+    animation: orbDrift 5.5s ease-in-out forwards;
+  }
+  @keyframes orbDrift {
+    0% { transform: translateX(-50%) scale(0.85); opacity: 0.55; }
+    50% { transform: translateX(-48%) scale(1.08); opacity: 0.95; }
+    100% { transform: translateX(-50%) scale(1.02); opacity: 0.85; }
   }
   .wrap {
-    width: 880px;
+    position: relative; z-index: 2;
+    width: ${isWide ? 1360 : 880}px;
     display: flex; flex-direction: column;
-    align-items: center; gap: 36px;
+    align-items: center;
+    gap: ${isWide ? 28 : 36}px;
+  }
+  .icon-stage {
+    position: relative;
+    width: ${isWide ? 148 : 178}px;
+    height: ${isWide ? 148 : 178}px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .ring {
+    position: absolute; inset: -16px;
+    border-radius: 48px;
+    border: 2px solid rgba(110, 231, 183, 0.55);
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  body.play .ring {
+    animation: ringPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.18s forwards;
+  }
+  @keyframes ringPulse {
+    0% { opacity: 0; transform: scale(0.75); }
+    35% { opacity: 0.75; transform: scale(1.06); }
+    100% { opacity: 0; transform: scale(1.38); }
   }
   .icon {
-    width: 176px; height: 176px;
-    border-radius: 40px;
-    box-shadow: 0 24px 60px rgba(12, 117, 96, 0.42), 0 0 0 2px rgba(63,191,158,0.28);
+    width: 100%; height: 100%;
+    border-radius: ${isWide ? 34 : 42}px;
+    box-shadow: 0 26px 64px rgba(12, 117, 96, 0.48), 0 0 0 2px rgba(78, 212, 176, 0.34);
     overflow: hidden;
+    opacity: 0;
+    transform: scale(0.72) translateY(18px);
   }
   .icon svg { width: 100%; height: 100%; display: block; }
+  body.play .icon {
+    animation: popIn 0.72s cubic-bezier(0.22, 1, 0.36, 1) 0.05s forwards;
+  }
   .eyebrow {
-    font-size: 26px; font-weight: 600;
-    letter-spacing: 0.16em;
-    color: #6CD8B8;
+    font-size: ${isWide ? 24 : 26}px; font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #6EE7B7;
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  body.play .eyebrow {
+    animation: riseIn 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.25s forwards;
   }
   h1 {
     margin: 0;
-    font-size: 112px; font-weight: 800;
+    font-size: ${isWide ? 104 : 114}px; font-weight: 800;
     line-height: 1.08;
     letter-spacing: -0.01em;
     color: #FFFFFF;
+    text-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  body.play h1 {
+    animation: riseIn 0.72s cubic-bezier(0.22, 1, 0.36, 1) 0.38s forwards;
   }
   .tagline {
     margin: 0;
-    font-size: 46px; font-weight: 600;
+    font-size: ${isWide ? 42 : 46}px; font-weight: 600;
     line-height: 1.38;
-    color: #D7E5E0;
+    color: #D7E7E2;
     text-wrap: balance;
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  body.play .tagline {
+    animation: riseIn 0.70s cubic-bezier(0.22, 1, 0.36, 1) 0.56s forwards;
   }
   .pills {
     display: flex; flex-wrap: wrap; justify-content: center; gap: 18px;
-    margin-top: 12px;
+    margin-top: 8px;
   }
   .pill {
-    padding: 16px 32px;
+    padding: ${isWide ? '14px 30px' : '16px 32px'};
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.08);
-    border: 1.5px solid rgba(108, 216, 184, 0.34);
-    color: #E7F5F0;
-    font-size: 30px; font-weight: 600;
+    border: 1.5px solid rgba(110, 231, 183, 0.38);
+    color: #ECFAF5;
+    font-size: ${isWide ? 26 : 30}px; font-weight: 600;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+    opacity: 0;
+    transform: translateY(18px) scale(0.95);
+  }
+  body.play .pill {
+    animation: pillIn 0.58s cubic-bezier(0.22, 1, 0.36, 1) var(--d) forwards;
+  }
+  @keyframes popIn {
+    0% { opacity: 0; transform: scale(0.72) translateY(18px); }
+    70% { opacity: 1; transform: scale(1.03) translateY(-2px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes riseIn {
+    0% { opacity: 0; transform: translateY(24px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pillIn {
+    0% { opacity: 0; transform: translateY(18px) scale(0.95); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
   }
 </style></head><body>
+  <div class="grid"></div>
+  <div class="orb"></div>
   <div class="wrap">
-    <div class="icon">${ICON_SVG}</div>
+    <div class="icon-stage">
+      <div class="ring"></div>
+      <div class="icon">${ICON_SVG}</div>
+    </div>
     <div class="eyebrow">${escHtml(card.eyebrow)}</div>
     <h1>${escHtml(card.title)}</h1>
     <p class="tagline">${escHtml(card.tagline)}</p>
     <div class="pills">${pillsHtml}</div>
   </div>
 </body></html>`;
-
-  await renderHtmlImage(browser, { width: CANVAS_W, height: CANVAS_H, html, outPath, transparent: false });
 }
 
-async function renderOutroCard(browser, card, outPath) {
-  const html = `<!doctype html>
+function buildAnimatedOutroHtml(card, { width, height, isWide }) {
+  return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
   html, body {
     margin: 0; padding: 0;
-    width: ${CANVAS_W}px; height: ${CANVAS_H}px;
+    width: ${width}px; height: ${height}px;
     font-family: ${FONT_STACK};
     -webkit-font-smoothing: antialiased;
-    background: radial-gradient(circle at 50% 34%, rgba(12,117,96,0.44), transparent 56%),
-                linear-gradient(160deg, #13241E 0%, #0D1714 55%, #09110E 100%);
+    background: linear-gradient(155deg, #132821 0%, #0B1613 55%, #070E0C 100%);
     color: #F2F7F5;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     text-align: center;
     overflow: hidden;
+    position: relative;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(116,224,193,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(116,224,193,0.05) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(circle at 50% 48%, black 15%, transparent 72%);
+  }
+  .orb {
+    position: absolute;
+    width: ${isWide ? 940 : 860}px;
+    height: ${isWide ? 940 : 860}px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(16, 163, 132, 0.38) 0%, rgba(12, 117, 96, 0.1) 48%, transparent 72%);
+    top: ${isWide ? -100 : 280}px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.9);
+  }
+  body.play .orb {
+    animation: orbBreathe 6.5s ease-in-out forwards;
+  }
+  @keyframes orbBreathe {
+    0% { transform: translateX(-50%) scale(0.86); opacity: 0.6; }
+    50% { transform: translateX(-50%) scale(1.08); opacity: 1; }
+    100% { transform: translateX(-50%) scale(1.0); opacity: 0.9; }
   }
   .wrap {
-    width: 880px;
+    position: relative; z-index: 2;
+    width: ${isWide ? 1320 : 880}px;
     display: flex; flex-direction: column;
-    align-items: center; gap: 34px;
+    align-items: center;
+    gap: ${isWide ? 26 : 34}px;
   }
   .icon {
-    width: 152px; height: 152px;
-    border-radius: 36px;
-    box-shadow: 0 22px 54px rgba(12, 117, 96, 0.42), 0 0 0 2px rgba(63,191,158,0.28);
+    width: ${isWide ? 128 : 154}px;
+    height: ${isWide ? 128 : 154}px;
+    border-radius: ${isWide ? 30 : 38}px;
+    box-shadow: 0 24px 56px rgba(12, 117, 96, 0.45), 0 0 0 2px rgba(78, 212, 176, 0.34);
     overflow: hidden;
+    opacity: 0; transform: scale(0.75);
   }
   .icon svg { width: 100%; height: 100%; display: block; }
+  body.play .icon { animation: popIn 0.68s cubic-bezier(0.22, 1, 0.36, 1) 0.08s forwards; }
   .eyebrow {
-    font-size: 26px; font-weight: 600;
-    letter-spacing: 0.14em;
-    color: #6CD8B8;
+    font-size: ${isWide ? 24 : 26}px; font-weight: 700;
+    letter-spacing: 0.16em;
+    color: #6EE7B7;
+    opacity: 0; transform: translateY(14px);
   }
+  body.play .eyebrow { animation: riseIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.24s forwards; }
   h2 {
     margin: 0;
-    font-size: 56px; font-weight: 700;
-    line-height: 1.3;
+    font-size: ${isWide ? 54 : 58}px; font-weight: 800;
+    line-height: 1.28;
     color: #FFFFFF;
     text-wrap: balance;
+    opacity: 0; transform: translateY(20px);
   }
+  body.play h2 { animation: riseIn 0.68s cubic-bezier(0.22, 1, 0.36, 1) 0.38s forwards; }
   .url-box {
-    margin-top: 8px;
-    padding: 26px 56px;
+    position: relative;
+    overflow: hidden;
+    margin-top: 6px;
+    padding: ${isWide ? '22px 54px' : '26px 56px'};
     border-radius: 26px;
-    background: #0C7560;
-    border: 2px solid rgba(167, 243, 208, 0.55);
+    background: linear-gradient(135deg, #0C7560, #129B7F);
+    border: 2px solid rgba(167, 243, 208, 0.6);
     color: #FFFFFF;
-    font-size: 48px;
+    font-size: ${isWide ? 44 : 48}px;
     font-weight: 700;
     letter-spacing: 0.02em;
-    box-shadow: 0 18px 46px rgba(12, 117, 96, 0.45);
+    box-shadow: 0 20px 50px rgba(12, 117, 96, 0.5);
+    opacity: 0; transform: scale(0.92) translateY(18px);
+  }
+  .url-box::after {
+    content: "";
+    position: absolute;
+    top: -20%; left: -45%;
+    width: 36%; height: 140%;
+    background: linear-gradient(105deg, transparent 10%, rgba(255,255,255,0.42) 50%, transparent 90%);
+    transform: skewX(-18deg);
+    opacity: 0;
+  }
+  body.play .url-box { animation: popIn 0.68s cubic-bezier(0.22, 1, 0.36, 1) 0.58s forwards; }
+  body.play .url-box::after { animation: sheen 1.3s ease-in-out 1.4s 2 forwards; }
+  @keyframes sheen {
+    0% { left: -45%; opacity: 0; }
+    20% { opacity: 1; }
+    100% { left: 135%; opacity: 0; }
   }
   .badge {
+    display: inline-flex; align-items: center; gap: 12px;
     padding: 14px 36px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.1);
-    border: 1.5px solid rgba(108, 216, 184, 0.4);
-    color: #D7F2E9;
-    font-size: 32px; font-weight: 600;
+    border: 1.5px solid rgba(110, 231, 183, 0.45);
+    color: #E2F8F0;
+    font-size: ${isWide ? 28 : 32}px; font-weight: 600;
+    opacity: 0; transform: translateY(16px);
   }
+  .badge .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: #34D399; box-shadow: 0 0 12px #34D399;
+  }
+  body.play .badge { animation: riseIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.85s forwards; }
   .foot {
-    margin-top: 10px;
-    font-size: 28px;
-    color: #9BB4AB;
+    margin-top: 6px;
+    font-size: ${isWide ? 24 : 28}px;
+    color: #A5C0B6;
+    opacity: 0; transform: translateY(12px);
+  }
+  body.play .foot { animation: riseIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) 1.05s forwards; }
+  @keyframes popIn {
+    0% { opacity: 0; transform: scale(0.84) translateY(16px); }
+    70% { opacity: 1; transform: scale(1.02) translateY(-1px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes riseIn {
+    0% { opacity: 0; transform: translateY(18px); }
+    100% { opacity: 1; transform: translateY(0); }
   }
 </style></head><body>
+  <div class="grid"></div>
+  <div class="orb"></div>
   <div class="wrap">
     <div class="icon">${ICON_SVG}</div>
     <div class="eyebrow">${escHtml(card.eyebrow)}</div>
     <h2>${escHtml(card.title)}</h2>
     <div class="url-box">${escHtml(card.url)}</div>
-    <div class="badge">${escHtml(card.badge)}</div>
+    <div class="badge"><span class="dot"></span><span>${escHtml(card.badge)}</span></div>
     <div class="foot">${escHtml(card.footnote)}</div>
   </div>
 </body></html>`;
-
-  await renderHtmlImage(browser, { width: CANVAS_W, height: CANVAS_H, html, outPath, transparent: false });
 }
 
-async function renderPoster(browser, { poster, screenshotPath, outPath }) {
+async function renderPoster(browser, { poster, screenshotPath, outPath, wide = false }) {
   const imgB64 = fs.readFileSync(screenshotPath).toString('base64');
-  const html = `<!doctype html>
+  const width = wide ? W16_CANVAS_W : CANVAS_W;
+  const height = wide ? W16_CANVAS_H : CANVAS_H;
+
+  const html = wide
+    ? `<!doctype html>
 <html><head><meta charset="utf-8"><style>
   html, body {
-    margin: 0; padding: 0;
-    width: ${CANVAS_W}px; height: ${CANVAS_H}px;
-    font-family: ${FONT_STACK};
-    -webkit-font-smoothing: antialiased;
-    background: radial-gradient(circle at 50% 16%, rgba(12,117,96,0.45), transparent 55%),
-                linear-gradient(160deg, #13241E 0%, #0D1714 60%, #09110E 100%);
-    color: #FFFFFF;
-    overflow: hidden;
+    margin: 0; padding: 0; width: ${width}px; height: ${height}px;
+    font-family: ${FONT_STACK}; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(circle at 24% 48%, rgba(16,163,132,0.42), transparent 52%),
+                linear-gradient(155deg, #142B23 0%, #0C1714 55%, #08100E 100%);
+    color: #FFFFFF; overflow: hidden;
+    display: flex; align-items: center;
   }
-  .header {
-    padding: 88px 72px 0;
-    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px;
-  }
-  .brand-row {
-    display: inline-flex; align-items: center; gap: 18px;
-  }
-  .mini-icon {
-    width: 64px; height: 64px; border-radius: 16px; overflow: hidden;
-    box-shadow: 0 8px 22px rgba(12,117,96,0.4);
-  }
-  .mini-icon svg { width: 100%; height: 100%; display: block; }
-  .eyebrow {
-    font-size: 28px; font-weight: 700; letter-spacing: 0.14em; color: #6CD8B8;
-  }
-  h1 {
-    margin: 0; font-size: 68px; font-weight: 800; line-height: 1.22; text-wrap: balance;
-  }
-  .sub {
-    margin: 0; font-size: 30px; color: #BFD4CC; font-weight: 500;
+  .left {
+    width: 720px; display: flex; justify-content: center; align-items: center;
   }
   .phone-stage {
-    position: absolute;
-    left: 50%; transform: translateX(-50%);
-    top: 430px;
-    width: 720px;
-    border-radius: 48px;
-    padding: 14px;
-    background: #1A2622;
-    border: 2px solid #3A524A;
-    box-shadow: 0 36px 80px rgba(0,0,0,0.62);
+    width: 444px; border-radius: 38px; padding: 11px;
+    background: #172420; border: 2px solid #486D62;
+    box-shadow: 0 32px 72px rgba(0,0,0,0.62);
   }
-  .phone-stage img {
-    display: block;
-    width: 100%;
-    border-radius: 36px;
+  .phone-stage img { display: block; width: 100%; border-radius: 28px; }
+  .right {
+    flex: 1; padding: 0 110px 0 40px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 30px;
+  }
+  .brand-row { display: inline-flex; align-items: center; gap: 18px; }
+  .mini-icon { width: 68px; height: 68px; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 26px rgba(12,117,96,0.45); }
+  .mini-icon svg { width: 100%; height: 100%; display: block; }
+  .eyebrow { font-size: 28px; font-weight: 700; letter-spacing: 0.14em; color: #6EE7B7; }
+  h1 { margin: 0; font-size: 74px; font-weight: 800; line-height: 1.18; text-wrap: balance; }
+  .sub { margin: 0; font-size: 32px; color: #C5DBD3; font-weight: 500; line-height: 1.45; }
+  .badge {
+    padding: 15px 34px; border-radius: 999px;
+    background: rgba(12,117,96,0.88); border: 1.5px solid rgba(167,243,208,0.55);
+    font-size: 26px; font-weight: 600; color: #FFFFFF;
+    box-shadow: 0 12px 30px rgba(12,117,96,0.4);
   }
 </style></head><body>
-  <div class="header">
-    <div class="brand-row">
-      <div class="mini-icon">${ICON_SVG}</div>
-      <div class="eyebrow">${escHtml(poster.eyebrow)}</div>
-    </div>
+  <div class="left"><div class="phone-stage"><img src="data:image/png;base64,${imgB64}" alt=""/></div></div>
+  <div class="right">
+    <div class="brand-row"><div class="mini-icon">${ICON_SVG}</div><div class="eyebrow">${escHtml(poster.eyebrow)}</div></div>
     <h1>${escHtml(poster.headline)}</h1>
     <p class="sub">${escHtml(poster.subline)}</p>
+    ${poster.badge ? `<div class="badge">${escHtml(poster.badge)}</div>` : ''}
   </div>
-  <div class="phone-stage">
-    <img src="data:image/png;base64,${imgB64}" alt=""/>
+</body></html>`
+    : `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html, body {
+    margin: 0; padding: 0; width: ${width}px; height: ${height}px;
+    font-family: ${FONT_STACK}; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(circle at 50% 16%, rgba(16,163,132,0.45), transparent 55%),
+                linear-gradient(160deg, #142B23 0%, #0C1714 60%, #08100E 100%);
+    color: #FFFFFF; overflow: hidden;
+  }
+  .header {
+    padding: 80px 72px 0;
+    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px;
+  }
+  .brand-row { display: inline-flex; align-items: center; gap: 18px; }
+  .mini-icon { width: 64px; height: 64px; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 22px rgba(12,117,96,0.4); }
+  .mini-icon svg { width: 100%; height: 100%; display: block; }
+  .eyebrow { font-size: 28px; font-weight: 700; letter-spacing: 0.14em; color: #6EE7B7; }
+  h1 { margin: 0; font-size: 66px; font-weight: 800; line-height: 1.22; text-wrap: balance; }
+  .sub { margin: 0; font-size: 29px; color: #BFD4CC; font-weight: 500; }
+  .badge {
+    padding: 10px 28px; border-radius: 999px;
+    background: rgba(12,117,96,0.86); border: 1.5px solid rgba(167,243,208,0.52);
+    font-size: 24px; font-weight: 600; color: #FFFFFF;
+  }
+  .phone-stage {
+    position: absolute; left: 50%; transform: translateX(-50%); top: 472px;
+    width: 720px; border-radius: 48px; padding: 14px;
+    background: #172420; border: 2px solid #486D62;
+    box-shadow: 0 36px 80px rgba(0,0,0,0.62);
+  }
+  .phone-stage img { display: block; width: 100%; border-radius: 36px; }
+</style></head><body>
+  <div class="header">
+    <div class="brand-row"><div class="mini-icon">${ICON_SVG}</div><div class="eyebrow">${escHtml(poster.eyebrow)}</div></div>
+    <h1>${escHtml(poster.headline)}</h1>
+    <p class="sub">${escHtml(poster.subline)}</p>
+    ${poster.badge ? `<div class="badge">${escHtml(poster.badge)}</div>` : ''}
   </div>
+  <div class="phone-stage"><img src="data:image/png;base64,${imgB64}" alt=""/></div>
 </body></html>`;
 
-  await renderHtmlImage(browser, { width: CANVAS_W, height: CANVAS_H, html, outPath, type: 'jpeg', quality: 90 });
+  await renderHtmlImage(browser, { width, height, html, outPath, type: 'jpeg', quality: 91 });
 }
 
 async function renderMealPhoto(browser, kind, outPath) {
-  // Royalty-free, clean overhead food-bowl illustration rendered via SVG to JPEG.
   const isBreakfast = kind === 'breakfast';
   const html = isBreakfast
     ? `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:720px;height:720px;overflow:hidden}</style></head><body>
@@ -401,7 +829,6 @@ async function renderMealPhoto(browser, kind, outPath) {
   <circle cx="372" cy="382" r="268" fill="rgba(45,30,15,0.22)"/>
   <circle cx="360" cy="360" r="266" fill="url(#bowl)" stroke="#DCE2DF" stroke-width="6"/>
   <circle cx="360" cy="360" r="228" fill="url(#yogurt)"/>
-  <!-- Oats cluster -->
   <g fill="#D8B685" stroke="#B68F59" stroke-width="1.5">
     <ellipse cx="255" cy="275" rx="34" ry="18" transform="rotate(-22 255 275)"/>
     <ellipse cx="295" cy="245" rx="30" ry="15" transform="rotate(14 295 245)"/>
@@ -409,7 +836,6 @@ async function renderMealPhoto(browser, kind, outPath) {
     <ellipse cx="285" cy="300" rx="28" ry="14" transform="rotate(-10 285 300)"/>
     <ellipse cx="260" cy="365" rx="30" ry="15" transform="rotate(-32 260 365)"/>
   </g>
-  <!-- Banana slices -->
   <g>
     <circle cx="445" cy="260" r="36" fill="#F8E7A2" stroke="#E5C968" stroke-width="3"/>
     <circle cx="495" cy="312" r="35" fill="#F8E7A2" stroke="#E5C968" stroke-width="3"/>
@@ -418,19 +844,16 @@ async function renderMealPhoto(browser, kind, outPath) {
     <circle cx="495" cy="312" r="14" fill="#F3DC82"/>
     <circle cx="465" cy="378" r="14" fill="#F3DC82"/>
   </g>
-  <!-- Blueberries -->
   <g fill="#374B8C" stroke="#223060" stroke-width="2">
     <circle cx="365" cy="245" r="20"/><circle cx="400" cy="295" r="18"/><circle cx="352" cy="312" r="19"/>
     <circle cx="395" cy="355" r="20"/><circle cx="348" cy="382" r="17"/><circle cx="385" cy="415" r="19"/>
     <circle cx="435" cy="435" r="18"/><circle cx="330" cy="435" r="19"/>
   </g>
-  <!-- Boiled egg halves -->
   <g transform="translate(290,468) rotate(-14)">
     <ellipse cx="0" cy="0" rx="58" ry="44" fill="#FFFFFF" stroke="#E2DFD5" stroke-width="3"/>
     <ellipse cx="6" cy="2" rx="28" ry="23" fill="#F5A623"/>
     <ellipse cx="0" cy="-4" rx="10" ry="7" fill="#FFD166" opacity="0.7"/>
   </g>
-  <!-- Chia / seeds -->
   <g fill="#3A3A3A" opacity="0.65">
     <circle cx="330" cy="275" r="3"/><circle cx="345" cy="290" r="2.5"/><circle cx="370" cy="340" r="3"/>
     <circle cx="415" cy="330" r="2.5"/><circle cx="315" cy="395" r="3"/><circle cx="410" cy="465" r="2.5"/>
@@ -449,11 +872,9 @@ async function renderMealPhoto(browser, kind, outPath) {
     <line x1="0" y1="120" x2="720" y2="120"/><line x1="0" y1="260" x2="720" y2="260"/>
     <line x1="0" y1="410" x2="720" y2="410"/><line x1="0" y1="560" x2="720" y2="560"/>
   </g>
-  <!-- Bowl shadow & rim -->
   <circle cx="376" cy="384" r="272" fill="rgba(35,22,10,0.28)"/>
   <circle cx="360" cy="360" r="270" fill="url(#ceramic)" stroke="#D9E0DC" stroke-width="6"/>
   <circle cx="360" cy="360" r="234" fill="#F3F2EC"/>
-  <!-- Brown rice quadrant (bottom-left) -->
   <path d="M 145 360 A 215 215 0 0 0 385 572 L 365 365 Z" fill="url(#rice)"/>
   <g fill="#B69971" opacity="0.65">
     <ellipse cx="220" cy="415" rx="10" ry="5" transform="rotate(20 220 415)"/>
@@ -465,7 +886,6 @@ async function renderMealPhoto(browser, kind, outPath) {
     <ellipse cx="200" cy="390" rx="9" ry="4" transform="rotate(-30 200 390)"/>
     <ellipse cx="295" cy="430" rx="10" ry="5" transform="rotate(18 295 430)"/>
   </g>
-  <!-- Black sesame on rice -->
   <g fill="#262626">
     <ellipse cx="245" cy="440" rx="4" ry="2.2" transform="rotate(30 245 440)"/>
     <ellipse cx="285" cy="472" rx="4" ry="2.2" transform="rotate(-20 285 472)"/>
@@ -473,7 +893,6 @@ async function renderMealPhoto(browser, kind, outPath) {
     <ellipse cx="262" cy="495" rx="4" ry="2.2" transform="rotate(12 262 495)"/>
     <ellipse cx="328" cy="505" rx="4" ry="2.2" transform="rotate(-35 328 505)"/>
   </g>
-  <!-- Broccoli florets (top-right) -->
   <g>
     <g fill="#2F7D46" stroke="#1E5930" stroke-width="2.5">
       <circle cx="430" cy="220" r="38"/><circle cx="475" cy="245" r="36"/><circle cx="515" cy="295" r="38"/>
@@ -484,31 +903,26 @@ async function renderMealPhoto(browser, kind, outPath) {
       <circle cx="458" cy="296" r="16"/><circle cx="515" cy="348" r="16"/><circle cx="410" cy="266" r="15"/>
     </g>
   </g>
-  <!-- Sliced grilled chicken breast (top-left) -->
   <g transform="translate(278,268) rotate(-28)">
     <rect x="-126" y="-88" width="252" height="52" rx="26" fill="url(#chicken)" stroke="#8F4E1E" stroke-width="3"/>
     <rect x="-132" y="-28" width="264" height="54" rx="27" fill="url(#chicken)" stroke="#8F4E1E" stroke-width="3"/>
     <rect x="-118" y="34" width="236" height="52" rx="26" fill="url(#chicken)" stroke="#8F4E1E" stroke-width="3"/>
-    <!-- Grill marks -->
     <g stroke="#5B2D0C" stroke-width="5" stroke-linecap="round" opacity="0.6">
       <line x1="-82" y1="-78" x2="-62" y2="-46"/><line x1="-22" y1="-80" x2="-2" y2="-46"/><line x1="42" y1="-78" x2="62" y2="-46"/>
       <line x1="-74" y1="-18" x2="-54" y2="16"/><line x1="-8" y1="-18" x2="12" y2="16"/><line x1="56" y1="-18" x2="76" y2="16"/>
       <line x1="-60" y1="44" x2="-42" y2="74"/><line x1="8" y1="44" x2="26" y2="74"/><line x1="68" y1="44" x2="84" y2="74"/>
     </g>
   </g>
-  <!-- Avocado slices (bottom-right) -->
   <g transform="translate(472,448) rotate(24)">
     <path d="M -55 -28 Q 0 -62 60 -20 Q 12 22 -55 -28 Z" fill="#89BC55" stroke="#4D7A27" stroke-width="4"/>
     <path d="M -45 6 Q 10 -28 70 14 Q 22 56 -45 6 Z" fill="#9CCD64" stroke="#4D7A27" stroke-width="4"/>
     <path d="M -32 42 Q 20 8 78 48 Q 30 88 -32 42 Z" fill="#A9DA71" stroke="#4D7A27" stroke-width="4"/>
   </g>
-  <!-- Halved soft-boiled egg (center-bottom-right) -->
   <g transform="translate(405,432) rotate(-18)">
     <ellipse cx="0" cy="0" rx="64" ry="48" fill="#FFFFFF" stroke="#E0DDD3" stroke-width="3"/>
     <ellipse cx="8" cy="2" rx="31" ry="25" fill="#F29F1D"/>
     <ellipse cx="2" cy="-5" rx="11" ry="8" fill="#FFD166" opacity="0.72"/>
   </g>
-  <!-- Subtle herb flecks -->
   <g fill="#2C7A4B" opacity="0.85">
     <circle cx="245" cy="245" r="4"/><circle cx="312" cy="288" r="3.5"/><circle cx="272" cy="312" r="4"/>
     <circle cx="395" cy="402" r="3"/><circle cx="430" cy="445" r="3.5"/>
@@ -518,45 +932,121 @@ async function renderMealPhoto(browser, kind, outPath) {
   await renderHtmlImage(browser, { width: 720, height: 720, html, outPath, type: 'jpeg', quality: 92 });
 }
 
-async function generateSharedAssets(browser, workDir) {
+async function generateSharedAssets(browser, workDir, formats = ['9x16', '16x9']) {
   fs.mkdirSync(workDir, { recursive: true });
-  const shellPath = path.join(workDir, 'frame-shell.png');
+  const shellPath = path.join(workDir, 'frame-shell-9x16.png');
+  const shell16x9Path = path.join(workDir, 'frame-shell-16x9.png');
   const lunchPhoto = path.join(workDir, 'meal-lunch.jpg');
   const breakfastPhoto = path.join(workDir, 'meal-breakfast.jpg');
 
-  await renderFrameShell(browser, shellPath);
+  if (formats.includes('9x16')) await renderFrameShell9x16(browser, shellPath);
+  if (formats.includes('16x9')) await renderFrameShell16x9(browser, shell16x9Path);
   await renderMealPhoto(browser, 'lunch', lunchPhoto);
   await renderMealPhoto(browser, 'breakfast', breakfastPhoto);
 
-  return { shellPath, lunchPhoto, breakfastPhoto };
+  return { shellPath, shell16x9Path, lunchPhoto, breakfastPhoto };
 }
 
-async function generateLangAssets(browser, sb, workDir) {
+async function generateLangAssets(browser, sb, workDir, { formats = ['9x16', '16x9'], titleDur, outroDur } = {}) {
   const dir = path.join(workDir, `assets-${sb.lang}`);
   fs.mkdirSync(dir, { recursive: true });
 
-  const titlePath = path.join(dir, 'title.png');
-  const outroPath = path.join(dir, 'outro.png');
-  await renderTitleCard(browser, sb.titleCard, titlePath);
-  await renderOutroCard(browser, sb.outroCard, outroPath);
+  const cards = {};
+  const tDur = titleDur || sb.titleCard.duration;
+  const oDur = outroDur || sb.outroCard.duration;
 
-  const overlays = {};
-  for (const sc of sb.scenes) {
-    overlays[sc.id] = [];
-    for (let i = 0; i < sc.beats.length; i++) {
-      const beat = sc.beats[i];
-      const outPath = path.join(dir, `overlay-${sc.id}-${i}.png`);
-      await renderCaptionOverlay(browser, {
-        chapter: sc.chapter,
-        caption: beat.caption,
-        tipBadge: beat.tipBadge,
-        outPath
-      });
-      overlays[sc.id].push(outPath);
+  if (formats.includes('9x16')) {
+    cards['9x16'] = {
+      title: await renderAnimatedCardVideo(browser, {
+        width: CANVAS_W,
+        height: CANVAS_H,
+        html: buildAnimatedTitleHtml(sb.titleCard, { width: CANVAS_W, height: CANVAS_H, isWide: false }),
+        durationSec: tDur,
+        rawDir: path.join(dir, 'cards-9x16')
+      }),
+      outro: await renderAnimatedCardVideo(browser, {
+        width: CANVAS_W,
+        height: CANVAS_H,
+        html: buildAnimatedOutroHtml(sb.outroCard, { width: CANVAS_W, height: CANVAS_H, isWide: false }),
+        durationSec: oDur,
+        rawDir: path.join(dir, 'cards-9x16')
+      })
+    };
+  }
+
+  if (formats.includes('16x9')) {
+    cards['16x9'] = {
+      title: await renderAnimatedCardVideo(browser, {
+        width: W16_CANVAS_W,
+        height: W16_CANVAS_H,
+        html: buildAnimatedTitleHtml(sb.titleCard, { width: W16_CANVAS_W, height: W16_CANVAS_H, isWide: true }),
+        durationSec: tDur,
+        rawDir: path.join(dir, 'cards-16x9')
+      }),
+      outro: await renderAnimatedCardVideo(browser, {
+        width: W16_CANVAS_W,
+        height: W16_CANVAS_H,
+        html: buildAnimatedOutroHtml(sb.outroCard, { width: W16_CANVAS_W, height: W16_CANVAS_H, isWide: true }),
+        durationSec: oDur,
+        rawDir: path.join(dir, 'cards-16x9')
+      })
+    };
+  }
+
+  const overlays9x16 = {};
+  const panels16x9 = {};
+  const totalScenes = sb.scenes.length;
+
+  for (let si = 0; si < totalScenes; si++) {
+    const sc = sb.scenes[si];
+    overlays9x16[sc.id] = { chapter: null, beats: [] };
+    panels16x9[sc.id] = [];
+
+    if (formats.includes('9x16')) {
+      const chapPath = path.join(dir, `top-chapter-${sc.id}.png`);
+      await renderTopChip9x16(browser, { text: sc.chapter, variant: 'chapter', outPath: chapPath });
+      overlays9x16[sc.id].chapter = chapPath;
+    }
+
+    for (let bi = 0; bi < sc.beats.length; bi++) {
+      const beat = sc.beats[bi];
+      const {
+        renderKineticCaptionSeq,
+        renderKineticCalloutSeq,
+        renderKineticPanel16x9Seq
+      } = require('./transitions');
+      if (formats.includes('9x16')) {
+        const capSeq = await renderKineticCaptionSeq(browser, {
+          text: beat.caption,
+          outDir: path.join(dir, `kcap-${sc.id}-${bi}`),
+          durationSec: 0.50
+        });
+        let calloutSeq = null;
+        if (beat.callout) {
+          calloutSeq = await renderKineticCalloutSeq(browser, {
+            text: beat.callout,
+            outDir: path.join(dir, `kcall-${sc.id}-${bi}`),
+            durationSec: 0.60
+          });
+        }
+        overlays9x16[sc.id].beats.push({ capSeq, calloutSeq });
+      }
+      if (formats.includes('16x9')) {
+        const panelSeq = await renderKineticPanel16x9Seq(browser, {
+          sceneIdx: si,
+          totalScenes,
+          chapter: sc.chapter,
+          caption: beat.caption,
+          callout: beat.callout,
+          outDir: path.join(dir, `kpanel16-${sc.id}-${bi}`),
+          durationSec: 0.60
+        });
+        panels16x9[sc.id].push(panelSeq);
+      }
     }
   }
 
-  return { dir, titlePath, outroPath, overlays };
+  return { dir, cards, overlays9x16, panels16x9 };
 }
 
 module.exports = {
@@ -566,6 +1056,21 @@ module.exports = {
   PHONE_H,
   PHONE_X,
   PHONE_Y,
+  PHONE_R,
+  TOP_BAND_H,
+  CAP_BAND_H,
+  CAP_BAND_Y,
+  W16_CANVAS_W,
+  W16_CANVAS_H,
+  W16_PHONE_W,
+  W16_PHONE_H,
+  W16_PHONE_X,
+  W16_PHONE_Y,
+  W16_PHONE_R,
+  W16_PANEL_X,
+  W16_PANEL_Y,
+  W16_PANEL_W,
+  W16_PANEL_H,
   generateSharedAssets,
   generateLangAssets,
   renderPoster
