@@ -27,7 +27,16 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run build
+      - name: Install FFmpeg for demo-video cover tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version >/dev/null
+          ffprobe -version >/dev/null
       - run: npm test
+        env:
+          REQUIRE_FFMPEG: '1'
       - name: Public page browser checks (landing, login, privacy, terms, guide)
         # Playwright lives outside the repo's node_modules so it never ships in the release bundle.
         run: |
