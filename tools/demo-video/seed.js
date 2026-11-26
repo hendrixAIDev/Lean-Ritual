@@ -57,7 +57,9 @@ async function startLocalServer(extraEnv = {}) {
     COOKIE_SECURE: '0',
     TRUST_PROXY: '0',
     MAIL_MODE: 'file',
-    // Enable AI UI controls with a non-functional mock key (Playwright intercepts all /api/ai calls).
+    // Enable AI UI controls with a placeholder key; demo-ai-block.js is preloaded into
+    // this disposable child process so any missed Playwright /api/ai interception fails
+    // closed locally without ever contacting OpenRouter or any external host.
     AI_PROVIDER: 'openrouter',
     OPENROUTER_API_KEY: 'demo-mock-key',
     OPENROUTER_BASE: 'https://openrouter.ai/api/v1',
@@ -65,7 +67,7 @@ async function startLocalServer(extraEnv = {}) {
     ...extraEnv
   };
 
-  const server = spawn(process.execPath, ['server.js'], {
+  const server = spawn(process.execPath, ['--require', path.join(__dirname, 'demo-ai-block.js'), 'server.js'], {
     cwd: ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe']

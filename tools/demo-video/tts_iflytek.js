@@ -79,16 +79,38 @@ function requireIflytekCredentials() {
   return creds;
 }
 
-function redactSecrets(msg, creds) {
+function redactSecrets(msg, creds, extraSecrets = [], maxLen = 280) {
   let s = String(msg || '');
-  if (!creds) return s;
-  for (const secret of [creds.apiSecret, creds.apiKey, creds.appId]) {
-    if (secret) s = s.split(secret).join('[REDACTED]');
+  const secrets = [];
+  if (creds) {
+    secrets.push(creds.apiSecret, creds.apiKey, creds.appId);
+  }
+  for (const extra of extraSecrets || []) {
+    if (extra) secrets.push(extra);
+  }
+  // Redact all known secrets (raw & URL-encoded) on the FULL string BEFORE any truncation.
+  for (const secret of secrets) {
+    if (!secret) continue;
+    const raw = String(secret);
+    s = s.split(raw).join('[REDACTED]');
+    try {
+      const encoded = encodeURIComponent(raw);
+      if (encoded && encoded !== raw) s = s.split(encoded).join('[REDACTED]');
+    } catch {}
+  }
+  // Strip signed query strings and auth parameters from any URL or header fragment.
+  s = s.replace(/(wss?:\/\/[^\s?#"']+)\?[^\s"'<>)]*/gi, '$1?[REDACTED]');
+  s = s.replace(/(https?:\/\/[^\s?#"']+)\?[^\s"'<>)]*/gi, '$1?[REDACTED]');
+  s = s.replace(/([?&](?:authorization|signature|api_key|key|token|secret)=)[^&\s"'<>)]+/gi, '$1[REDACTED]');
+  s = s.replace(/\b(authorization|signature|api_key)\s*[:=]\s*["']?[^\s"',;}\]]+["']?/gi, '$1=[REDACTED]');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) {
+    s = `${s.slice(0, maxLen)}…`;
   }
   return s;
 }
 
-function buildSignedUrl(endpoint, creds) {
+function buildSignedRequest(endpoint, creds) {
   const u = new URL(endpoint);
   const date = new Date().toUTCString();
   const signatureOrigin = `host: ${u.host}\ndate: ${date}\nGET ${u.pathname} HTTP/1.1`;
@@ -100,7 +122,15 @@ function buildSignedUrl(endpoint, creds) {
     date,
     host: u.host
   });
-  return `${endpoint}?${params.toString()}`;
+  return {
+    url: `${endpoint}?${params.toString()}`,
+    authorization,
+    signature: signatureSha
+  };
+}
+
+function buildSignedUrl(endpoint, creds) {
+  return buildSignedRequest(endpoint, creds).url;
 }
 
 function getCacheDir() {
@@ -193,17 +223,25 @@ function synthesizeRawFromApi({
   sparkAssist = DEFAULT_SPARK_ASSIST,
   remain = DEFAULT_REMAIN,
   endpoint = DEFAULT_ENDPOINT,
-  timeoutMs = 30000
+  timeoutMs = 30000,
+  WebSocketImpl = globalThis.WebSocket
 }) {
   const creds = requireIflytekCredentials();
-  const signedUrl = buildSignedUrl(endpoint, creds);
+  const signed = buildSignedRequest(endpoint, creds);
+  const extraSecrets = [signed.url, signed.authorization, signed.signature];
 
   return new Promise((resolve, reject) => {
     const chunks = [];
     let settled = false;
     let sid = '';
 
-    const ws = new WebSocket(signedUrl);
+    let ws;
+    try {
+      ws = new WebSocketImpl(signed.url);
+    } catch (err) {
+      reject(new Error(redactSecrets(err?.message || err, creds, extraSecrets)));
+      return;
+    }
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -216,7 +254,7 @@ function synthesizeRawFromApi({
       settled = true;
       clearTimeout(timer);
       try { ws.close(); } catch {}
-      const clean = new Error(redactSecrets(err?.message || err, creds));
+      const clean = new Error(redactSecrets(err?.message || err, creds, extraSecrets));
       if (err?.code !== undefined) clean.code = err.code;
       reject(clean);
     };
@@ -284,7 +322,8 @@ function synthesizeRawFromApi({
         const code = msg?.header?.code ?? 0;
         sid = msg?.header?.sid || sid;
         if (code !== 0) {
-          const err = new Error(`iFLYTEK TTS error code=${code} message="${msg?.header?.message || ''}" sid=${sid}`);
+          const safeDetail = redactSecrets(msg?.header?.message || '', creds, extraSecrets, 180);
+          const err = new Error(`iFLYTEK TTS error code=${code} message="${safeDetail}" sid=${sid}`);
           err.code = code;
           finishErr(err);
           return;
@@ -303,7 +342,7 @@ function synthesizeRawFromApi({
     });
 
     ws.addEventListener('error', event => {
-      const detail = event?.message || event?.error?.message || 'WebSocket connection error';
+      const detail = redactSecrets(event?.message || event?.error?.message || 'WebSocket connection error', creds, extraSecrets, 200);
       finishErr(new Error(`iFLYTEK WebSocket error: ${detail}`));
     });
 
@@ -312,7 +351,8 @@ function synthesizeRawFromApi({
         if (chunks.length > 0 && event.code === 1000) {
           finishOk();
         } else {
-          finishErr(new Error(`iFLYTEK WebSocket closed unexpectedly (code=${event.code}, reason=${event.reason || 'none'})`));
+          const safeReason = redactSecrets(event.reason || 'none', creds, extraSecrets, 160);
+          finishErr(new Error(`iFLYTEK WebSocket closed unexpectedly (code=${event.code}, reason=${safeReason})`));
         }
       }
     });
@@ -462,7 +502,11 @@ module.exports = {
   requireIflytekCredentials,
   getCacheDir,
   computeCacheKey,
+  redactSecrets,
+  buildSignedRequest,
+  buildSignedUrl,
   normalizePcmToWav,
+  synthesizeRawFromApi,
   synthesizeLine,
   synthesizeBatch
 };

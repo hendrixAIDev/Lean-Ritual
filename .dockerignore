@@ -8,6 +8,7 @@ data
 node_modules
 backups
 coverage
+tools/demo-video
 *.db
 *.db-*
 *.sqlite

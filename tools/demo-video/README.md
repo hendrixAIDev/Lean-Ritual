@@ -63,7 +63,8 @@ npm ci && node tools/demo-video/run.js --out /tmp/lean-ritual-video
 
 - `run.js` — CLI orchestrator
 - `storyboard.js` — Chinese & English copy, captions, callouts, narration scripts, voice configs, and AI mock responses
-- `seed.js` — disposable local server + 3-week synthetic account seeder
+- `seed.js` — disposable local server + 3-week synthetic account seeder (preloads `demo-ai-block.js` so any unintercepted external AI request fails closed locally)
+- `demo-ai-block.js` — demo-server-only preload that blocks non-loopback outbound HTTP(S)/fetch requests so the demo server can never contact external AI providers
 - `assets.js` — Chromium-rendered animated title/outro cards, 9:16 & 16:9 frame shells, modular overlays, posters, and meal photos
 - `record.js` — Playwright lossless CDP PNG mobile recorder (1-Minute Setup + 5 seeded walkthrough scenes) with tap ripples, focus highlights, cubic-eased scrolling, UI event timestamps, and AI route mocks
 - `transitions.js` — 3D perspective swing / whip-blur / depth-parallax transition bridges, kinetic per-word captions, and live number count-up callout sequences

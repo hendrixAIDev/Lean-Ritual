@@ -147,7 +147,55 @@ function normalizeMp3ToWav(mp3Path, wavPath) {
   return probeDuration(wavPath);
 }
 
-async function apiRequest(endpoint, { method = 'GET', body = null, accept = 'application/json' } = {}) {
+function sanitizeErrorText(text, secrets = [], maxLen = 240) {
+  let s = String(text || '');
+  // Redact all known secrets (raw & URL-encoded) on the FULL string BEFORE any truncation.
+  for (const secret of secrets) {
+    if (!secret) continue;
+    const raw = String(secret);
+    s = s.split(raw).join('[REDACTED]');
+    try {
+      const encoded = encodeURIComponent(raw);
+      if (encoded && encoded !== raw) s = s.split(encoded).join('[REDACTED]');
+    } catch {}
+  }
+  s = s.replace(/(https?:\/\/[^\s?#"']+)\?[^\s"'<>)]*/gi, '$1?[REDACTED]');
+  s = s.replace(/([?&](?:key|api_key|authorization|signature|token|secret)=)[^&\s"'<>)]+/gi, '$1[REDACTED]');
+  s = s.replace(/\b(xi-api-key|x-goog-api-key|authorization)\s*[:=]\s*["']?[^\s"',;}\]]+["']?/gi, '$1: [REDACTED]');
+  s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]');
+  s = s.replace(/\bsk_[0-9A-Za-z_-]{10,}/g, '[REDACTED]');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) {
+    s = `${s.slice(0, maxLen)}…`;
+  }
+  return s;
+}
+
+function extractSafeHttpErrorSummary(rawBody, secrets = []) {
+  const full = String(rawBody || '');
+  if (!full.trim()) return 'no error details';
+  try {
+    const parsed = JSON.parse(full);
+    const detail = parsed?.detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      return sanitizeErrorText(detail, secrets, 200);
+    }
+    if (detail && typeof detail === 'object') {
+      const bits = [];
+      if (detail.status) bits.push(sanitizeErrorText(detail.status, secrets, 60));
+      if (typeof detail.message === 'string' && detail.message.trim()) {
+        bits.push(sanitizeErrorText(detail.message, secrets, 200));
+      }
+      if (bits.length) return bits.join(' - ');
+    }
+    if (parsed?.error && typeof parsed.error === 'object' && parsed.error.message) {
+      return sanitizeErrorText(parsed.error.message, secrets, 200);
+    }
+  } catch {}
+  return 'provider error body omitted';
+}
+
+async function apiRequest(endpoint, { method = 'GET', body = null, accept = 'application/json', fetchImpl = globalThis.fetch } = {}) {
   const apiKey = requireElevenLabsApiKey();
   const headers = {
     'xi-api-key': apiKey,
@@ -156,19 +204,27 @@ async function apiRequest(endpoint, { method = 'GET', body = null, accept = 'app
   if (body !== null) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    method,
-    headers,
-    body: body !== null ? JSON.stringify(body) : undefined
-  });
+  let res;
+  try {
+    res = await fetchImpl(`${API_BASE}${endpoint}`, {
+      method,
+      headers,
+      body: body !== null ? JSON.stringify(body) : undefined
+    });
+  } catch (err) {
+    const safeEndpoint = String(endpoint).split('?')[0];
+    throw new Error(`ElevenLabs API ${method} ${safeEndpoint} network error: ${sanitizeErrorText(err?.message || err, [apiKey], 240)}`);
+  }
   if (!res.ok) {
-    let errText = '';
+    let rawErrText = '';
     try {
-      errText = (await res.text()).slice(0, 500);
+      rawErrText = await res.text();
     } catch {}
-    // Ensure key can never leak even if echoed back
-    errText = errText.split(apiKey).join('[REDACTED]');
-    throw new Error(`ElevenLabs API ${method} ${endpoint} failed (HTTP ${res.status}): ${errText}`);
+    const safeSummary = extractSafeHttpErrorSummary(rawErrText, [apiKey]);
+    const safeEndpoint = String(endpoint).split('?')[0];
+    const err = new Error(`ElevenLabs API ${method} ${safeEndpoint} failed (HTTP ${res.status}): ${safeSummary}`);
+    err.status = res.status;
+    throw err;
   }
   return res;
 }
@@ -358,6 +414,9 @@ module.exports = {
   getCacheDir,
   computeCacheKey,
   normalizeMp3ToWav,
+  sanitizeErrorText,
+  extractSafeHttpErrorSummary,
+  apiRequest,
   getAccountSubscription,
   listMyVoices,
   searchSharedVoices,

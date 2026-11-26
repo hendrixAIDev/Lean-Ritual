@@ -155,9 +155,52 @@ function normalizeAudioToWav(rawPath, wavPath, { isWav = false, sampleRate = 240
   return probeDuration(wavPath);
 }
 
-async function generateAudioFromApi({ modelId, voiceName, stylePrompt, text }) {
+function sanitizeErrorText(text, secrets = [], maxLen = 240) {
+  let s = String(text || '');
+  // Redact all known secrets (raw & URL-encoded) on the FULL string BEFORE any truncation.
+  for (const secret of secrets) {
+    if (!secret) continue;
+    const raw = String(secret);
+    s = s.split(raw).join('[REDACTED]');
+    try {
+      const encoded = encodeURIComponent(raw);
+      if (encoded && encoded !== raw) s = s.split(encoded).join('[REDACTED]');
+    } catch {}
+  }
+  s = s.replace(/(https?:\/\/[^\s?#"']+)\?[^\s"'<>)]*/gi, '$1?[REDACTED]');
+  s = s.replace(/([?&](?:key|api_key|authorization|signature|token|secret)=)[^&\s"'<>)]+/gi, '$1[REDACTED]');
+  s = s.replace(/\b(x-goog-api-key|xi-api-key|authorization)\s*[:=]\s*["']?[^\s"',;}\]]+["']?/gi, '$1: [REDACTED]');
+  s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]');
+  s = s.replace(/\bAIza[0-9A-Za-z_-]{10,}/g, '[REDACTED]');
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) {
+    s = `${s.slice(0, maxLen)}…`;
+  }
+  return s;
+}
+
+function extractSafeHttpErrorSummary(rawBody, secrets = []) {
+  const full = String(rawBody || '');
+  if (!full.trim()) return 'no error details';
+  try {
+    const parsed = JSON.parse(full);
+    const errObj = Array.isArray(parsed) ? parsed[0]?.error : parsed?.error;
+    if (errObj && typeof errObj === 'object') {
+      const bits = [];
+      if (errObj.status) bits.push(sanitizeErrorText(errObj.status, secrets, 60));
+      if (errObj.code !== undefined && errObj.code !== null) bits.push(`code=${sanitizeErrorText(errObj.code, secrets, 32)}`);
+      if (typeof errObj.message === 'string' && errObj.message.trim()) {
+        bits.push(sanitizeErrorText(errObj.message, secrets, 200));
+      }
+      if (bits.length) return bits.join(' - ');
+    }
+  } catch {}
+  return 'provider error body omitted';
+}
+
+async function generateAudioFromApi({ modelId, voiceName, stylePrompt, text, fetchImpl = globalThis.fetch }) {
   const apiKey = requireGeminiApiKey();
-  const url = `${API_BASE}/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = `${API_BASE}/models/${encodeURIComponent(modelId)}:generateContent`;
   const supportsSpeechMetadata = /^gemini-3\./i.test(modelId);
   const part = supportsSpeechMetadata
     ? {
@@ -182,20 +225,23 @@ async function generateAudioFromApi({ modelId, voiceName, stylePrompt, text }) {
   let lastErr;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const res = await fetch(url, {
+      const res = await fetchImpl(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
         body: JSON.stringify(reqBody)
       });
       if (!res.ok) {
-        let errText = '';
+        let rawErrText = '';
         try {
-          errText = (await res.text()).slice(0, 800);
+          rawErrText = await res.text();
         } catch {}
-        errText = errText.split(apiKey).join('[REDACTED]');
-        const err = new Error(`Gemini TTS ${modelId} failed (HTTP ${res.status}): ${errText}`);
+        const safeSummary = extractSafeHttpErrorSummary(rawErrText, [apiKey]);
+        const err = new Error(`Gemini TTS ${modelId} failed (HTTP ${res.status}): ${safeSummary}`);
         err.status = res.status;
-        const retryMatch = errText.match(/Please retry in\s+([\d.]+)s/i);
+        const retryMatch = rawErrText.match(/Please retry in\s+([\d.]+)s/i);
         if (retryMatch) {
           err.retryAfterMs = Math.min(70000, Math.ceil(Number(retryMatch[1]) * 1000) + 1000);
         }
@@ -221,8 +267,9 @@ async function generateAudioFromApi({ modelId, voiceName, stylePrompt, text }) {
         audioTokens: Number(usage.candidatesTokenCount || 0)
       };
     } catch (err) {
-      const safeMsg = String(err?.message || err).split(apiKey).join('[REDACTED]');
+      const safeMsg = sanitizeErrorText(err?.message || err, [apiKey], 280);
       lastErr = new Error(safeMsg);
+      if (err?.status !== undefined) lastErr.status = err.status;
       const retryable = !err.status || err.status === 429 || err.status >= 500;
       if (attempt < 4 && retryable) {
         const delayMs = err.retryAfterMs || (err.status === 429 ? 20000 * attempt : 1500 * attempt);
@@ -384,6 +431,9 @@ module.exports = {
   getCacheDir,
   computeCacheKey,
   normalizeAudioToWav,
+  sanitizeErrorText,
+  extractSafeHttpErrorSummary,
+  generateAudioFromApi,
   synthesizeLine,
   synthesizeBatch
 };
