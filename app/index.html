@@ -551,6 +551,9 @@ const I18N = {
     "setup.disclaimerTitle":"健康与运动提示",
     "setup.disclaimerBody":"本应用仅供一般健身与饮食记录参考，不构成医疗建议。开始训练或调整饮食前请先咨询医生——尤其在有伤病、孕期/产后、进食障碍史或任何基础疾病时。应用给出的热量与营养目标均为估算值。",
     "ai.disclaimer":"提示：AI 建议与热量估算仅供参考，不构成医疗建议，请结合自身情况判断。",
+    "ai.budgetNearCap":"提示：本月 AI 额度已用约 {pct}%，达到上限后仍可手动记录饮食和训练。",
+    "ai.budgetReached":"本月 AI 额度已用完，下月（UTC）自动重置。你仍可继续手动记录饮食和训练。",
+    "ai.budgetGlobalPaused":"本月全站 AI 额度已用完，AI 功能暂时暂停，下月（UTC）自动恢复。你仍可继续手动记录饮食和训练。",
     "setup.sec1":"身体指标", "setup.sex":"性别", "setup.male":"男", "setup.female":"女",
     "setup.age":"年龄", "setup.height":"身高 cm", "setup.weight":"体重 kg",
     "setup.bf":"体脂率 %（不知道可空）", "setup.bfPh":"例如 16",
@@ -722,6 +725,8 @@ const I18N = {
     "err.sessionExpired":"登录过期了，请重新登录。",
     "err.aiUnavailable":"服务器暂时无法使用 AI，可以手动填写。",
     "err.rateLimited":"请求太频繁或额度用完，稍后再试。",
+    "err.aiUserMonthlyCap":"本月 AI 额度已用完，下月（UTC）自动重置。你仍可手动填写饮食和训练记录。",
+    "err.aiGlobalMonthlyCap":"本月全站 AI 额度已用完，AI 功能暂时暂停，下月（UTC）自动恢复。你仍可手动填写记录。",
     "err.imageRejected":"这张照片无法识别，换一张试试。",
     "err.truncated":"AI 的回答太长被截断了，请再试一次或缩短反馈。",
     "err.invalidJson":"AI 的回答格式不对，再点一次试试。",
@@ -960,6 +965,9 @@ const I18N = {
     "setup.disclaimerTitle":"Health & Fitness Notice",
     "setup.disclaimerBody":"For general fitness and nutrition tracking only — not medical advice. Consult a doctor before starting, especially if you have injuries, are pregnant or postpartum, have a history of eating disorders, or have any medical condition. Calorie and macro targets are estimates.",
     "ai.disclaimer":"Note: AI coach advice and calorie estimates are for reference only, not medical advice.",
+    "ai.budgetNearCap":"Heads up: you've used about {pct}% of this month's AI quota. You can always log meals and workouts manually.",
+    "ai.budgetReached":"You've reached this month's AI limit (resets next month UTC). You can still log meals and workouts manually.",
+    "ai.budgetGlobalPaused":"AI features are paused for the rest of this month (UTC) after reaching the app budget. You can still log meals and workouts manually.",
     "setup.sec1":"Body Metrics", "setup.sex":"Sex", "setup.male":"Male", "setup.female":"Female",
     "setup.age":"Age", "setup.height":"Height cm", "setup.weight":"Weight kg",
     "setup.bf":"Body fat % (optional)", "setup.bfPh":"e.g. 16",
@@ -1131,6 +1139,8 @@ const I18N = {
     "err.sessionExpired":"Session expired. Please sign in again.",
     "err.aiUnavailable":"AI is temporarily unavailable. You can enter numbers manually.",
     "err.rateLimited":"Too many requests or daily quota reached. Try again later.",
+    "err.aiUserMonthlyCap":"You've reached this month's AI limit (resets next month UTC). You can still log meals and workouts manually.",
+    "err.aiGlobalMonthlyCap":"AI features are paused for the rest of this month (UTC) after reaching the app budget. You can still log everything manually.",
     "err.imageRejected":"Couldn't process this image. Try another photo.",
     "err.truncated":"AI response was cut off. Try again or shorten your note.",
     "err.invalidJson":"Invalid AI response format. Please try again.",
@@ -1357,6 +1367,8 @@ const API_ERR_EN = {
   consent_required:"Please agree to the Terms, Privacy Notice, and data processing consent to continue.",
   consent_version_mismatch:"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version.",
   sampling_disabled:"AI is not enabled on this server.",
+  ai_user_monthly_cap:"You've reached this month's AI limit (resets next month UTC). You can still log meals and workouts manually.",
+  ai_global_monthly_cap:"AI features are paused for the rest of this month (UTC) after reaching the app budget. You can still log everything manually.",
   ai_failed:"AI is temporarily unavailable. Try again later or enter manually.",
   truncated:"AI response was cut off. Try again or shorten your note.",
   invalid_json:"Invalid AI response format. Please try again.",
@@ -1418,6 +1430,8 @@ const API_ERR_ZH = {
   consent_required:"请先同意使用条款、隐私说明及数据处理授权",
   consent_version_mismatch:"使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
   sampling_disabled:"服务器没有配置 AI",
+  ai_user_monthly_cap:"本月 AI 额度已用完，下月（UTC）自动重置。你仍可手动填写饮食和训练记录。",
+  ai_global_monthly_cap:"本月全站 AI 额度已用完，AI 功能暂时暂停，下月（UTC）自动恢复。你仍可手动填写记录。",
   ai_failed:"AI 服务暂时不可用，请稍后再试或手动填写",
   truncated:"AI 的回答太长被截断了",
   invalid_json:"AI 回答格式无效",
@@ -1663,7 +1677,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
-  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, confirmDel:null, mealPreview:null, ufb:null };
+  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
 
@@ -1717,7 +1731,7 @@ function formatSaveErr(e){
   const msg = e?.message || (code && hasOwn(API_ERR_ZH, code) ? API_ERR_ZH[code] : "");
   return msg ? "保存失败：" + msg : "保存失败（" + (code || "网络问题") + "），请稍后再试";
 }
-const EXPECTED_FLOW_ERRS = new Set(["cancelled", "session_expired", "network", "sampling_disabled", "not_granted", "rate_limited", "doc_quota", "doc_rate_limited"]);
+const EXPECTED_FLOW_ERRS = new Set(["cancelled", "session_expired", "network", "sampling_disabled", "not_granted", "rate_limited", "ai_user_monthly_cap", "ai_global_monthly_cap", "doc_quota", "doc_rate_limited"]);
 function reportFlowErr(name, e){
   try {
     const code = typeof e?.code === "string" ? e.code.trim() : "";
@@ -2377,6 +2391,7 @@ function editor(e){
       <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${esc(ed.aiBusy ? t("ed.aiBusy") : t("ed.aiAsk"))}</button></div>
       ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${canonExName(ed.name)===canonExName(a.name)?"border-color:var(--accent)":""}"><b class="small">${esc(exName(a.name))} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
       ${ed.aiErr ? `<p class="small" role="alert" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
+      ${aiBudgetNotice()}
       <p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>
     </div>` : ""}
     <div><span class="small muted">${esc(t("ed.scopeLabel"))}</span><div class="row" style="margin-top:4px">
@@ -2493,6 +2508,14 @@ function macroInputs({ idPrefix, dataAttr, values, format }){
     return `<label class="macro-field"><span class="mf-lbl">${esc(t(lk))}</span><span class="mf-box"><input id="${esc(idPrefix)}-${k}" ${attrs} type="number" inputmode="${k==="kcal"?"numeric":"decimal"}" step="${k==="kcal"?"1":"0.1"}" min="0" autocomplete="off" value="${esc(val)}"><span class="mf-unit">${unit}</span></span></label>`;
   }).join("")}</div>`;
 }
+function aiBudgetNotice(){
+  const b = S.aiBudget;
+  if (!S.sample || !b) return "";
+  if (b.globalPaused) return `<p class="tip warn small ai-budget-notice" role="status">${esc(t("ai.budgetGlobalPaused"))}</p>`;
+  if (b.reached) return `<p class="tip warn small ai-budget-notice" role="status">${esc(t("ai.budgetReached"))}</p>`;
+  if (b.nearCap) return `<p class="tip small ai-budget-notice" role="status">${esc(t("ai.budgetNearCap", {pct: Math.min(99, Math.max(80, Math.round(+b.usedPct || 80)))}))}</p>`;
+  return "";
+}
 const aiOK = () => !!(S.sample || (S.cloud && S.comments));
 function mealMode(){ const m = S.mealMode || lsGet("bj-mmode", "ai"); return m === "ai" && aiOK() ? "ai" : "manual"; }
 const PHOTO_ICO = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h3l2-2h6l2 2h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>';
@@ -2528,7 +2551,7 @@ function viewFood(){
     ${mode === "manual" ? macroInputs({ idPrefix: "mf", dataAttr: "mf", values: S.mfill, format: false }) : ""}
     <button class="btn primary block" data-act="add-meal" data-v="${mode}" ${S.busy.addMeal?"disabled":""}>${esc(S.busy.addMeal ? t("food.saving") : mode === "ai" ? t("food.saveAndAi") : t("common.save"))}</button>
     <p class="small muted">${esc(mode === "ai" ? t("food.aiModeHint") : t("food.manualModeHint"))}</p>
-    ${mode === "ai" ? `<p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : ""}
+    ${mode === "ai" ? `${aiBudgetNotice()}<p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : ""}
     ${S.assets ? "" : `<p class="small muted">${esc(t("food.localPhotoHint"))}</p>`}
   </section>
   <section class="card"><h2>${esc(t("food.eatenTitle"))}</h2>
@@ -2888,7 +2911,7 @@ async function estimateMeal(date, id, manual, prov){
   // 临时估算只在照片是营养成分表时做：饭菜照片只按文字算会偏差很大，不如等看图的结果
   const skipProv = () => prov && !ocrText;
   if (!tryImg && skipProv()) { delete S.busy["meal-"+id]; render(); return; }
-  const hard = c => ["cancelled","not_granted","sampling_disabled","rate_limited","session_expired","refused"].includes(c);
+  const hard = c => ["cancelled","not_granted","sampling_disabled","rate_limited","ai_user_monthly_cap","ai_global_monthly_cap","session_expired","refused"].includes(c);
   try {
     try { r = await ask(tryImg); if (tryImg) S.imgOK = true; }
     catch (e) {
@@ -2943,6 +2966,8 @@ function sampleErr(e, task = "estimate"){
   if (HOSTED && (c === "not_granted" || c === "sampling_disabled")) return t("err.aiNotConfiguredHosted");
   if (HOSTED && c === "session_expired") return t("err.sessionExpired");
   if (c === "not_granted" || c === "sampling_disabled" || c === "ai_failed") return t("err.aiUnavailable");
+  if (c === "ai_user_monthly_cap") return t("err.aiUserMonthlyCap");
+  if (c === "ai_global_monthly_cap") return t("err.aiGlobalMonthlyCap");
   if (c === "rate_limited") return t("err.rateLimited");
   if (c === "image_rejected") return t("err.imageRejected");
   if (c === "truncated") return t("err.truncated");
@@ -3183,7 +3208,7 @@ function viewFeedback(){
   <section class="card"><div class="row between"><h2>${esc(t("fb.aiTitle"))}</h2>${ai?.running?`<button class="chip" data-act="ai-stop">${esc(t("fb.stop"))}</button>`:""}</div>
     <p class="small muted">${esc(t("fb.aiIntro"))}</p>
     <label>${esc(t("fb.myNote"))}<textarea id="fb-text" rows="3" placeholder="${esc(t("fb.myNotePh"))}" ${ai?.running?"disabled":""}>${esc(lsGet("bj-fbtext",""))}</textarea></label>
-    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${esc(ai?.running ? t("fb.analyzing") : t("fb.submitAi"))}</button><p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : `<p class="tip">${esc(t("fb.noAi"))}</p>`}
+    ${S.sample ? `<button class="btn primary" data-act="ai-run" ${ai?.running?"disabled":""}>${esc(ai?.running ? t("fb.analyzing") : t("fb.submitAi"))}</button>${aiBudgetNotice()}<p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>` : `<p class="tip">${esc(t("fb.noAi"))}</p>`}
     ${ai?.running ? `<p class="small muted">${esc(ai.stream ? t("fb.writing") : t("fb.thinking"))}</p>` : ""}
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
@@ -4476,6 +4501,8 @@ async function finishBootAfterConsent(){
   S.noId = !!db && !S.uid;
   S.store = mkCloud(db, `data/users/${S.uid}/app`);
   S.serverSample = sample;
+  S.aiBudget = me?.aiBudget || window.ritual?.getAiBudget?.() || null;
+  window.ritual?.onAiBudget?.(b => { S.aiBudget = b; if (S.ready) render(); });
   S.consentRequired = !!me.consentRequired;
   if (S.consentRequired) {
     S.consentDraft = {terms: false, sensitive: false};

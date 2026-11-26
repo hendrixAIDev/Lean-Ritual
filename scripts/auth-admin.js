@@ -4,16 +4,38 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs");
 const { DatabaseSync } = require("node:sqlite");
-const { createInvitations } = require("../lib/invitations");
-const { normalizePhone } = require("../lib/phone");
+const { createInvitations, normalizeEmail } = require("../lib/invitations");
+const { normalizePhone, isSyntheticPhoneEmail } = require("../lib/phone");
+const {
+  parseBudgets,
+  parseNonNegativeNumber,
+  usdToNanos,
+  nanosToUsd,
+  roundUsd,
+  ensureAiBudgetSchema
+} = require("../lib/ai-pricing");
 
 const USAGE = [
   "Usage:",
   "  node scripts/auth-admin.js invite <email> [--legacy-user <username>]",
   "  node scripts/auth-admin.js invite --phone <E.164 or 11-digit mainland number> [--legacy-user <username>]",
   "  node scripts/auth-admin.js reset-password --phone <E.164 or 11-digit mainland number>",
-  "  node scripts/auth-admin.js revoke   (invitation token on stdin)"
+  "  node scripts/auth-admin.js revoke   (invitation token on stdin)",
+  "  node scripts/auth-admin.js ai-cap --phone|--email <id> [--usd <n>|--reset] [--month YYYY-MM] [--json]",
+  "  node scripts/auth-admin.js ai-usage [--month YYYY-MM] [--limit N] [--json]"
 ].join("\n");
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const TERMINAL_UNSAFE_RE = /[\x00-\x1f\x7f-\x9f\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/g;
+
+function escapeTerminalText(value) {
+  return String(value ?? "").replace(TERMINAL_UNSAFE_RE, ch => {
+    const code = ch.charCodeAt(0);
+    return code < 0x100
+      ? `\\x${code.toString(16).padStart(2, "0")}`
+      : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
 
 function readFlagValue(args, idx, flag) {
   const arg = args[idx];
@@ -24,6 +46,12 @@ function readFlagValue(args, idx, flag) {
   const value = arg.slice(flag.length + 1);
   if (!value) throw new Error(`Expected value for ${flag}`);
   return { value, nextIdx: idx };
+}
+
+function parseMonthFlag(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!MONTH_RE.test(trimmed)) throw new Error("--month must be YYYY-MM (UTC)");
+  return trimmed;
 }
 
 function parseInviteArgs(args) {
@@ -76,6 +104,71 @@ function parseResetArgs(args) {
   return { phone };
 }
 
+function parseAiCapArgs(args) {
+  let phone = null;
+  let email = null;
+  let usd = null;
+  let reset = false;
+  let month = new Date().toISOString().slice(0, 7);
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--phone" || arg.startsWith("--phone=")) {
+      if (phone !== null || email !== null) throw new Error(USAGE);
+      const res = readFlagValue(args, i, "--phone");
+      phone = res.value;
+      i = res.nextIdx;
+    } else if (arg === "--email" || arg.startsWith("--email=")) {
+      if (phone !== null || email !== null) throw new Error(USAGE);
+      const res = readFlagValue(args, i, "--email");
+      email = res.value;
+      i = res.nextIdx;
+    } else if (arg === "--usd" || arg.startsWith("--usd=")) {
+      if (usd !== null || reset) throw new Error(USAGE);
+      const res = readFlagValue(args, i, "--usd");
+      usd = parseNonNegativeNumber(res.value, NaN, "--usd", 1_000_000);
+      i = res.nextIdx;
+    } else if (arg === "--reset") {
+      if (usd !== null || reset) throw new Error(USAGE);
+      reset = true;
+    } else if (arg === "--month" || arg.startsWith("--month=")) {
+      const res = readFlagValue(args, i, "--month");
+      month = parseMonthFlag(res.value);
+      i = res.nextIdx;
+    } else if (arg === "--json") {
+      json = true;
+    } else {
+      throw new Error(USAGE);
+    }
+  }
+  if (!phone && !email) throw new Error(USAGE);
+  return { phone, email, usd, reset, month, json };
+}
+
+function parseAiUsageArgs(args) {
+  let month = new Date().toISOString().slice(0, 7);
+  let limit = 20;
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--month" || arg.startsWith("--month=")) {
+      const res = readFlagValue(args, i, "--month");
+      month = parseMonthFlag(res.value);
+      i = res.nextIdx;
+    } else if (arg === "--limit" || arg.startsWith("--limit=")) {
+      const res = readFlagValue(args, i, "--limit");
+      const n = Number(res.value);
+      if (!Number.isSafeInteger(n) || n < 1 || n > 200) throw new Error("--limit must be an integer between 1 and 200");
+      limit = n;
+    } else if (arg === "--json") {
+      json = true;
+    } else {
+      throw new Error(USAGE);
+    }
+  }
+  return { month, limit, json };
+}
+
 function hasTable(db, name) {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 }
@@ -85,12 +178,316 @@ function hasColumn(db, table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
 }
 
+function createAnonHelper(env = process.env) {
+  const key = typeof env.AUTH_SECRET === "string" && env.AUTH_SECRET.length >= 16
+    ? env.AUTH_SECRET
+    : crypto.randomBytes(32);
+  return uid => "u_" + crypto
+    .createHmac("sha256", key)
+    .update("lean-ritual:ai-admin:v1:")
+    .update(String(uid || ""))
+    .digest("hex")
+    .slice(0, 8);
+}
+
+function resolveUserContact(row) {
+  if (!row) return { email: null, phone: null };
+  const phone = typeof row.phoneNumber === "string" && row.phoneNumber.trim() ? row.phoneNumber.trim() : null;
+  const rawEmail = typeof row.email === "string" && row.email.trim() ? row.email.trim() : null;
+  const email = rawEmail && !isSyntheticPhoneEmail(rawEmail) ? rawEmail : null;
+  return { email, phone };
+}
+
+function formatContact({ email, phone }) {
+  if (phone && email) return `${phone} / ${email}`;
+  return phone || email || "(unknown)";
+}
+
+function handleAiCap(dataDir, rest) {
+  const opts = parseAiCapArgs(rest);
+  const budgets = parseBudgets(process.env);
+  const authPath = path.join(dataDir, "auth.sqlite");
+  if (!fs.existsSync(authPath)) throw new Error("Account not found");
+
+  const authDb = new DatabaseSync(authPath, { readOnly: true });
+  let userRow;
+  try {
+    authDb.exec("PRAGMA busy_timeout=5000");
+    if (!hasTable(authDb, "user")) throw new Error("Account not found");
+    const hasPhoneCol = hasColumn(authDb, "user", "phoneNumber");
+    if (opts.phone) {
+      const phone = normalizePhone(opts.phone);
+      if (!phone) throw new Error("A valid phone number is required (E.164 or 11-digit mainland China number)");
+      if (!hasPhoneCol) throw new Error("Account not found");
+      userRow = authDb.prepare("SELECT id, email, phoneNumber FROM user WHERE phoneNumber = ?").get(phone);
+    } else {
+      const email = normalizeEmail(opts.email);
+      if (!email) throw new Error("A valid email address is required");
+      userRow = authDb.prepare(
+        hasPhoneCol
+          ? "SELECT id, email, phoneNumber FROM user WHERE lower(trim(email)) = ?"
+          : "SELECT id, email FROM user WHERE lower(trim(email)) = ?"
+      ).get(email);
+    }
+  } finally {
+    authDb.close();
+  }
+  if (!userRow) throw new Error("Account not found");
+
+  const bojinPath = path.join(dataDir, "bojin.db");
+  const isWrite = opts.usd !== null || opts.reset;
+  let overrideNanos = null;
+  let monthRow = null;
+  let todayCalls = 0;
+  const todayUtc = new Date().toISOString().slice(0, 10);
+
+  if (isWrite || fs.existsSync(bojinPath)) {
+    const bojinDb = isWrite ? new DatabaseSync(bojinPath) : new DatabaseSync(bojinPath, { readOnly: true });
+    try {
+      bojinDb.exec("PRAGMA busy_timeout=5000");
+      if (isWrite) {
+        ensureAiBudgetSchema(bojinDb);
+        const nowIso = new Date().toISOString();
+        bojinDb.exec("BEGIN IMMEDIATE");
+        try {
+          if (opts.reset) {
+            bojinDb.prepare("DELETE FROM ai_user_caps WHERE uid = ?").run(userRow.id);
+          } else {
+            bojinDb.prepare(
+              "INSERT INTO ai_user_caps (uid, monthly_usd_nanos, updated) VALUES (?, ?, ?) ON CONFLICT(uid) DO UPDATE SET monthly_usd_nanos = excluded.monthly_usd_nanos, updated = excluded.updated"
+            ).run(userRow.id, usdToNanos(opts.usd), nowIso);
+          }
+          bojinDb.exec("COMMIT");
+        } catch (err) {
+          bojinDb.exec("ROLLBACK");
+          throw err;
+        }
+      }
+      if (hasTable(bojinDb, "ai_user_caps")) {
+        const capRow = bojinDb.prepare("SELECT monthly_usd_nanos FROM ai_user_caps WHERE uid = ?").get(userRow.id);
+        if (capRow) overrideNanos = capRow.monthly_usd_nanos;
+      }
+      if (hasTable(bojinDb, "ai_monthly_usage")) {
+        monthRow = bojinDb.prepare(
+          "SELECT calls, prompt_tokens, completion_tokens, reasoning_tokens, cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?"
+        ).get(userRow.id, opts.month);
+      }
+      if (hasTable(bojinDb, "ai_usage") && hasColumn(bojinDb, "ai_usage", "day")) {
+        todayCalls = bojinDb.prepare("SELECT n FROM ai_usage WHERE uid = ? AND day = ?").get(userRow.id, todayUtc)?.n || 0;
+      }
+    } finally {
+      bojinDb.close();
+    }
+  }
+
+  const anon = createAnonHelper(process.env);
+  const contact = resolveUserContact(userRow);
+  const capNanos = overrideNanos !== null ? overrideNanos : budgets.userMonthlyNanos;
+  const spentNanos = monthRow?.cost_nanos || 0;
+  const capUsd = roundUsd(nanosToUsd(capNanos));
+  const spentUsd = roundUsd(nanosToUsd(spentNanos));
+  const usedPct = capNanos > 0 ? Math.round((spentNanos / capNanos) * 1000) / 10 : null;
+  const out = {
+    anonId: anon(userRow.id),
+    email: contact.email,
+    phone: contact.phone,
+    month: opts.month,
+    capUsd,
+    capSource: overrideNanos !== null ? "override" : "default",
+    defaultCapUsd: budgets.userMonthlyUsd,
+    spentUsd,
+    usedPct,
+    calls: monthRow?.calls || 0,
+    promptTokens: monthRow?.prompt_tokens || 0,
+    completionTokens: monthRow?.completion_tokens || 0,
+    reasoningTokens: monthRow?.reasoning_tokens || 0,
+    todayCalls
+  };
+
+  if (opts.json) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  const actionNote = opts.reset
+    ? ` (reset to default $${budgets.userMonthlyUsd.toFixed(2)})`
+    : opts.usd !== null
+      ? ` (updated to $${capUsd.toFixed(2)})`
+      : "";
+  const pctStr = usedPct !== null ? `${usedPct.toFixed(1)}%` : "n/a";
+  console.log([
+    `User:   ${escapeTerminalText(out.anonId)}  (${escapeTerminalText(formatContact(contact))})`,
+    `Month:  ${out.month} (UTC)`,
+    `Cap:    $${capUsd.toFixed(2)} [${out.capSource}]${actionNote}`,
+    `Spend:  $${spentUsd.toFixed(4)} / $${capUsd.toFixed(2)} (${pctStr})`,
+    `Usage:  ${out.calls} calls (today UTC: ${out.todayCalls}) | tokens: in=${out.promptTokens} out=${out.completionTokens} think=${out.reasoningTokens}`
+  ].join("\n"));
+}
+
+function handleAiUsage(dataDir, rest) {
+  const opts = parseAiUsageArgs(rest);
+  const budgets = parseBudgets(process.env);
+  const bojinPath = path.join(dataDir, "bojin.db");
+  const authPath = path.join(dataDir, "auth.sqlite");
+  const anon = createAnonHelper(process.env);
+
+  let globalRow = null;
+  let topRows = [];
+  const capMap = new Map();
+
+  if (fs.existsSync(bojinPath)) {
+    const bojinDb = new DatabaseSync(bojinPath, { readOnly: true });
+    try {
+      bojinDb.exec("PRAGMA busy_timeout=5000");
+      if (hasTable(bojinDb, "ai_global_monthly_usage")) {
+        globalRow = bojinDb.prepare(
+          "SELECT calls, prompt_tokens, completion_tokens, reasoning_tokens, cost_nanos FROM ai_global_monthly_usage WHERE month = ?"
+        ).get(opts.month) || null;
+      }
+      if (hasTable(bojinDb, "ai_monthly_usage")) {
+        topRows = bojinDb.prepare(
+          "SELECT uid, calls, prompt_tokens, completion_tokens, reasoning_tokens, cost_nanos FROM ai_monthly_usage WHERE month = ? ORDER BY cost_nanos DESC, calls DESC, uid ASC LIMIT ?"
+        ).all(opts.month, opts.limit);
+        if (!globalRow) {
+          const sum = bojinDb.prepare(
+            "SELECT COALESCE(SUM(calls), 0) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens, COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(cost_nanos), 0) AS cost_nanos FROM ai_monthly_usage WHERE month = ?"
+          ).get(opts.month);
+          if (sum && (sum.calls > 0 || sum.cost_nanos > 0)) globalRow = sum;
+        }
+      }
+      if (hasTable(bojinDb, "ai_user_caps")) {
+        for (const r of bojinDb.prepare("SELECT uid, monthly_usd_nanos FROM ai_user_caps").all()) {
+          capMap.set(r.uid, r.monthly_usd_nanos);
+        }
+      }
+    } finally {
+      bojinDb.close();
+    }
+  }
+
+  const identityMap = new Map();
+  if (topRows.length && fs.existsSync(authPath)) {
+    const authDb = new DatabaseSync(authPath, { readOnly: true });
+    try {
+      authDb.exec("PRAGMA busy_timeout=5000");
+      if (hasTable(authDb, "user")) {
+        const hasPhoneCol = hasColumn(authDb, "user", "phoneNumber");
+        const stmt = authDb.prepare(
+          hasPhoneCol
+            ? "SELECT id, email, phoneNumber FROM user WHERE id = ?"
+            : "SELECT id, email FROM user WHERE id = ?"
+        );
+        for (const row of topRows) {
+          const u = stmt.get(row.uid);
+          if (u) identityMap.set(row.uid, resolveUserContact(u));
+        }
+      }
+    } finally {
+      authDb.close();
+    }
+  }
+
+  const globalSpentNanos = globalRow?.cost_nanos || 0;
+  const globalSpentUsd = roundUsd(nanosToUsd(globalSpentNanos));
+  const globalUsedPct = budgets.globalMonthlyNanos > 0
+    ? Math.round((globalSpentNanos / budgets.globalMonthlyNanos) * 1000) / 10
+    : null;
+  const globalPaused = budgets.globalMonthlyNanos === 0 || globalSpentNanos >= budgets.globalMonthlyNanos;
+
+  const users = topRows.map((row, idx) => {
+    const contact = identityMap.get(row.uid) || { email: null, phone: null };
+    const overrideNanos = capMap.has(row.uid) ? capMap.get(row.uid) : null;
+    const capNanos = overrideNanos !== null ? overrideNanos : budgets.userMonthlyNanos;
+    const spentUsd = roundUsd(nanosToUsd(row.cost_nanos));
+    const capUsd = roundUsd(nanosToUsd(capNanos));
+    const usedPct = capNanos > 0 ? Math.round((row.cost_nanos / capNanos) * 1000) / 10 : null;
+    return {
+      rank: idx + 1,
+      anonId: anon(row.uid),
+      email: contact.email,
+      phone: contact.phone,
+      spentUsd,
+      capUsd,
+      capSource: overrideNanos !== null ? "override" : "default",
+      usedPct,
+      calls: row.calls,
+      promptTokens: row.prompt_tokens,
+      completionTokens: row.completion_tokens,
+      reasoningTokens: row.reasoning_tokens
+    };
+  });
+
+  const payload = {
+    month: opts.month,
+    global: {
+      spentUsd: globalSpentUsd,
+      budgetUsd: budgets.globalMonthlyUsd,
+      usedPct: globalUsedPct,
+      paused: globalPaused,
+      calls: globalRow?.calls || 0,
+      promptTokens: globalRow?.prompt_tokens || 0,
+      completionTokens: globalRow?.completion_tokens || 0,
+      reasoningTokens: globalRow?.reasoning_tokens || 0
+    },
+    defaultUserCapUsd: budgets.userMonthlyUsd,
+    users
+  };
+
+  if (opts.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  const statusTag = globalPaused
+    ? " [PAUSED]"
+    : globalUsedPct !== null && globalUsedPct >= 80
+      ? " [>=80%]"
+      : "";
+  const lines = [
+    `AI Monthly Usage (${opts.month} UTC)`,
+    `App Total: $${globalSpentUsd.toFixed(4)} / $${budgets.globalMonthlyUsd.toFixed(2)} (${globalUsedPct !== null ? globalUsedPct.toFixed(1) + "%" : "n/a"})${statusTag} | ${payload.global.calls} calls | in=${payload.global.promptTokens} out=${payload.global.completionTokens} think=${payload.global.reasoningTokens}`,
+    ""
+  ];
+  if (!users.length) {
+    lines.push("No per-user AI spend recorded for this month.");
+  } else {
+    lines.push("Top users (host-only identity):");
+    for (const u of users) {
+      const capTag = u.capSource === "override" ? " (override)" : "";
+      const pctStr = u.usedPct !== null ? `${u.usedPct.toFixed(1)}%` : "n/a";
+      lines.push(
+        `  ${u.rank}. ${escapeTerminalText(u.anonId)}  ${escapeTerminalText(formatContact(u))}  $${u.spentUsd.toFixed(4)} / $${u.capUsd.toFixed(2)}${capTag} (${pctStr})  ${u.calls} calls  in=${u.promptTokens} out=${u.completionTokens} think=${u.reasoningTokens}`
+      );
+    }
+  }
+  console.log(lines.join("\n"));
+}
+
 // Operators issue an invitation or a one-time password reset link, never set a
 // user's permanent password or mark an email verified.
 function main() {
   const [command, ...rest] = process.argv.slice(2);
   const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "..", "data"));
-  if (!["invite", "revoke", "reset-password"].includes(command)) throw new Error(USAGE);
+  if (!["invite", "revoke", "reset-password", "ai-cap", "ai-usage"].includes(command)) throw new Error(USAGE);
+
+  if (command === "ai-cap" || command === "ai-usage") {
+    const needsCreateDir = command === "ai-cap" && rest.some(a => a === "--usd" || a.startsWith("--usd=") || a === "--reset");
+    if (needsCreateDir) fs.mkdirSync(dataDir, { recursive: true });
+    if (!fs.existsSync(dataDir)) {
+      if (command === "ai-cap") throw new Error("Account not found");
+      handleAiUsage(dataDir, rest);
+      return;
+    }
+    const releaseDataAccess = require("../lib/data-access").shared(dataDir);
+    process.once("exit", releaseDataAccess);
+    try {
+      if (command === "ai-cap") handleAiCap(dataDir, rest);
+      else handleAiUsage(dataDir, rest);
+    } finally {
+      releaseDataAccess();
+    }
+    return;
+  }
+
   fs.mkdirSync(dataDir, { recursive: true });
   const releaseDataAccess = require("../lib/data-access").shared(dataDir);
   process.once("exit", releaseDataAccess);

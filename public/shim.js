@@ -13,6 +13,13 @@
     const t = setTimeout(resolve, ms);
     if (signal) signal.addEventListener("abort", () => { clearTimeout(t); reject({ code: "cancelled" }); }, { once: true });
   });
+  let aiBudget = null;
+  const aiBudgetListeners = new Set();
+  function setAiBudget(next) {
+    if (!next || typeof next !== "object") return;
+    aiBudget = next;
+    for (const fn of aiBudgetListeners) { try { fn(aiBudget); } catch {} }
+  }
   async function api(method, url, body, rawType, signal, extraHeaders) {
     let r, rateRetries = 0;
     const retry = RETRY_METHODS.has(method) && !url.startsWith("/api/auth/") && !url.startsWith("/api/ai");
@@ -36,6 +43,8 @@
       if (signal && signal.aborted) throw { code: "cancelled" };
       await wait(RETRY_DELAYS[attempt], signal);
     }
+    const bh = r.headers && typeof r.headers.get === "function" ? r.headers.get("x-bojin-ai-budget") : null;
+    if (bh) { try { setAiBudget(JSON.parse(bh)); } catch {} }
     let j = null; try { j = await r.json(); } catch {}
     if (r.status === 401 && !url.startsWith("/api/auth/")) { location.href = "/login.html"; throw { code: "session_expired" }; }
     if (!r.ok) throw { code: (j && j.error) || "http_" + r.status, message: (j && j.message) || "" };
@@ -134,6 +143,7 @@
   };
 
   const meP = api("GET", "/api/me").catch(() => null);
+  meP.then(m => { if (m && m.aiBudget) setAiBudget(m.aiBudget); });
   const user = {
     async me() { const m = await meP; return m ? { ...m, isOwner: false, canEdit: false } : null; },
     async id() { return (await meP)?.id || null; },
@@ -151,6 +161,8 @@
       if (name === "sample") return m.ai ? sample : null;
       return null;   // comments 等 Claude 专属能力在独立部署版里没有
     },
+    getAiBudget: () => aiBudget,
+    onAiBudget: fn => { if (typeof fn === "function") aiBudgetListeners.add(fn); return () => aiBudgetListeners.delete(fn); },
     changePassword: (oldPw, newPw) => api("POST", "/api/auth/change-password", { currentPassword: oldPw, newPassword: newPw, revokeOtherSessions: true }),
     deleteAccount: password => api("POST", "/api/auth/delete-user", {password}),
     acceptConsent: payload => api("POST", "/api/account/consent", payload),

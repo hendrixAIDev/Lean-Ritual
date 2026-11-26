@@ -472,6 +472,24 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js show <feedback-id>
 ```
 
+### AI monthly USD budget caps & admin overrides
+
+In addition to daily request count limits (`AI_DAILY_LIMIT=60`, `AI_GLOBAL_DAILY_LIMIT=300`), `lib/ai.js` enforces UTC calendar-month estimated USD caps using the shared pricing table in `lib/ai-pricing.js` (counting actual prompt, completion, and thinking tokens across all retries and OpenRouter fallbacks, with conservative in-flight reservations):
+
+- **Per-user monthly cap (`AI_USER_MONTHLY_USD`, default `5`):** users near 80% see a gentle notice in the AI areas; users at/above their cap are refused before calling upstream with a friendly zh/en message reminding them they can still log manually.
+- **Whole-app monthly budget guard (`AI_GLOBAL_MONTHLY_USD`, default `80`):** sends one phone alert via `ALERT_URL` at 80%, and pauses AI for everyone with one alert at 100%. Resets automatically on the 1st of the next UTC month.
+- **Per-model pricing defaults (USD / 1M tokens):** `gemini-3.8-flash` / `google/gemini-3.8-flash` (`$0.75` input / `$3.75` output+thinking), `google/gemini-2.5-flash` / `gemini-2.5-flash` (`$0.30` input / `$2.50` output+thinking). Override via `AI_MODEL_PRICES_JSON` or provider/global env vars (`AI_INPUT_PRICE_PER_1M`, `AI_OUTPUT_PRICE_PER_1M`, `AI_GEMINI_*`, `AI_OPENROUTER_*`).
+
+```sh
+# List this month's top users by AI spend (anonymized IDs + host-only phone/email) and app total vs $80 budget
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-usage
+
+# Inspect or change one user's monthly USD cap (by --phone or --email; use --reset to restore default)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --phone 13800138000 --usd 15
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --email tester@example.com --usd 2.5
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/environment /opt/bojin/scripts/auth-admin.js ai-cap --email tester@example.com --reset
+```
+
 ### Daily trial activity summary
 
 `scripts/daily-summary.js` prints a read-only activity summary covering both the **last 24 hours** and **trial to date** (all records by default, or filtered with `--since <YYYY-MM-DD|ISO>` / `TRIAL_START`):
