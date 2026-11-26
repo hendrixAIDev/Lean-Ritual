@@ -4,11 +4,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { pageScript } = require("./helpers/public-page");
 const { spawnSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const loginHtml = fs.readFileSync(path.join(ROOT, "public/login.html"), "utf8");
-const loginScript = loginHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+const loginScript = pageScript(loginHtml);
 
 function makeSafeTextElement(initial = {}) {
   let text = initial.textContent ?? "";

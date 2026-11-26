@@ -52,21 +52,16 @@ h1,h2,h3{font-family:var(--f-serif);font-weight:700;text-wrap:balance}
 :focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:var(--focus-gap)}
 
 /* language switch: landing's .lang (aria-pressed) and the pages' .lang-sw (.on) look the same */
-.lang,.lang-sw{display:inline-flex;flex:none;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--solid)}
-.lang button,.lang-sw button{all:unset;cursor:pointer;min-width:var(--tap);min-height:var(--tap);padding:0 12px;box-sizing:border-box;display:grid;place-items:center;border-radius:var(--r-pill);font:500 15px/1 var(--f-num);letter-spacing:.06em;color:var(--muted);transition:color .2s,background-color .2s}
+.lang,.lang-sw{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--solid)}
+.lang button,.lang-sw button{all:unset;cursor:pointer;min-width:var(--tap);min-height:var(--tap);padding:0 12px;display:grid;place-items:center;border-radius:var(--r-pill);font:500 15px/1 var(--f-num);letter-spacing:.06em;color:var(--muted);transition:color .2s,background-color .2s}
 .lang button{padding:0}
-.lang-sw button{font:500 var(--fs-sm)/1 var(--f-body);letter-spacing:.02em}
+.lang-sw{flex:none}
+.lang-sw button{box-sizing:border-box;font:500 var(--fs-sm)/1 var(--f-body);letter-spacing:.02em}
 .lang button[aria-pressed=true],.lang-sw button.on{background:var(--selected);color:var(--ivory)}
-.lang button:hover,.lang-sw button:hover{color:var(--ivory)}
+.lang-sw button:hover{color:var(--ivory)}
 .lang button:focus-visible,.lang-sw button:focus-visible{outline:var(--focus-w) solid var(--focus);outline-offset:0}
 
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   *,*::before,*::after{animation:none!important;transition:none!important}
-}
-/* Printed pages are dark on white whatever the screen theme. */
-@media print{
-  :root{color-scheme:light}
-  html,body{background:var(--print-paper)!important;color:var(--print-ink)!important}
-  body::before,body::after{display:none!important}
 }

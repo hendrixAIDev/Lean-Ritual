@@ -197,5 +197,6 @@ footer .op{margin-left:auto}
 
 /* boot.js hides the page for one frame while it swaps zh copy for en, so English readers never see a flash of Chinese. */
 html[data-i18n-pending] body{visibility:hidden}
-@media (prefers-reduced-motion:reduce){.live .reveal{opacity:1;transform:none}}   /* theme.css stops every animation */
+/* theme.css stops every animation; scrolling must be instant again here, after the smooth rule above */
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.live .reveal{opacity:1;transform:none}}
 @media print{.live .reveal{opacity:1;transform:none}}

@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { pageScript, pageWithScript } = require("./helpers/public-page");
 const { spawn, spawnSync } = require("node:child_process");
 const net = require("node:net");
 const { DatabaseSync } = require("node:sqlite");
@@ -116,7 +117,7 @@ test("privacy.html has no draft wording, covers all current disclosures, and lin
   assert.doesNotMatch(en, CJK_RE, "privacy.html #doc-en must have zero CJK characters");
 
   // Consent version constant stays synchronized across backend, login, app, privacy, and terms
-  const loginHtml = fs.readFileSync(path.join(ROOT, "public/login.html"), "utf8");
+  const loginHtml = pageWithScript("login.html");
   const appHtml = fs.readFileSync(path.join(ROOT, "app/index.html"), "utf8");
   const termsHtml = fs.readFileSync(path.join(ROOT, "public/terms.html"), "utf8");
   assert.equal(loginHtml.match(/const DISPLAYED_CONSENT_VERSION = "([^"]+)"/)?.[1], CONSENT_VERSION);
@@ -160,7 +161,7 @@ test("terms.html covers all required trial terms, health disclaimer, zh/en parit
   }
 
   // Linked from login.html, Me tab (app/index.html), and privacy.html
-  const loginHtml = fs.readFileSync(path.join(ROOT, "public/login.html"), "utf8");
+  const loginHtml = pageWithScript("login.html");
   const appHtml = fs.readFileSync(path.join(ROOT, "app/index.html"), "utf8");
   const privacyHtml = fs.readFileSync(path.join(ROOT, "public/privacy.html"), "utf8");
   assert.ok(loginHtml.includes('id="terms-link" href="/terms.html"'), "login.html links to /terms.html");
@@ -169,7 +170,7 @@ test("terms.html covers all required trial terms, health disclaimer, zh/en parit
   assert.ok(privacyHtml.includes('href="/terms.html"'), "privacy.html links to /terms.html");
 
   // Runtime language resolution on terms.html
-  const script = termsHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const script = pageScript(termsHtml);
   const makeStorage = init => {
     const m = new Map(Object.entries(init || {}));
     return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };

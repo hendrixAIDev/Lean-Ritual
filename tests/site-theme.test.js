@@ -53,7 +53,7 @@ test('the display serif covers every heading on the login and document pages', (
   const cjk = c => /[　-〿㐀-鿿＀-￯]/.test(c);
   let text = '';
   for (const page of ['privacy.html', 'terms.html', 'guide.html']) for (const [, , h] of read('public/' + page).matchAll(/<h([123])\b[^>]*>([\s\S]*?)<\/h\1>/g)) text += h.replace(/<[^>]+>/g, '');
-  const login = read('public/login.html');
+  const login = read('public/login.html') + read('public/site/login.js');
   const titles = [...login.matchAll(/"hero\.title":\s*"([^"]*)"/g)].map(m => m[1]);
   assert.equal(titles.length, 2, 'zh and en login titles');
   text += titles.join('') + login.match(/<h1 id="title-h1">([^<]*)<\/h1>/)[1];
@@ -87,15 +87,21 @@ test('long text: 17px at 1.8 line height, about 68 characters a line, underlined
   assert.match(css, /body\{[^}]*color:var\(--text-read\);font-size:var\(--fs-read\);line-height:var\(--lh-read\)/);
   assert.match(css, /p,li\{max-width:var\(--measure\)\}/);
   assert.match(css, /\ba\{color:var\(--emerald-hi\);text-decoration:underline/);
-  assert.match(THEME, /@media print\{[\s\S]*html,body\{background:var\(--print-paper\)!important;color:var\(--print-ink\)!important\}/);
+  for (const sheet of [css, noComments(read('public/site/login.css'))])
+    assert.match(sheet, /@media print\{[\s\S]*html,body\{background:var\(--print-paper\)!important;color:var\(--print-ink\)!important\}/);
+  // The landing page keeps the print look it had before the shared theme.
+  assert.doesNotMatch(THEME, /@media print/);
   assert.match(css, /@media print\{[\s\S]*\.top-row\{display:none\}/);
 });
 
-test('appearance only: the pages keep their inline scripts, ids and copy (styles moved, nothing else)', () => {
-  // The inline scripts stay byte-for-byte; their CSP hashes are rebuilt by npm run build as before.
-  for (const page of ['login.html', 'privacy.html', 'terms.html', 'guide.html']) {
-    const html = read('public/' + page);
-    assert.equal((html.match(/<script>/g) || []).length, 1, page);
+test('no inline code: each page runs its own script file, loaded from <head> before the first paint', () => {
+  // The scripts moved out of the pages unchanged; the CSP keeps no hashes for them any more.
+  for (const page of ['login', 'privacy', 'terms', 'guide']) {
+    const html = read(`public/${page}.html`), head = html.slice(0, html.indexOf('</head>'));
+    assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/, page + ': no inline script');
+    assert.doesNotMatch(html, /\son[a-z]+=/i, page + ': no inline handlers');
+    assert.match(head, new RegExp(`<script src="/site/${page}\\.js" defer blocking="render"></script>`), page);
+    assert.ok(fs.existsSync(path.join(ROOT, `public/site/${page}.js`)), page);
     assert.match(html, /<main\b/, page);
   }
   const login = read('public/login.html');

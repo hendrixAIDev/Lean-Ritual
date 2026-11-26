@@ -46,7 +46,11 @@ pre{overflow-x:auto;padding:14px 16px;border:1px solid var(--line);border-radius
 code{font-family:var(--f-mono)}
 .tw:focus-visible,pre:focus-visible{outline-offset:2px}
 
+/* Printed dark on white whatever the screen theme (the landing page keeps its own print look). */
 @media print{
+  html{color-scheme:light}
+  html,body{background:var(--print-paper)!important;color:var(--print-ink)!important}
+  body::before,body::after{display:none!important}
   body{font-size:11pt;line-height:1.6}
   main{max-width:none;padding:0}
   .top-row{display:none}

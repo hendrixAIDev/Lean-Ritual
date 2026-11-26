@@ -64,7 +64,7 @@ test('calls to action: invite sign-up, sign-in and an invite request to the priv
   assert.match(JS, new RegExp('const CONTACT = "' + privacyContact.replace(/\./g, '\\.') + '"'));
   for (const m of HTML.matchAll(/data-ask href="mailto:([^"]+)"/g)) assert.equal(m[1], privacyContact);
   // login.html opens its invite sign-up view whenever the invite parameter is present.
-  assert.match(read('public/login.html'), /params\.has\("invite"\) \? "register"/);
+  assert.match(read('public/site/login.js'), /params\.has\("invite"\) \? "register"/);
 });
 
 test('zh and en copy have the same keys and cover every data-i hook', () => {

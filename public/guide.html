@@ -16,6 +16,7 @@
 <link rel="preload" href="/landing/fonts/serif-display.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/site/theme.css">
 <link rel="stylesheet" href="/site/doc.css">
+<script src="/site/guide.js" defer blocking="render"></script>
 </head><body><main id="doc-root">
 <div class="top-row">
   <p class="back"><a id="back-link" href="/">‹ 回到薄肌日课</a></p>
@@ -148,70 +149,4 @@
 <div class="tw" tabindex="0"><table><thead><tr><th>Dimension</th><th>BLS Approach</th><th>Original Plan</th><th>Adopted in Lean Ritual</th></tr></thead><tbody><tr><td>Training frequency</td><td>3/4/5-day options; 3 days works well</td><td>3 days/week</td><td>3 days/week; optional 4th upper-body bonus session when schedule allows</td></tr><tr><td>Split</td><td>Push / Pull / Legs on 3-day plan</td><td>Push / Pull / Legs + Shoulders</td><td>Keep Push / Pull / Legs + Shoulders</td></tr><tr><td>Compound rep range</td><td>Primarily 4–6 reps, 2–4 min rest</td><td>3 × 4–6</td><td>Same (3 × 4–6, 3 min rest)</td></tr><tr><td>Isolation rep range</td><td>Often heavier / lower reps too</td><td>8–12 reps</td><td>8–12 reps, widened to 10–15 on lateral raises &amp; face pulls to protect small joints</td></tr><tr><td>Leg volume</td><td>Squats plus leg press &amp; hamstring work</td><td>Squats only</td><td>Add Romanian deadlift or leg press so lower body stays balanced</td></tr><tr><td>Progression</td><td>Add weight at top of rep range</td><td>Add 1 rep or weight each session</td><td>Unified into explicit double-progression rules</td></tr><tr><td>Deloads</td><td>1 week every 8–10 weeks</td><td>Not specified</td><td>Adopt BLS deload every 8–10 weeks</td></tr><tr><td>Protein</td><td>~2.2 g/kg on a cut</td><td>~2 g/kg rule of thumb</td><td>Essentially identical; 2.2 g/kg on Cut</td></tr><tr><td>Calorie deficit</td><td>20–25% below TDEE via formula</td><td>Qualitative small/medium/large deficit</td><td>Quantitative TDEE formula calibrated by 7-day weight trend</td></tr><tr><td>Added sugar</td><td>Flexible dieting in moderation</td><td>Zero added sugar</td><td>Avoid by default &amp; skip sugary drinks; occasional small amounts logged in macros are fine</td></tr><tr><td>Cheat meals</td><td>One moderate cheat meal per week</td><td>No cheat meals</td><td>No cheat meals; after 8+ weeks cutting, optional maintenance high-carb refeed every 1–2 weeks</td></tr><tr><td>Cardio</td><td>HIIT focus, capped at ~1–2 hrs/week</td><td>10,000 daily steps (post-meal walks)</td><td>Walking as default; add low-impact intervals only at plateaus</td></tr><tr><td>Creatine</td><td>5 g/day</td><td>5–10 g/day</td><td>3–5 g/day</td></tr><tr><td>Caffeine</td><td>3–6 mg/kg pre-workout</td><td>As needed, before noon</td><td>Combined: 3–5 mg/kg pre-workout, before noon</td></tr><tr><td>Fat-loss supplements</td><td>Recommends several</td><td>Not mentioned</td><td>Omitted</td></tr><tr><td>Phase thresholds</td><td>Men cut to ~10%, bulk to 15–17%</td><td>Target ~10% by starting build</td><td>Adopt BLS floor (~10%) with tighter 13–15% ceiling for a year-round lean look</td></tr></tbody></table></div>
 </article>
 </main>
-<script>
-(function(){
-  const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
-  const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
-  const lsWrite = (k, v) => { try { if (typeof localStorage !== "undefined") localStorage.setItem(k, v); } catch {} };
-  function markExplicitLang(l){
-    lsWrite("bj-lang", l);
-    lsWrite("bj-lang-set-at", String(Date.now()));
-    lsWrite("bj-lang-pending", l);
-  }
-  function detectBrowserLang(nav){
-    const list = Array.isArray(nav?.languages) && nav.languages.length ? nav.languages : (typeof nav?.language === "string" && nav.language.trim() ? [nav.language] : []);
-    if (!list.length) return "zh";
-    return list.some(l => String(l || "").trim().toLowerCase().startsWith("zh")) ? "zh" : "en";
-  }
-  function queryLang(search){
-    const s = String(search || "").replace(/^\?/, "");
-    if (!s) return null;
-    for (const part of s.split("&")) {
-      const eq = part.indexOf("=");
-      const k = eq < 0 ? part : part.slice(0, eq);
-      if (k === "lang") {
-        try { return validLang(decodeURIComponent(eq < 0 ? "" : part.slice(eq + 1))); } catch { return null; }
-      }
-    }
-    return null;
-  }
-  function resolveLang({ search = "", savedLang = null, nav = null } = {}){
-    const q = queryLang(search);
-    if (q) return q;
-    return validLang(savedLang) || detectBrowserLang(nav);
-  }
-  const META = {
-    zh: { title: "薄肌训练与饮食纲领", back: "‹ 回到薄肌日课", aria: "语言" },
-    en: { title: "Lean Ritual Training & Nutrition Guide", back: "‹ Back to Lean Ritual", aria: "Language" }
-  };
-  const root = document.querySelector("#doc-root"), zhDoc = document.querySelector("#doc-zh"), enDoc = document.querySelector("#doc-en");
-  const backLink = document.querySelector("#back-link"), lsw = document.querySelector("#lang-switch");
-  const qLang = queryLang(location.search || "");
-  if (qLang) markExplicitLang(qLang);
-  let curLang = resolveLang({ search: location.search || "", savedLang: lsRead("bj-lang"), nav: typeof navigator !== "undefined" ? navigator : null });
-  function applyLangUI(){
-    const m = META[curLang] || META.zh;
-    if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
-    if ("title" in document) document.title = m.title;
-    const appTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-    if (appTitleMeta) appTitleMeta.content = curLang === "en" ? "Lean Ritual" : "薄肌日课";
-    if (backLink) backLink.textContent = m.back;
-    if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", m.aria);
-    if (document.querySelectorAll) document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));
-    const active = curLang === "en" ? enDoc : zhDoc, inactive = curLang === "en" ? zhDoc : enDoc;
-    if (inactive) { inactive.hidden = true; if (inactive.parentNode) inactive.parentNode.removeChild(inactive); }
-    if (active) { active.hidden = false; if (!active.parentNode && root) root.appendChild(active); }
-  }
-  function setLang(next){
-    const l = validLang(next);
-    if (!l) return;
-    curLang = l;
-    markExplicitLang(l);
-    applyLangUI();
-  }
-  if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
-  applyLangUI();
-  if (typeof window !== "undefined") window.ritualPageI18n = { getLang: () => curLang, setLang, resolveLang, detectBrowserLang };
-})();
-</script>
 </body></html>

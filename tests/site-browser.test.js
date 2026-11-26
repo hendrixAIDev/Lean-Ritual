@@ -227,8 +227,13 @@ test('login and document pages in a real browser', { skip: playwright ? false : 
     assert.equal((await style(s.page, '#c-terms', ['backgroundColor'])).backgroundColor, EMERALD_HI, 'ticked consent box');
     assert.equal(await s.page.isChecked('#c-sensitive'), true);
     await s.context.close();
+    s = await open(browser, LOGIN[10], 'en', 390, still);
+    assert.equal(await s.page.textContent('#err'), 'Check your email and verify your address before signing in.');
+    assert.equal((await style(s.page, '#err', ['color'])).color, EMERALD_HI, 'a done message is not shown as an error');
+    await s.context.close();
     s = await open(browser, LOGIN[11], 'zh', 390, still);
     assert.equal(await s.page.isVisible('#reload-policy'), true, 'consent version changed: the reload button shows');
+    assert.equal((await style(s.page, '#err', ['color'])).color, DANGER);
     await s.context.close();
   });
 
