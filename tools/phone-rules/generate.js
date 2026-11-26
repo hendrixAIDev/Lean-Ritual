@@ -25,6 +25,14 @@ const { Metadata } = require(path.join(lib, "core"));
 const max = require(path.join(lib, "max"));
 const examples = require(path.join(lib, "examples.mobile.json"));
 
+// The notices must carry this exact version's licence texts before the data may be regenerated.
+const notices = fs.readFileSync(path.join(ROOT, "THIRD_PARTY_NOTICES.md"), "utf8");
+for (const licence of ["LICENSE", "LICENSE.Apache"]) {
+  if (!notices.includes(fs.readFileSync(path.join(lib, licence), "utf8").replace(/\r\n?/g, "\n").trim()))   // shipped with CRLF
+    throw new Error(`THIRD_PARTY_NOTICES.md lacks libphonenumber-js ${version}'s ${licence}; update it first`);
+}
+if (!notices.includes("libphonenumber-js " + version)) throw new Error("THIRD_PARTY_NOTICES.md names another libphonenumber-js version; update it first");
+
 const m = new Metadata(meta);
 const regions = {}, fixtures = [], exampleText = {};
 for (const iso of Object.keys(meta.countries).sort()) {

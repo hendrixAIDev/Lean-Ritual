@@ -4,6 +4,9 @@
 //   ("07400 123456", "(876) 210-1234", "8 (912) 345-67-89") into the E.164 the server expects.
 // The region table between the GENERATED markers comes from libphonenumber's metadata; rebuild it
 // with tools/phone-rules/generate.js (see that file). Everything else is written by hand.
+// Licences: the generated table is derived from libphonenumber-js (MIT, Copyright (c) 2016
+// @catamphetamine) and Google libphonenumber (Apache-2.0, Copyright (C) The Libphonenumber Authors).
+// Full texts and attribution: THIRD_PARTY_NOTICES.md at the repository root and in every release package.
 (function (root, factory) {
   "use strict";
   var api = factory();

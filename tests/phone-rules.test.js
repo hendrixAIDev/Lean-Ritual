@@ -124,6 +124,25 @@ test("invalid numbers are still the server's call: they reach lib/phone.js and a
   }
 });
 
+test('the phone metadata ships with its licences: MIT (libphonenumber-js) and Apache-2.0 (Google libphonenumber)', () => {
+  const notices = fs.readFileSync(path.join(ROOT, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+  const version = P.source.match(/libphonenumber-js (\d+\.\d+\.\d+)/)[1];
+  assert.ok(notices.includes('libphonenumber-js ' + version), 'the notices name the version the table came from');
+  assert.match(notices, /\(The MIT License\)\s+Copyright \(c\) 2016 @catamphetamine/);
+  assert.match(notices, /Permission is hereby granted, free of charge/);
+  assert.match(notices, /Apache License\s+Version 2\.0, January 2004/);
+  assert.match(notices, /END OF TERMS AND CONDITIONS/);
+  assert.match(notices, /Copyright \(C\) The Libphonenumber Authors/);
+  // The served file says where its data comes from and points at the full texts.
+  const head = fs.readFileSync(path.join(ROOT, 'public/site/phone-rules.js'), 'utf8').split('(function')[0];
+  assert.match(head, /libphonenumber-js \(MIT/);
+  assert.match(head, /Google libphonenumber \(Apache-2\.0/);
+  assert.match(head, /THIRD_PARTY_NOTICES\.md/);
+  // ...and the release package carries the notices (ops/package-release.py's allowlist).
+  const release = fs.readFileSync(path.join(ROOT, 'ops/package-release.py'), 'utf8');
+  assert.match(release.match(/required = \[[^\]]*\]/)[0], /"THIRD_PARTY_NOTICES\.md"/);
+});
+
 test('login.html: one labelled dropdown on the phone field, the rules and page code in files, no inline script', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public/login.html'), 'utf8');
   const head = html.slice(0, html.indexOf('</head>'));

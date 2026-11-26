@@ -16,7 +16,8 @@ def package(root, output, revision):
     ]))
     if runtime["node"].split(".")[0] != "24" or (runtime["platform"], runtime["arch"]) != ("linux", "x64"):
         raise ValueError("Build on Linux x64 with Node 24")
-    required = ["server.js", "package.json", "package-lock.json", "lib", "scripts", "public", "node_modules"]
+    # THIRD_PARTY_NOTICES.md carries the licence texts for bundled third-party data (e.g. phone metadata).
+    required = ["server.js", "package.json", "package-lock.json", "THIRD_PARTY_NOTICES.md", "lib", "scripts", "public", "node_modules"]
     for name in required + ["public/index.html", "public/csp-hashes.json", "node_modules/sharp/package.json"]:
         if not (root / name).exists():
             raise ValueError("Missing build input: " + name)
