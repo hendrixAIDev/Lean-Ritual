@@ -289,7 +289,7 @@ test('workout grid inputs have unique localized accessible names, decimal weight
 test('chooser, inline editors, landmarks, live regions, reduced-motion, contrast tokens, and release exclusion', async () => {
   // 1. Static shell & CSS checks across app/index.html and public/*.html
   for (const rel of ['app/index.html', 'public/index.html', 'public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html']) {
-    const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const html = withLinkedCss(rel);
     assert.match(html, /<main\b/i, `${rel} must contain a <main> landmark`);
     assert.match(html, /:focus-visible\s*\{/, `${rel} must define visible focus styles`);
     assert.match(html, /@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)/, `${rel} must respect prefers-reduced-motion`);
@@ -345,16 +345,23 @@ test('chooser, inline editors, landmarks, live regions, reduced-motion, contrast
       assert.ok(contrast(fg, bg) >= 4.5, `${themeName} ${pair} (${fg} on ${bg}) contrast ${contrast(fg, bg).toFixed(2)} < 4.5`);
     }
   }
-  for (const rel of ['public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html']) {
-    const css = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const light = parseVars(css.match(/:root\s*\{([^}]*)\}/)[1]);
-    const dark = parseVars(css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{([^}]*)\}/)[1]);
-    for (const [themeName, v] of [[`${rel}:light`, light], [`${rel}:dark`, dark]]) {
-      assert.ok(contrast(v.muted, v.bg) >= 4.5, `${themeName} muted/bg < 4.5`);
-      assert.ok(contrast(v.muted, v.surface) >= 4.5, `${themeName} muted/surface < 4.5`);
-      assert.ok(contrast(v['on-accent'], v.accent) >= 4.5, `${themeName} on-accent/accent < 4.5`);
-    }
+  // The public pages are dark only and take every colour from the shared site theme (Nocturne).
+  for (const rel of ['public/landing.html', 'public/login.html', 'public/privacy.html', 'public/terms.html', 'public/guide.html']) {
+    const css = withLinkedCss(rel);
+    assert.match(css, /<link rel="stylesheet" href="\/site\/theme\.css">/, `${rel} must load the shared theme`);
+    assert.doesNotMatch(css, /<style\b|\sstyle="/i, `${rel} must keep its styles in the shared stylesheets`);
+    assert.doesNotMatch(css, /prefers-color-scheme:\s*light\)\s*\{/, `${rel} is dark only`);
   }
+  const site = parseVars(fs.readFileSync(path.join(ROOT, 'public/site/theme.css'), 'utf8').match(/:root\s*\{([^}]*)\}/)[1]);
+  for (const [pair, fg, bg, min] of [
+    ['ivory/bg', site.ivory, site.bg, 7], ['text-read/bg', site['text-read'], site.bg, 7], ['muted/bg', site.muted, site.bg, 7],
+    ['muted/solid', site.muted, site.solid, 7], ['muted/field', site.muted, site.field, 7], ['emerald-hi/bg', site['emerald-hi'], site.bg, 7],
+    ['emerald-hi/solid', site['emerald-hi'], site.solid, 7], ['placeholder/field', site.placeholder, site.field, 4.5],
+    ['danger/solid', site.danger, site.solid, 4.5], ['warn/bg', site.warn, site.bg, 4.5], ['on-emerald/emerald', site['on-emerald'], site.emerald, 4.5],
+    ['on-emerald/emerald-hi', site['on-emerald'], site['emerald-hi'], 4.5],
+    // input and checkbox borders are non-text UI: 3:1 against the field and the panel around it
+    ['field-line/field', site['field-line'], site.field, 3], ['field-line/solid', site['field-line'], site.solid, 3], ['field-line/bg', site['field-line'], site.bg, 3]
+  ]) assert.ok(contrast(fg, bg) >= min, `site ${pair} (${fg} on ${bg}) contrast ${contrast(fg, bg).toFixed(2)} < ${min}`);
 
   // 3. Keyboard focus & Escape dismissal on the 采纳 chooser and inline exercise editor
   const app = mountApp({
@@ -389,6 +396,13 @@ test('chooser, inline editors, landmarks, live regions, reduced-motion, contrast
   assert.doesNotMatch(app.appEl.innerHTML, /class="chooser"/);
   assert.equal(app.getFocused(), '[data-act="adopt-open"][data-key="fb1:0"]', 'closing chooser restores focus to trigger');
 });
+
+/** A page's HTML followed by the local stylesheets it links, so CSS checks see the styles the page really gets. */
+function withLinkedCss(rel) {
+  const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="(\/[^"]+\.css)">/g)].map(m => fs.readFileSync(path.join(ROOT, 'public', m[1]), 'utf8'));
+  return [html, ...sheets].join('\n');
+}
 
 function resolvePlaywright() {
   const candidates = ['playwright'];

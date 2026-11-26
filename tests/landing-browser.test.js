@@ -518,6 +518,12 @@ test('landing page in a real browser', { skip: playwright ? false : 'Playwright 
     assert.equal(hidden, 0);
     assert.ok(await page.locator('.reveal').count() >= 12);
     assert.equal(await page.evaluate(() => document.getAnimations().length), 0, 'nothing animates');
+    // In-page jumps are instant (Codex review of #57: the shared theme had let smooth scrolling win).
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior), 'auto');
+    const moving = await watchedPage(browser, { viewport: { width: 390, height: 844 }, reducedMotion: 'no-preference' });
+    await moving.page.goto(BASE + '/?lang=zh');
+    assert.equal(await moving.page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior), 'smooth', 'smooth scrolling otherwise');
+    await moving.context.close();
     await page.locator('header a[href="/login.html"]').click();
     await page.waitForURL('**/login.html');
     await context.close();

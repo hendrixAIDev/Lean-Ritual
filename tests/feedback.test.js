@@ -1054,7 +1054,7 @@ test("UI: Me tab 意见反馈/Send feedback form, offline guard, privacy isolati
   assert.ok(en.toasts.some(x => x.includes("Feedback sent")));
 
   // Login page mailto link (zh/en)
-  const loginHtml = fs.readFileSync(path.join(ROOT, "public/login.html"), "utf8");
+  const loginHtml = require("./helpers/public-page").pageWithScript("login.html");   // the page and its script (the en copy)
   assert.match(loginHtml, /id="help-link"[^>]*href="mailto:hendrix\.ai\.dev@gmail\.com/);
   assert.match(loginHtml, /Can't sign in\? Email feedback/);
 

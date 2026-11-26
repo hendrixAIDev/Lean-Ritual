@@ -1,0 +1,566 @@
+(function(){
+  const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
+  const DISPLAYED_CONSENT_VERSION = "2026-11-25";
+  const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const validLang = v => typeof v === "string" && (v.trim().toLowerCase() === "zh" || v.trim().toLowerCase() === "en") ? v.trim().toLowerCase() : null;
+  const lsRead = k => { try { return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null; } catch { return null; } };
+  const lsWrite = (k, v) => { try { if (typeof localStorage !== "undefined") localStorage.setItem(k, v); } catch {} };
+  function markExplicitLang(l){
+    lsWrite("bj-lang", l);
+    lsWrite("bj-lang-set-at", String(Date.now()));
+    lsWrite("bj-lang-pending", l);
+  }
+  function detectBrowserLang(nav){
+    const list = Array.isArray(nav?.languages) && nav.languages.length ? nav.languages : (typeof nav?.language === "string" && nav.language.trim() ? [nav.language] : []);
+    if (!list.length) return "zh";
+    return list.some(l => String(l || "").trim().toLowerCase().startsWith("zh")) ? "zh" : "en";
+  }
+  function queryLang(search){
+    const s = String(search || "").replace(/^\?/, "");
+    if (!s) return null;
+    for (const part of s.split("&")) {
+      const eq = part.indexOf("=");
+      const k = eq < 0 ? part : part.slice(0, eq);
+      if (k === "lang") {
+        try { return validLang(decodeURIComponent(eq < 0 ? "" : part.slice(eq + 1))); } catch { return null; }
+      }
+    }
+    return null;
+  }
+  function resolveLang({ search = "", savedLang = null, profileLang = null, nav = null } = {}){
+    const q = queryLang(search);
+    if (q) return q;
+    return validLang(savedLang) || validLang(profileLang) || detectBrowserLang(nav);
+  }
+  const qLang = queryLang(location.search || "");
+  if (qLang) markExplicitLang(qLang);
+  let curLang = resolveLang({ search: location.search || "", savedLang: lsRead("bj-lang"), nav: typeof navigator !== "undefined" ? navigator : null });
+
+  const I18N = {
+    zh: {
+      "page.title": "登录 · 薄肌日课",
+      "hero.title": "Lean Ritual · 薄肌日课",
+      "hero.sub": "每天的训练、饮食和体重，一个地方记下来。",
+      "lang.aria": "语言",
+      "tab.login": "登录",
+      "tab.register": "凭邀请注册",
+      "method.aria": "登录方式",
+      "method.email": "邮箱",
+      "method.phone": "手机号",
+      "field.name": "称呼",
+      "field.email": "邮箱",
+      "field.phone": "手机号",
+      "field.phonePlaceholder": "138 0013 8000 或 +国家代码",
+      "field.phoneNational": "不含国家代码的号码",
+      "field.countryCode": "国家或地区代码",
+      "cc.common": "常用",
+      "cc.all": "全部国家和地区",
+      "field.password": "密码",
+      "field.invite": "邀请码",
+      "go.login": "登录",
+      "go.register": "注册并发送验证邮件",
+      "go.registerPhone": "注册并登录",
+      "go.reset": "设置新密码",
+      "go.forgot": "发送密码重置邮件",
+      "go.resend": "发送验证邮件",
+      "btn.forgot": "忘记密码",
+      "btn.resend": "重新发送验证邮件",
+      "forgot.phoneMsg": "请联系邀请你的人重置密码",
+      "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
+      "hint.bodyPhone": "仅受邀手机号可以注册。先选国家或地区代码，再填手机号。密码至少 8 位，无需邮箱验证。",
+      "hint.terms": "使用条款",
+      "hint.privacy": "隐私说明",
+      "hint.help": "无法登录？发邮件反馈",
+      "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20%E7%99%BB%E5%BD%95%E5%8F%8D%E9%A6%88",
+      "consent.termsPre": "我已满 18 周岁，阅读并同意",
+      "consent.termsLink": "使用条款",
+      "consent.termsMid": "和",
+      "consent.privacyLink": "隐私说明",
+      "consent.termsPost": "（版本 2026-11-25；含账号事务性邮件通过 Resend 发送，Resend 接收你的邮箱地址、验证/重置邮件内容及必要投递信息，处理地区依其配置与政策而定）。",
+      "consent.termsPostPhone": "（版本 2026-11-25；你的手机号仅用于受邀资格绑定、密码登录，以及运营者经独立渠道如回拨注册手机号或向原邀请人核实身份后协助发放一次性密码重置链接；当前不发送短信，也不向 Resend 或短信服务商传输你的手机号）。",
+      "consent.sensitive": "我单独同意按隐私说明（版本 2026-11-25）所述目的，处理我的健康/身体数据、训练饮食记录及餐食照片等敏感个人信息，并同意如下接收方与范围：（1）阿里云美国西部（硅谷）主机：存储与处理全部账号及应用记录；（2）AI 请求（仅在服务端启用且你主动使用 AI 时）：你提交的 AI 提示文字与餐食照片将按服务器配置由 Google Gemini API 直接处理，或经 OpenRouter（作为配置的主通道，或在 Gemini 主通道临时故障、限流或超时时作为自动备用通道）转发至底层模型供应商；经 OpenRouter 转发时还会附带经 HMAC 派生的假名化用户标识，各 AI 供应商的计费档位与处理地区以服务端项目配置及各自政策为准。",
+      "btn.reloadPolicy": "刷新页面查看最新版本",
+      "banner.verified": "邮箱已验证，请登录。",
+      "banner.deleted": "账号已删除。",
+      "msg.network": "连不上服务器。",
+      "msg.pwUpdated": "密码已更新，请重新登录。",
+      "msg.verifySent": "请查收验证邮件，验证后再登录。",
+      "msg.mailIfEligible": "如果邮箱符合条件，邮件会发送到你的邮箱。请检查垃圾邮件。",
+      "err.fallback": "请求失败，请稍后再试。",
+      "err.val_password": "请填写符合要求的密码（至少 8 位）。",
+      "err.val_general": "填写的信息格式不正确，请检查后重试。",
+      "err.INVALID_EMAIL_OR_PASSWORD": "邮箱或密码错误。",
+      "err.INVALID_PASSWORD": "密码不正确。",
+      "err.INVALID_EMAIL": "请输入有效的邮箱地址。",
+      "err.EMAIL_NOT_VERIFIED": "邮箱尚未验证，请查收验证邮件后再登录。",
+      "err.EMAIL_ALREADY_VERIFIED": "该邮箱已完成验证，请直接登录。",
+      "err.EMAIL_MISMATCH": "输入的邮箱与当前账号不一致。",
+      "err.PASSWORD_TOO_SHORT": "密码太短，至少需要 8 位。",
+      "err.PASSWORD_TOO_LONG": "密码太长，最多 200 位。",
+      "err.USER_ALREADY_EXISTS": "该邮箱已注册，请直接登录或重置密码。",
+      "err.INVALID_TOKEN": "链接无效或已过期，请重新发送邮件。",
+      "err.TOKEN_EXPIRED": "链接已过期，请重新发送邮件。",
+      "err.USER_NOT_FOUND": "未找到对应账号，请检查输入信息。",
+      "err.INVALID_USER": "账号状态异常，请重新操作。",
+      "err.TOO_MANY_REQUESTS": "操作过于频繁，请稍后再试。",
+      "err.SESSION_EXPIRED": "登录状态已过期，请刷新页面后重试。",
+      "err.FAILED_TO_CREATE_USER": "注册未能完成，请稍后再试。",
+      "err.FAILED_TO_CREATE_SESSION": "登录失败，请稍后再试。",
+      "err.FAILED_TO_GET_SESSION": "获取登录状态失败，请稍后再试。",
+      "err.FAILED_TO_UPDATE_USER": "更新账号信息失败，请稍后再试。",
+      "err.FAILED_TO_CREATE_VERIFICATION": "生成验证信息失败，请稍后再试。",
+      "err.EMAIL_PASSWORD_DISABLED": "当前暂未开放密码登录。",
+      "err.EMAIL_PASSWORD_SIGN_UP_DISABLED": "当前暂未开放注册。",
+      "err.RESET_PASSWORD_DISABLED": "当前暂未开放密码重置。",
+      "err.VERIFICATION_EMAIL_NOT_ENABLED": "当前暂未开放验证邮件发送。",
+      "err.EMAIL_CAN_NOT_BE_UPDATED": "暂不支持修改邮箱。",
+      "err.PASSWORD_ALREADY_SET": "该账号已设置密码。",
+      "err.INVALID_ORIGIN": "请求来源校验未通过，请刷新页面后重试。",
+      "err.INVALID_CALLBACK_URL": "跳转地址无效，请刷新页面后重试。",
+      "err.CALLBACK_URL_REQUIRED": "跳转地址缺失，请刷新页面后重试。",
+      "err.MISSING_FIELD": "请填写完整信息后再提交。",
+      "err.FIELD_NOT_ALLOWED": "提交的信息格式不正确，请刷新页面后重试。",
+      "err.INVITE_REQUIRED": "需要有效邀请码才能注册。",
+      "err.INVITE_INVALID": "邀请码无效、已过期、已使用，或与填写的邮箱不匹配。",
+      "err.INVITE_INVALID_PHONE": "邀请码无效、已过期、已使用，或与填写的手机号不匹配。",
+      "err.INVALID_PHONE_NUMBER": "请输入有效的手机号（中国大陆 11 位或以 + 开头的国际号码）。",
+      "err.INVALID_PHONE_NUMBER_OR_PASSWORD": "手机号或密码错误。",
+      "err.PHONE_CAN_NOT_BE_UPDATED": "暂不支持修改手机号。",
+      "err.INVALID_TOKEN_PHONE": "链接无效或已过期，请联系邀请你的人重新获取。",
+      "err.TOKEN_EXPIRED_PHONE": "链接已过期，请联系邀请你的人重新获取。",
+      "err.CONSENT_REQUIRED": "请先勾选同意使用条款、隐私说明，以及敏感个人信息处理与跨境传输的单独同意。",
+      "err.CONSENT_OUTDATED": "使用条款或隐私说明已更新，请刷新页面重新阅读最新版本后再勾选同意。",
+      "err.CONFIRM_DELETE_PW": "请输入密码以确认删除账号。"
+    },
+    en: {
+      "page.title": "Sign in · Lean Ritual",
+      "hero.title": "Lean Ritual",
+      "hero.sub": "Log your daily workouts, meals, and weight in one place.",
+      "lang.aria": "Language",
+      "tab.login": "Sign in",
+      "tab.register": "Sign up with invite",
+      "method.aria": "Sign-in method",
+      "method.email": "Email",
+      "method.phone": "Phone",
+      "field.name": "Name",
+      "field.email": "Email",
+      "field.phone": "Phone number",
+      "field.phonePlaceholder": "+1 415 555 2671 or 138 0013 8000",
+      "field.phoneNational": "Number without the country code",
+      "field.countryCode": "Country or region code",
+      "cc.common": "Common",
+      "cc.all": "All countries and regions",
+      "field.password": "Password",
+      "field.invite": "Invite code",
+      "go.login": "Sign in",
+      "go.register": "Sign up & send verification email",
+      "go.registerPhone": "Sign up & sign in",
+      "go.reset": "Set new password",
+      "go.forgot": "Send password reset email",
+      "go.resend": "Send verification email",
+      "btn.forgot": "Forgot password?",
+      "btn.resend": "Resend verification email",
+      "forgot.phoneMsg": "Ask the person who invited you to reset your password",
+      "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
+      "hint.bodyPhone": "Invite-only registration. Choose your country or region code, then enter your number. Passwords must be at least 8 characters; no email verification needed. ",
+      "hint.terms": "Terms of Use",
+      "hint.privacy": "Privacy Notice",
+      "hint.help": "Can't sign in? Email feedback",
+      "hint.helpMailto": "mailto:hendrix.ai.dev@gmail.com?subject=Lean%20Ritual%20Sign-in%20Feedback",
+      "consent.termsPre": "I am 18+ and agree to the ",
+      "consent.termsLink": "Terms of Use",
+      "consent.termsMid": " and ",
+      "consent.privacyLink": "Privacy Notice",
+      "consent.termsPost": " (version 2026-11-25; including transactional account emails sent via Resend, which receives your email address, verification/reset email content, and necessary delivery metadata, with processing location governed by Resend's configuration and policies).",
+      "consent.termsPostPhone": " (version 2026-11-25; your phone number is used only for invitation binding, password sign-in, and operator-assisted one-time password recovery after out-of-band identity verification such as calling back your registered number or confirming with your inviter; SMS is not used yet and your phone number is not sent to Resend or any SMS provider).",
+      "consent.sensitive": "I separately consent to the processing of my sensitive personal information (health/body data, workout/meal logs, and meal photos) under the Privacy Notice (version 2026-11-25) and to each recipient's scope: (1) Alibaba Cloud US West (Silicon Valley) host — all account and app records; (2) AI requests (only when enabled and you invoke AI) — the AI prompts and any meal photos you submit are processed per server configuration either directly by the Google Gemini API or via OpenRouter (as the configured primary route or as an automatic backup if Gemini fails, times out, or hits limits), which forwards them to the underlying model provider and receives an HMAC-derived pseudonymous user identifier, with billing tier and processing location governed by server configuration and each provider's policies.",
+      "btn.reloadPolicy": "Reload page to review latest version",
+      "banner.verified": "Email verified. Please sign in.",
+      "banner.deleted": "Account deleted.",
+      "msg.network": "Cannot reach server.",
+      "msg.pwUpdated": "Password updated. Please sign in again.",
+      "msg.verifySent": "Check your email and verify your address before signing in.",
+      "msg.mailIfEligible": "If the email is eligible, a link has been sent. Please check your spam folder.",
+      "err.fallback": "Request failed. Please try again later.",
+      "err.val_password": "Please enter a valid password (at least 8 characters).",
+      "err.val_general": "Invalid input. Please check your details and try again.",
+      "err.INVALID_EMAIL_OR_PASSWORD": "Incorrect email or password.",
+      "err.INVALID_PASSWORD": "Incorrect password.",
+      "err.INVALID_EMAIL": "Please enter a valid email address.",
+      "err.EMAIL_NOT_VERIFIED": "Email not verified yet. Please check your inbox before signing in.",
+      "err.EMAIL_ALREADY_VERIFIED": "This email is already verified. Please sign in.",
+      "err.EMAIL_MISMATCH": "The email entered does not match the current account.",
+      "err.PASSWORD_TOO_SHORT": "Password is too short (at least 8 characters).",
+      "err.PASSWORD_TOO_LONG": "Password is too long (200 characters max).",
+      "err.USER_ALREADY_EXISTS": "This email is already registered. Please sign in or reset your password.",
+      "err.INVALID_TOKEN": "Invalid or expired link. Please request a new email.",
+      "err.TOKEN_EXPIRED": "This link has expired. Please request a new email.",
+      "err.USER_NOT_FOUND": "Account not found. Please check your details.",
+      "err.INVALID_USER": "Invalid account state. Please try again.",
+      "err.TOO_MANY_REQUESTS": "Too many attempts. Please try again later.",
+      "err.SESSION_EXPIRED": "Session expired. Please refresh the page and try again.",
+      "err.FAILED_TO_CREATE_USER": "Could not complete sign-up. Please try again later.",
+      "err.FAILED_TO_CREATE_SESSION": "Sign-in failed. Please try again later.",
+      "err.FAILED_TO_GET_SESSION": "Could not check session status. Please try again later.",
+      "err.FAILED_TO_UPDATE_USER": "Could not update account. Please try again later.",
+      "err.FAILED_TO_CREATE_VERIFICATION": "Could not create verification link. Please try again later.",
+      "err.EMAIL_PASSWORD_DISABLED": "Password sign-in is currently disabled.",
+      "err.EMAIL_PASSWORD_SIGN_UP_DISABLED": "Registration is currently disabled.",
+      "err.RESET_PASSWORD_DISABLED": "Password reset is currently disabled.",
+      "err.VERIFICATION_EMAIL_NOT_ENABLED": "Verification emails are currently disabled.",
+      "err.EMAIL_CAN_NOT_BE_UPDATED": "Email changes are not supported.",
+      "err.PASSWORD_ALREADY_SET": "A password is already set for this account.",
+      "err.INVALID_ORIGIN": "Origin check failed. Please refresh the page and try again.",
+      "err.INVALID_CALLBACK_URL": "Invalid redirect URL. Please refresh the page and try again.",
+      "err.CALLBACK_URL_REQUIRED": "Missing redirect URL. Please refresh the page and try again.",
+      "err.MISSING_FIELD": "Please fill in all required fields.",
+      "err.FIELD_NOT_ALLOWED": "Invalid request format. Please refresh and try again.",
+      "err.INVITE_REQUIRED": "A valid invite code is required to sign up.",
+      "err.INVITE_INVALID": "Invite code is invalid, expired, already used, or for another email.",
+      "err.INVITE_INVALID_PHONE": "Invite code is invalid, expired, already used, or for another phone number.",
+      "err.INVALID_PHONE_NUMBER": "Please enter a valid phone number (11-digit mainland China number or +country code).",
+      "err.INVALID_PHONE_NUMBER_OR_PASSWORD": "Incorrect phone number or password.",
+      "err.PHONE_CAN_NOT_BE_UPDATED": "Phone number changes are not supported.",
+      "err.INVALID_TOKEN_PHONE": "Invalid or expired link. Ask the person who invited you for a new one.",
+      "err.TOKEN_EXPIRED_PHONE": "This link has expired. Ask the person who invited you for a new one.",
+      "err.CONSENT_REQUIRED": "Please check both boxes to agree to the Terms & Privacy Notice and separately consent to sensitive data processing and cross-border transfer.",
+      "err.CONSENT_OUTDATED": "The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version before signing up.",
+      "err.CONFIRM_DELETE_PW": "Please enter your password to confirm account deletion."
+    }
+  };
+  const warned = new Set();
+  function isDev(){
+    try { const h = location && location.hostname; return h === "localhost" || h === "127.0.0.1" || h === "[::1]"; } catch { return false; }
+  }
+  function t(key, vars){
+    const dict = I18N[curLang] || I18N.zh;
+    let val = hasOwn(dict, key) ? dict[key] : undefined;
+    if (val === undefined && curLang !== "zh") {
+      if (isDev() && !warned.has(key) && typeof console !== "undefined") { warned.add(key); console.warn("[i18n] missing en key:", key); }
+      val = hasOwn(I18N.zh, key) ? I18N.zh[key] : key;
+    } else if (val === undefined) val = key;
+    return vars ? String(val).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "") : val;
+  }
+
+  const CODE_TO_KEY = {
+    INVALID_EMAIL_OR_PASSWORD: "err.INVALID_EMAIL_OR_PASSWORD",
+    INVALID_PHONE_NUMBER: "err.INVALID_PHONE_NUMBER",
+    INVALID_PHONE_NUMBER_OR_PASSWORD: "err.INVALID_PHONE_NUMBER_OR_PASSWORD",
+    PHONE_NUMBER_CANNOT_BE_UPDATED: "err.PHONE_CAN_NOT_BE_UPDATED",
+    INVALID_INVITATION: "err.INVITE_INVALID_PHONE",
+    INVALID_PASSWORD: "err.INVALID_PASSWORD",
+    INVALID_EMAIL: "err.INVALID_EMAIL",
+    EMAIL_NOT_VERIFIED: "err.EMAIL_NOT_VERIFIED",
+    EMAIL_ALREADY_VERIFIED: "err.EMAIL_ALREADY_VERIFIED",
+    EMAIL_MISMATCH: "err.EMAIL_MISMATCH",
+    PASSWORD_TOO_SHORT: "err.PASSWORD_TOO_SHORT",
+    PASSWORD_TOO_LONG: "err.PASSWORD_TOO_LONG",
+    USER_ALREADY_EXISTS: "err.USER_ALREADY_EXISTS",
+    USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: "err.USER_ALREADY_EXISTS",
+    INVALID_TOKEN: "err.INVALID_TOKEN",
+    TOKEN_EXPIRED: "err.TOKEN_EXPIRED",
+    USER_NOT_FOUND: "err.USER_NOT_FOUND",
+    ACCOUNT_NOT_FOUND: "err.USER_NOT_FOUND",
+    CREDENTIAL_ACCOUNT_NOT_FOUND: "err.USER_NOT_FOUND",
+    USER_EMAIL_NOT_FOUND: "err.USER_NOT_FOUND",
+    INVALID_USER: "err.INVALID_USER",
+    TOO_MANY_REQUESTS: "err.TOO_MANY_REQUESTS",
+    SESSION_EXPIRED: "err.SESSION_EXPIRED",
+    SESSION_NOT_FRESH: "err.SESSION_EXPIRED",
+    FAILED_TO_CREATE_USER: "err.FAILED_TO_CREATE_USER",
+    FAILED_TO_CREATE_SESSION: "err.FAILED_TO_CREATE_SESSION",
+    FAILED_TO_GET_SESSION: "err.FAILED_TO_GET_SESSION",
+    FAILED_TO_UPDATE_USER: "err.FAILED_TO_UPDATE_USER",
+    FAILED_TO_CREATE_VERIFICATION: "err.FAILED_TO_CREATE_VERIFICATION",
+    EMAIL_PASSWORD_DISABLED: "err.EMAIL_PASSWORD_DISABLED",
+    EMAIL_PASSWORD_SIGN_UP_DISABLED: "err.EMAIL_PASSWORD_SIGN_UP_DISABLED",
+    RESET_PASSWORD_DISABLED: "err.RESET_PASSWORD_DISABLED",
+    VERIFICATION_EMAIL_NOT_ENABLED: "err.VERIFICATION_EMAIL_NOT_ENABLED",
+    EMAIL_CAN_NOT_BE_UPDATED: "err.EMAIL_CAN_NOT_BE_UPDATED",
+    CHANGE_EMAIL_DISABLED: "err.EMAIL_CAN_NOT_BE_UPDATED",
+    PASSWORD_ALREADY_SET: "err.PASSWORD_ALREADY_SET",
+    USER_ALREADY_HAS_PASSWORD: "err.PASSWORD_ALREADY_SET",
+    CROSS_SITE_NAVIGATION_LOGIN_BLOCKED: "err.INVALID_ORIGIN",
+    INVALID_ORIGIN: "err.INVALID_ORIGIN",
+    MISSING_OR_NULL_ORIGIN: "err.INVALID_ORIGIN",
+    INVALID_CALLBACK_URL: "err.INVALID_CALLBACK_URL",
+    INVALID_REDIRECT_URL: "err.INVALID_CALLBACK_URL",
+    INVALID_ERROR_CALLBACK_URL: "err.INVALID_CALLBACK_URL",
+    INVALID_NEW_USER_CALLBACK_URL: "err.INVALID_CALLBACK_URL",
+    CALLBACK_URL_REQUIRED: "err.CALLBACK_URL_REQUIRED",
+    MISSING_FIELD: "err.MISSING_FIELD",
+    FIELD_NOT_ALLOWED: "err.FIELD_NOT_ALLOWED",
+    BODY_MUST_BE_AN_OBJECT: "err.FIELD_NOT_ALLOWED"
+  };
+  const MSG_TO_KEY = {
+    "invitation required": "err.INVITE_REQUIRED",
+    "invitation is invalid, expired, used, or belongs to another email": "err.INVITE_INVALID",
+    "invitation is invalid, expired, used, or belongs to another phone number": "err.INVITE_INVALID_PHONE",
+    "consent to terms, privacy notice, sensitive data processing, and cross-border transfer is required": "err.CONSENT_REQUIRED",
+    "terms or privacy notice updated; refresh the page to review and accept the latest version": "err.CONSENT_OUTDATED",
+    "email changes are unavailable": "err.EMAIL_CAN_NOT_BE_UPDATED",
+    "phone number changes are unavailable": "err.PHONE_CAN_NOT_BE_UPDATED",
+    "confirm your password to delete the account": "err.CONFIRM_DELETE_PW",
+    "too many requests": "err.TOO_MANY_REQUESTS",
+    "too many requests. please try again later": "err.TOO_MANY_REQUESTS",
+    "invalid email or password": "err.INVALID_EMAIL_OR_PASSWORD",
+    "invalid phone number": "err.INVALID_PHONE_NUMBER",
+    "invalid phone number or password": "err.INVALID_PHONE_NUMBER_OR_PASSWORD",
+    "invalid password": "err.INVALID_PASSWORD",
+    "invalid email": "err.INVALID_EMAIL",
+    "email not verified": "err.EMAIL_NOT_VERIFIED",
+    "email is already verified": "err.EMAIL_ALREADY_VERIFIED",
+    "email mismatch": "err.EMAIL_MISMATCH",
+    "password too short": "err.PASSWORD_TOO_SHORT",
+    "password too long": "err.PASSWORD_TOO_LONG",
+    "user already exists": "err.USER_ALREADY_EXISTS",
+    "user already exists. use another email": "err.USER_ALREADY_EXISTS",
+    "invalid token": "err.INVALID_TOKEN",
+    "token expired": "err.TOKEN_EXPIRED",
+    "user not found": "err.USER_NOT_FOUND",
+    "account not found": "err.USER_NOT_FOUND",
+    "credential account not found": "err.USER_NOT_FOUND",
+    "user email not found": "err.USER_NOT_FOUND",
+    "failed to create user": "err.FAILED_TO_CREATE_USER",
+    "failed to create session": "err.FAILED_TO_CREATE_SESSION"
+  };
+  function authErrorKey(j, status){
+    const code = j && typeof j.code === "string" ? j.code.trim() : "";
+    const rawMsg = j && typeof j.message === "string" ? j.message.trim() : "";
+    if(code === "VALIDATION_ERROR"){
+      if(/phone/i.test(rawMsg)) return "err.INVALID_PHONE_NUMBER";
+      if(/\bemail\b/i.test(rawMsg)) return "err.INVALID_EMAIL";
+      if(/password/i.test(rawMsg)) return "err.val_password";
+      if(/invitation/i.test(rawMsg)) return "err.INVITE_REQUIRED";
+      return "err.val_general";
+    }
+    if(code && hasOwn(CODE_TO_KEY, code)){
+      const mapped = CODE_TO_KEY[code];
+      if (method === "phone" && (mapped === "err.INVALID_TOKEN" || mapped === "err.TOKEN_EXPIRED")) return mapped + "_PHONE";
+      return mapped;
+    }
+    if(status === 429) return "err.TOO_MANY_REQUESTS";
+    const normMsg = rawMsg.toLowerCase().replace(/[.!]+$/, "");
+    if(normMsg && hasOwn(MSG_TO_KEY, normMsg)){
+      const mapped = MSG_TO_KEY[normMsg];
+      if (method === "phone" && (mapped === "err.INVALID_TOKEN" || mapped === "err.TOKEN_EXPIRED")) return mapped + "_PHONE";
+      return mapped;
+    }
+    return "err.fallback";
+  }
+  function mapAuthError(j, status){ return t(authErrorKey(j, status)); }
+
+  let bannerKey = null, errKey = null;
+  // #err carries both errors and the three "done" messages; the "done" ones are styled as success.
+  const SUCCESS_KEYS = ["msg.pwUpdated", "msg.verifySent", "msg.mailIfEligible"];
+  function setErr(key){
+    errKey = key;
+    const el = $("#err"); if (el) el.textContent = key ? t(key) : "";
+    if (el && el.classList) el.classList.toggle("ok", SUCCESS_KEYS.includes(key));
+    const rb = $("#reload-policy"); if (rb) rb.hidden = key !== "err.CONSENT_OUTDATED";
+  }
+  function setBanner(key){ bannerKey = key; if (!banner) return; banner.hidden = !key; banner.textContent = key ? t(key) : ""; }
+  function clearBanner(){ setBanner(null); }
+  const setTxt = (sel, key) => { const el = $(sel); if (el) el.textContent = t(key); };
+
+  let method = (params.has("phone") || params.get("method") === "phone") ? "phone" : "email";
+  let mode = params.has("token") ? "reset" : params.has("invite") ? "register" : "login";
+  if(params.has("invite")) $("#i").value=params.get("invite");
+  if(params.has("email")) $("#e").value=params.get("email");
+  // Country code dropdown, with the server's own phone rules (site/phone-rules.js). Without that file the
+  // phone field takes a full number, as before.
+  const PC = typeof window !== "undefined" && window.ritualPhone ? window.ritualPhone : null;
+  const ccSel = PC ? $("#cc") : null;
+  let ccChoice = null;   // a code the user picked, typed as +number, or got from an invite link; otherwise it follows the page language
+  // An invite's number is sent exactly as invited while the dropdown and the field still show it.
+  let invited = null;
+  if(params.has("phone") && $("#ph")){
+    const parts = ccSel ? PC.split(params.get("phone")) : null;
+    if (parts) { ccChoice = parts.iso; $("#ph").value = parts.national; invited = { iso: parts.iso, national: parts.national, phone: PC.normalizePhone(params.get("phone")) || params.get("phone").trim() }; }
+    else $("#ph").value = params.get("phone");
+  }
+  function phoneToSend(){
+    const raw = $("#ph").value;
+    if (!ccSel) return raw.trim();
+    if (invited && ccSel.value === invited.iso && raw.trim() === invited.national) return invited.phone;
+    return PC.toE164(ccSel.value, raw);
+  }
+  function phonePlaceholder(){ return ccSel ? (PC.example(ccSel.value) || t("field.phoneNational")) : t("field.phonePlaceholder"); }
+  function renderCountryCodes(){
+    if (!ccSel) return;
+    const groups = PC.options(curLang);
+    const group = (label, items) => { const g = document.createElement("optgroup"); g.label = label; items.forEach(o => g.appendChild(new Option(o.label, o.iso))); return g; };
+    ccSel.replaceChildren(group(t("cc.common"), groups.common), group(t("cc.all"), groups.rest));
+    ccSel.value = ccChoice || PC.defaultFor(curLang);
+    ccSel.setAttribute("aria-label", t("field.countryCode"));
+    ccSel.hidden = false;
+    $("#ph").autocomplete = "tel-national";
+  }
+  if (ccSel) {
+    ccSel.onchange = () => { ccChoice = ccSel.value; $("#ph").placeholder = phonePlaceholder(); };
+    // Someone who still types the full +number keeps it; the dropdown follows what they typed.
+    $("#ph").oninput = () => {
+      const parts = PC.split($("#ph").value, ccSel.value);
+      if (parts && parts.iso !== ccSel.value) { ccChoice = parts.iso; ccSel.value = parts.iso; $("#ph").placeholder = phonePlaceholder(); }
+      else if (parts) ccChoice = parts.iso;
+    };
+  }
+  function updateMethodLabels(){
+    const isPhone = method === "phone";
+    const mTabs = $("#method-tabs");
+    if (mTabs && mTabs.setAttribute) mTabs.setAttribute("aria-label", t("method.aria"));
+    if (document.querySelectorAll) {
+      document.querySelectorAll("#method-tabs button").forEach(b => {
+        const active = b.dataset.method === method;
+        b.classList.toggle("on", active);
+        if (b.setAttribute) b.setAttribute("aria-pressed", active ? "true" : "false");
+        if (b.dataset.method === "email" || b.dataset.method === "phone") b.textContent = t("method." + b.dataset.method);
+      });
+    }
+    setTxt("#lbl-ph", "field.phone");
+    const phInput = $("#ph");
+    if (phInput) phInput.placeholder = phonePlaceholder();
+    setTxt("#phone-forgot-msg", "forgot.phoneMsg");
+    setTxt("#hint-text", isPhone ? "hint.bodyPhone" : "hint.body");
+    setTxt("#c-terms-post", isPhone ? "consent.termsPostPhone" : "consent.termsPost");
+    if ($("#go")) $("#go").textContent = (mode === "register" && isPhone) ? t("go.registerPhone") : t("go." + mode);
+  }
+  function applyLangUI(){
+    if (document.documentElement) document.documentElement.lang = curLang === "en" ? "en" : "zh-CN";
+    if ("title" in document) document.title = t("page.title");
+    const appTitleMeta = $("#app-title-meta") || document.querySelector('meta[name="apple-mobile-web-app-title"]');
+    if (appTitleMeta) appTitleMeta.content = curLang === "en" ? "Lean Ritual" : "薄肌日课";
+    setTxt("#title-h1", "hero.title");
+    setTxt("#subtitle", "hero.sub");
+    const lsw = $("#lang-switch");
+    if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", t("lang.aria"));
+    renderCountryCodes();
+    if (document.querySelectorAll) {
+      document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));
+      document.querySelectorAll("#tabs button").forEach(b => {
+        if (b.dataset.m === "login" || b.dataset.m === "register") b.textContent = t("tab." + b.dataset.m);
+      });
+    }
+    setTxt("#lbl-n", "field.name");
+    setTxt("#lbl-e", "field.email");
+    setTxt("#lbl-p", "field.password");
+    setTxt("#lbl-i", "field.invite");
+    setTxt("#forgot", "btn.forgot");
+    setTxt("#resend", "btn.resend");
+    setTxt("#terms-link", "hint.terms");
+    setTxt("#privacy-link", "hint.privacy");
+    setTxt("#help-link", "hint.help");
+    setTxt("#c-terms-pre", "consent.termsPre");
+    setTxt("#c-terms-link", "consent.termsLink");
+    setTxt("#c-terms-mid", "consent.termsMid");
+    setTxt("#c-privacy-link", "consent.privacyLink");
+    setTxt("#lbl-c-sensitive", "consent.sensitive");
+    setTxt("#reload-policy", "btn.reloadPolicy");
+    const helpLink = $("#help-link");
+    if (helpLink) helpLink.href = t("hint.helpMailto");
+    updateMethodLabels();
+    if (errKey) setErr(errKey);
+    if (bannerKey) setBanner(bannerKey);
+  }
+  function setLang(next){
+    const l = validLang(next);
+    if (!l) return;
+    curLang = l;
+    markExplicitLang(l);
+    applyLangUI();
+  }
+  function syncFormVisibility(){
+    const isPhone = method === "phone";
+    const isPhoneForgot = isPhone && mode === "forgot";
+    const mTabs = $("#method-tabs");
+    if (mTabs) mTabs.hidden = mode === "reset" || mode === "resend";
+    $("#nw").hidden = mode !== "register";
+    $("#iw").hidden = mode !== "register";
+    const cw = $("#cw"); if (cw) cw.hidden = mode !== "register";
+    if (mode !== "register") { if ($("#c-terms")) $("#c-terms").checked = false; if ($("#c-sensitive")) $("#c-sensitive").checked = false; }
+    $("#pw").hidden = ["forgot", "resend"].includes(mode); $("#p").required = !$("#pw").hidden;
+    $("#ew").hidden = isPhone || mode === "reset"; $("#e").required = !$("#ew").hidden;
+    const phw = $("#phw"); if (phw) phw.hidden = !isPhone || mode === "reset" || mode === "forgot";
+    const ph = $("#ph"); if (ph) ph.required = !!(phw && !phw.hidden);
+    const pfm = $("#phone-forgot-msg"); if (pfm) pfm.hidden = !isPhoneForgot;
+    $("#p").autocomplete = mode === "login" ? "current-password" : "new-password";
+    if ($("#go")) $("#go").hidden = isPhoneForgot;
+    if ($("#forgot")) $("#forgot").hidden = isPhoneForgot;
+    if ($("#resend")) $("#resend").hidden = isPhone;
+    updateMethodLabels();
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.m === mode));
+  }
+  function setMode(m){
+    mode = m;
+    if (m === "resend") method = "email";
+    syncFormVisibility();
+    setErr(null); clearBanner();
+  }
+  function setMethod(next){
+    if (next !== "email" && next !== "phone") return;
+    method = next;
+    if (method === "phone" && mode === "resend") mode = "login";
+    syncFormVisibility();
+    setErr(null); clearBanner();
+  }
+  const lsw = $("#lang-switch");
+  if (lsw) lsw.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.lang) setLang(b.dataset.lang); };
+  const mTabs = $("#method-tabs");
+  if (mTabs) mTabs.onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.method) setMethod(b.dataset.method); };
+  $("#tabs").onclick=e=>{const b=e.target.closest("button");if(b)setMode(b.dataset.m)};
+  $("#forgot").onclick=()=>setMode("forgot"); $("#resend").onclick=()=>setMode("resend");
+  const reloadPolicyBtn = $("#reload-policy");
+  if (reloadPolicyBtn) reloadPolicyBtn.onclick = () => location.reload();
+  applyLangUI();
+  setMode(mode);
+  if(params.has("error")) setErr(params.get("error")==="TOKEN_EXPIRED" ? (method === "phone" ? "err.TOKEN_EXPIRED_PHONE" : "err.TOKEN_EXPIRED") : (method === "phone" ? "err.INVALID_TOKEN_PHONE" : "err.INVALID_TOKEN"));
+  let cleanURL=false;
+  if(params.has("verified")){
+    if(params.get("verified")==="1"&&!params.has("error")) setBanner("banner.verified");
+    params.delete("verified"); cleanURL=true;
+  }
+  if(params.has("deleted")){
+    if(params.get("deleted")==="1"&&!params.has("error")) setBanner("banner.deleted");
+    params.delete("deleted"); cleanURL=true;
+  }
+  if(cleanURL){
+    const q=params.toString();
+    history.replaceState(null,"",(location.pathname||"/login.html")+(q?"?"+q:"")+(location.hash||""));
+  }
+  $("#f").onsubmit=async e=>{
+    e.preventDefault();
+    if(method==="phone" && mode==="forgot") return;
+    $("#go").disabled=true; setErr(null); clearBanner();
+    const email=$("#e").value.trim(), password=$("#p").value;
+    const phoneNumber=$("#ph") ? phoneToSend() : "";
+    const isPhoneAuth = method === "phone" && (mode === "login" || mode === "register");
+    const routes={login:isPhoneAuth?"sign-in/phone-number":"sign-in/email",register:isPhoneAuth?"sign-up/phone-number":"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
+    let body = isPhoneAuth ? {phoneNumber,password} : {email,password};
+    if(mode==="register"){
+      const cTerms=$("#c-terms"), cSens=$("#c-sensitive");
+      if((cTerms && !cTerms.checked) || (cSens && !cSens.checked)){ setErr("err.CONSENT_REQUIRED"); $("#go").disabled=false; return; }
+      if(isPhoneAuth){
+        body={phoneNumber,password,name:$("#n").value.trim()||phoneNumber.slice(-4),invitation:$("#i").value.trim(),consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+      } else {
+        body={...body,name:$("#n").value.trim()||email.split("@")[0],invitation:$("#i").value.trim(),callbackURL:"/login.html?verified=1",consentTerms:true,consentSensitiveCrossBorder:true,agreedConsentVersion:DISPLAYED_CONSENT_VERSION};
+      }
+    }
+    if(mode==="forgot")body={email,redirectTo:"/login.html"};
+    if(mode==="reset")body={token:params.get("token"),newPassword:password};
+    if(mode==="resend")body={email,callbackURL:"/login.html?verified=1"};
+    try{
+      let r;
+      try{r=await fetch("/api/auth/"+routes[mode],{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-Ritual-Lang":curLang},body:JSON.stringify(body)});}
+      catch{setErr("msg.network");return}
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok){setErr(authErrorKey(j,r.status));return}
+      if(mode==="login" || (mode==="register" && isPhoneAuth)){location.replace("/");return}
+      if(mode==="reset"){history.replaceState(null,"","/login.html"+(method==="phone"?"?method=phone":""));setMode("login");setErr("msg.pwUpdated")}
+      else setErr(mode==="register"?"msg.verifySent":"msg.mailIfEligible");
+    }catch{setErr("err.fallback")}finally{$("#go").disabled=false}
+  };
+  if (typeof window !== "undefined") {
+    window.ritualLoginI18n = { t, getLang: () => curLang, setLang, getMethod: () => method, setMethod, resolveLang, detectBrowserLang, mapAuthError, I18N, consentVersion: DISPLAYED_CONSENT_VERSION };
+    if (window.ritualErrorReporter) window.ritualErrorReporter.configure({ getPage: () => "login", getLang: () => curLang });
+  }
+})();

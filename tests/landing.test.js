@@ -20,7 +20,9 @@ const HTML = PAGE.replace(MARKER, () => FILM);      // with the video section
 
 const JS = read('public/landing/nocturne.js');
 const BOOT = read('public/landing/boot.js');
-const CSS = read('public/landing/nocturne.css');
+// The landing page loads the shared site theme (tokens, fonts, base) before its own sheet.
+const THEME = read('public/site/theme.css');
+const CSS = THEME + read('public/landing/nocturne.css');
 
 function loadI18N() {
   const start = JS.indexOf('const I18N = ');
@@ -62,7 +64,7 @@ test('calls to action: invite sign-up, sign-in and an invite request to the priv
   assert.match(JS, new RegExp('const CONTACT = "' + privacyContact.replace(/\./g, '\\.') + '"'));
   for (const m of HTML.matchAll(/data-ask href="mailto:([^"]+)"/g)) assert.equal(m[1], privacyContact);
   // login.html opens its invite sign-up view whenever the invite parameter is present.
-  assert.match(read('public/login.html'), /params\.has\("invite"\) \? "register"/);
+  assert.match(read('public/site/login.js'), /params\.has\("invite"\) \? "register"/);
 });
 
 test('zh and en copy have the same keys and cover every data-i hook', () => {
@@ -341,7 +343,8 @@ test('HTTP: visitors get the landing page, signed-in users the app; media stream
   }
   for (const route of ['/login.html', '/login.html?invite=abc123', '/privacy.html', '/terms.html', '/landing.html']) assert.equal((await get(route)).status, 200, route);
   for (const [route, type] of [['/landing/nocturne.js', 'text/javascript; charset=utf-8'], ['/landing/boot.js', 'text/javascript; charset=utf-8'],
-    ['/landing/nocturne.css', 'text/css; charset=utf-8'], ['/landing/fonts/serif-display.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
+    ['/landing/nocturne.css', 'text/css; charset=utf-8'], ['/site/theme.css', 'text/css; charset=utf-8'], ['/site/login.css', 'text/css; charset=utf-8'], ['/site/doc.css', 'text/css; charset=utf-8'],
+    ['/landing/fonts/serif-display.woff2', 'font/woff2'], ['/landing/img/en-meal.webp', 'image/webp']]) {
     const r = await get(route);
     assert.equal(r.status, 200, route);
     assert.equal(r.headers.get('content-type'), type);

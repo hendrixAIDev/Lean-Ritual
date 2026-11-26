@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { pageScript } = require('./helpers/public-page');
 
 function loadApp({ storeImpl, assetsImpl, elements = {}, fastTimers = false } = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
@@ -314,7 +315,7 @@ test('photo upload retries transient network errors with a stable idempotency ke
 
 test('login.html shows Chinese offline message instead of raw Failed to fetch when network fails', async () => {
   const loginHtml = fs.readFileSync(path.join(__dirname, '../public/login.html'), 'utf8');
-  const script = loginHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const script = pageScript(loginHtml);
   const els = {
     '#n': { value: '' },
     '#e': { value: 'user@example.com', required: true },

@@ -4,13 +4,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { pageScript } = require('./helpers/public-page');
 
 const appHtml = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
 const appFullScript = appHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
 const appPageScript = appFullScript.split('/* ============ 启动 ============ */')[0];
 
 const loginHtml = fs.readFileSync(path.join(__dirname, '../public/login.html'), 'utf8');
-const loginScript = loginHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+const loginScript = pageScript(loginHtml);
 
 function makeFixedDate(iso = '2026-11-18T12:00:00Z') {
   const RealDate = Date;
@@ -1083,7 +1084,7 @@ test('privacy.html and guide.html language selection, faithful parity, deploymen
 
   // 3. Runtime language resolution (?lang= > bj-lang > navigator.languages > zh) and DOM detach toggle on both pages
   function mountPublicDoc(html, { search = '', storage = {}, languages = [] } = {}) {
-    const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+    const script = pageScript(html);
     const localStorage = makeStorage(storage);
     const docEl = { lang: 'zh-CN' };
     const rootChildren = [];

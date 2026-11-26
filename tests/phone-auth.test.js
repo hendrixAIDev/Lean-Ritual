@@ -972,7 +972,9 @@ test("headless Chromium browser smoke: phone path in zh and en at phone width (3
 
     // 1. Open phone invite link -> prefilled phone & invite, consent checkboxes unticked, resend hidden, phone-specific consent text
     await page.goto(invZh.url);
-    assert.equal(await page.locator("#ph").inputValue(), "+8613800138201");
+    // The invite's +86 number fills the country code dropdown and the national number.
+    assert.equal(await page.locator("#cc").inputValue(), "CN");
+    assert.equal(await page.locator("#ph").inputValue(), "13800138201");
     assert.equal(await page.locator("#i").inputValue(), invZh.token);
     assert.equal(await page.locator("#resend").isVisible(), false);
     const zhPhoneConsent = await page.locator("#c-terms-post").textContent();
@@ -1062,7 +1064,8 @@ test("headless Chromium browser smoke: phone path in zh and en at phone width (3
 
     await page.goto(invEn.url);
     assert.equal(await page.evaluate(() => document.documentElement.lang), "en");
-    assert.equal(await page.locator("#ph").inputValue(), "+14155552699");
+    assert.equal(await page.locator("#cc").inputValue(), "US");
+    assert.equal(await page.locator("#ph").inputValue(), "4155552699");
     assert.equal(await page.locator("#resend").isVisible(), false);
     const enPhoneConsent = await page.locator("#c-terms-post").textContent();
     assert.match(enPhoneConsent, /2026-11-25/);

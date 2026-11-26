@@ -28,12 +28,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run build
       - run: npm test
-      - name: Landing page browser checks
+      - name: Public page browser checks (landing, login, privacy, terms, guide)
         # Playwright lives outside the repo's node_modules so it never ships in the release bundle.
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-audit --no-fund playwright@1.58.2
           "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps chromium
-          NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node --test tests/landing-browser.test.js
+          NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node --test --test-concurrency=1 tests/landing-browser.test.js tests/site-browser.test.js tests/phone-rules.test.js
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Package tested runtime
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
