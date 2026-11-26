@@ -261,15 +261,15 @@ function synthesizeRawFromApi({
 
     const finishOk = () => {
       if (settled) return;
+      const pcm = Buffer.concat(chunks);
+      if (pcm.length < 1024) {
+        finishErr(new Error(`iFLYTEK TTS returned unexpectedly small audio (${pcm.length} bytes)`));
+        return;
+      }
       settled = true;
       clearTimeout(timer);
       try { ws.close(); } catch {}
-      const pcm = Buffer.concat(chunks);
-      if (pcm.length < 1024) {
-        reject(new Error(`iFLYTEK TTS returned unexpectedly small audio (${pcm.length} bytes, sid=${sid})`));
-        return;
-      }
-      resolve({ pcm, sampleRate: 24000, sid });
+      resolve({ pcm, sampleRate: 24000 });
     };
 
     ws.addEventListener('open', () => {
@@ -323,7 +323,8 @@ function synthesizeRawFromApi({
         sid = msg?.header?.sid || sid;
         if (code !== 0) {
           const safeDetail = redactSecrets(msg?.header?.message || '', creds, extraSecrets, 180);
-          const err = new Error(`iFLYTEK TTS error code=${code} message="${safeDetail}" sid=${sid}`);
+          const safeSid = redactSecrets(sid, creds, extraSecrets, 64);
+          const err = new Error(`iFLYTEK TTS error code=${code} message="${safeDetail}"${safeSid ? ` sid=${safeSid}` : ''}`);
           err.code = code;
           finishErr(err);
           return;
@@ -408,7 +409,6 @@ async function synthesizeLine({
           remain,
           textLength: text.length,
           duration,
-          sid: res.sid,
           createdAt: new Date().toISOString()
         },
         null,

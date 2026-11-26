@@ -153,7 +153,65 @@ class DemoVideoPackagingAndKokoroTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "voices.bin"):
                     mod.ensure_model("kokoro-multi-lang-v1_0", downloader=fake_dl)
 
-            self.assertFalse((cache_dir / "kokoro-multi-lang-v1_0").exists())
+            self.assertFalse(mod.get_model_cache_dir(cache_dir, fake_models["kokoro-multi-lang-v1_0"]).exists())
+
+    def test_legacy_and_unverified_caches_cannot_bypass_digest_verification(self):
+        mod = load_tts_kokoro()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            cache_dir = tmp_path / "cache"
+            archive = tmp_path / "good.tar.bz2"
+            digest = build_tar_bz2(
+                archive,
+                [
+                    ("kokoro-multi-lang-v1_0", "dir", ""),
+                    ("kokoro-multi-lang-v1_0/model.onnx", "file", b"verified-onnx"),
+                    ("kokoro-multi-lang-v1_0/voices.bin", "file", b"verified-voices"),
+                    ("kokoro-multi-lang-v1_0/tokens.txt", "file", b"verified-tokens"),
+                ],
+            )
+            fake_models = {
+                "kokoro-multi-lang-v1_0": {
+                    **mod.MODELS["kokoro-multi-lang-v1_0"],
+                    "sha256": digest,
+                }
+            }
+
+            # 1. Legacy unverified cache at cache_dir/kokoro-multi-lang-v1_0 (pre-pinning layout)
+            legacy_dir = cache_dir / "kokoro-multi-lang-v1_0"
+            legacy_dir.mkdir(parents=True)
+            (legacy_dir / "model.onnx").write_bytes(b"unverified-legacy-onnx")
+            (legacy_dir / "voices.bin").write_bytes(b"unverified-legacy-voices")
+            (legacy_dir / "tokens.txt").write_bytes(b"unverified-legacy-tokens")
+
+            # 2. Pre-existing unverified directory inside the digest-scoped path without .verified.json
+            scoped_dir = mod.get_model_cache_dir(cache_dir, fake_models["kokoro-multi-lang-v1_0"])
+            scoped_dir.mkdir(parents=True)
+            (scoped_dir / "model.onnx").write_bytes(b"unverified-scoped-onnx")
+            (scoped_dir / "voices.bin").write_bytes(b"unverified-scoped-voices")
+            (scoped_dir / "tokens.txt").write_bytes(b"unverified-scoped-tokens")
+
+            downloads = 0
+
+            def fake_dl(_url: str, dst: Path):
+                nonlocal downloads
+                downloads += 1
+                dst.write_bytes(archive.read_bytes())
+
+            with mock.patch.dict(os.environ, {"DEMO_VIDEO_TTS_CACHE": str(cache_dir)}), mock.patch.object(
+                mod, "MODELS", fake_models
+            ):
+                model_dir = mod.ensure_model("kokoro-multi-lang-v1_0", downloader=fake_dl)
+                self.assertEqual(downloads, 1, "Legacy/unverified cache must trigger verified re-download")
+                self.assertEqual(model_dir, scoped_dir)
+                self.assertEqual((model_dir / "model.onnx").read_bytes(), b"verified-onnx")
+                self.assertTrue((model_dir / mod.VERIFICATION_MARKER).is_file())
+
+                # 3. Tampering with a cached model file after verification must invalidate cache & re-download
+                (model_dir / "model.onnx").write_bytes(b"tampered-after-extract")
+                model_dir_reverified = mod.ensure_model("kokoro-multi-lang-v1_0", downloader=fake_dl)
+                self.assertEqual(downloads, 2, "Tampered cached model must trigger re-download and verification")
+                self.assertEqual((model_dir_reverified / "model.onnx").read_bytes(), b"verified-onnx")
 
     def test_ensure_model_verifies_extracts_sanitizes_modes_and_caches(self):
         mod = load_tts_kokoro()

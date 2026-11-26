@@ -229,6 +229,106 @@ test('Finding 3 (iFLYTEK): strips signed URLs, base64 authorization, HMAC signat
         return true;
       }
     );
+
+    // Short-audio path: mocked status=2 frame with <1024 bytes audio and credentials echoed in header.sid
+    class FakeShortAudioWebSocket {
+      constructor(url) {
+        this.url = String(url);
+        this.listeners = new Map();
+        const u = new URL(this.url);
+        const rawAuth = u.searchParams.get('authorization');
+        setImmediate(() => {
+          for (const fn of this.listeners.get('open') || []) fn({});
+        });
+        this._rawAuth = rawAuth;
+      }
+      addEventListener(type, fn) {
+        if (!this.listeners.has(type)) this.listeners.set(type, []);
+        this.listeners.get(type).push(fn);
+      }
+      send() {
+        setImmediate(() => {
+          const msg = JSON.stringify({
+            header: {
+              code: 0,
+              status: 2,
+              sid: `sid-leak-${creds.IFLYTEK_API_KEY}-${creds.IFLYTEK_API_SECRET}-${this._rawAuth}`
+            },
+            payload: {
+              audio: {
+                status: 2,
+                audio: Buffer.from('tiny-pcm').toString('base64')
+              }
+            }
+          });
+          for (const fn of this.listeners.get('message') || []) fn({ data: msg });
+        });
+      }
+      close() {}
+    }
+
+    await assert.rejects(
+      () =>
+        ttsIflytek.synthesizeRawFromApi({
+          text: '测试短音频',
+          WebSocketImpl: FakeShortAudioWebSocket
+        }),
+      err => {
+        assert.match(err.message, /unexpectedly small audio/);
+        assert.ok(!err.message.includes('sid-leak'), 'Raw sid must not appear in short-audio error');
+        assert.ok(!err.message.includes(creds.IFLYTEK_API_KEY), 'API key echoed in sid must not leak');
+        assert.ok(!err.message.includes(creds.IFLYTEK_API_SECRET), 'API secret echoed in sid must not leak');
+        assert.ok(!err.message.includes(creds.IFLYTEK_APPID), 'App ID must not leak');
+        return true;
+      }
+    );
+
+    // Non-zero API error frame with credentials echoed in both message and sid
+    class FakeApiErrorWebSocket {
+      constructor(url) {
+        this.url = String(url);
+        this.listeners = new Map();
+        setImmediate(() => {
+          for (const fn of this.listeners.get('open') || []) fn({});
+        });
+      }
+      addEventListener(type, fn) {
+        if (!this.listeners.has(type)) this.listeners.set(type, []);
+        this.listeners.get(type).push(fn);
+      }
+      send() {
+        setImmediate(() => {
+          const msg = JSON.stringify({
+            header: {
+              code: 11200,
+              message: `denied for ${creds.IFLYTEK_API_KEY} url=${this.url}`,
+              sid: `sid-${creds.IFLYTEK_API_SECRET}`
+            }
+          });
+          for (const fn of this.listeners.get('message') || []) fn({ data: msg });
+        });
+      }
+      close() {}
+    }
+
+    await assert.rejects(
+      () =>
+        ttsIflytek.synthesizeRawFromApi({
+          text: '测试报错',
+          WebSocketImpl: FakeApiErrorWebSocket
+        }),
+      err => {
+        assert.equal(err.code, 11200);
+        assert.ok(!err.message.includes(creds.IFLYTEK_API_KEY), 'API key must not leak from code!=0 message');
+        assert.ok(!err.message.includes(creds.IFLYTEK_API_SECRET), 'API secret must not leak from code!=0 sid');
+        assert.ok(!err.message.includes('?authorization='), 'Signed query string must not leak from code!=0 error');
+        return true;
+      }
+    );
+
+    // Cache metadata writer must not persist raw provider sid
+    const iflytekSrc = fs.readFileSync(path.join(ROOT, 'tools', 'demo-video', 'tts_iflytek.js'), 'utf8');
+    assert.doesNotMatch(iflytekSrc, /\bsid\s*:\s*res\.sid\b/, 'Cache metadata must omit raw provider sid');
   });
 });
 

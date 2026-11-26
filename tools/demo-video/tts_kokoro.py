@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 
 TARGET_SR = 48000
 REQUIRED_MODEL_FILES = ("model.onnx", "voices.bin", "tokens.txt")
+VERIFICATION_MARKER = ".verified.json"
 
 MODELS = {
     "kokoro-multi-lang-v1_0": {
@@ -129,12 +130,58 @@ def safe_extract_tar(archive_path: Path, dest_dir: Path, expected_top_dir: str, 
     return expected_root
 
 
-def has_valid_model_dir(model_dir: Path, required_files: tuple[str, ...] = REQUIRED_MODEL_FILES) -> bool:
+def get_model_cache_dir(cache_dir: Path, spec: dict) -> Path:
+    digest_prefix = str(spec["sha256"]).strip().lower()[:16]
+    return cache_dir / f"{spec['dir_name']}-{digest_prefix}"
+
+
+def write_verification_marker(
+    model_dir: Path,
+    model_key: str,
+    expected_sha256: str,
+    required_files: tuple[str, ...] = REQUIRED_MODEL_FILES,
+) -> None:
+    marker_path = model_dir / VERIFICATION_MARKER
+    file_hashes = {name: sha256_file(model_dir / name) for name in required_files}
+    payload = {
+        "v": 1,
+        "model_key": model_key,
+        "archive_sha256": expected_sha256.strip().lower(),
+        "files": file_hashes,
+    }
+    marker_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.chmod(marker_path, 0o644)
+
+
+def has_valid_model_dir(
+    model_dir: Path,
+    expected_sha256: str,
+    required_files: tuple[str, ...] = REQUIRED_MODEL_FILES,
+) -> bool:
     if not model_dir.is_dir() or model_dir.is_symlink():
+        return False
+    marker_path = model_dir / VERIFICATION_MARKER
+    if marker_path.is_symlink() or not marker_path.is_file():
+        return False
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(marker, dict):
+        return False
+    expected = (expected_sha256 or "").strip().lower()
+    recorded_archive = str(marker.get("archive_sha256") or "").strip().lower()
+    if len(expected) != 64 or not hmac.compare_digest(recorded_archive, expected):
+        return False
+    recorded_files = marker.get("files")
+    if not isinstance(recorded_files, dict):
         return False
     for name in required_files:
         p = model_dir / name
         if p.is_symlink() or not p.is_file() or p.stat().st_size <= 0:
+            return False
+        recorded_hash = str(recorded_files.get(name) or "").strip().lower()
+        if len(recorded_hash) != 64 or not hmac.compare_digest(sha256_file(p).lower(), recorded_hash):
             return False
     return True
 
@@ -156,10 +203,11 @@ def ensure_model(model_key: str, *, downloader=None) -> Path:
         raise ValueError(f"Unknown Kokoro model key: {model_key}")
     spec = MODELS[model_key]
     required_files = tuple(spec.get("required_files", REQUIRED_MODEL_FILES))
+    expected_sha256 = spec["sha256"]
     cache_dir = get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
-    model_dir = cache_dir / spec["dir_name"]
-    if has_valid_model_dir(model_dir, required_files):
+    model_dir = get_model_cache_dir(cache_dir, spec)
+    if has_valid_model_dir(model_dir, expected_sha256, required_files):
         return model_dir
 
     print(f"[tts_kokoro] Downloading {model_key} from {spec['url']} ...", file=sys.stderr, flush=True)
@@ -170,9 +218,10 @@ def ensure_model(model_key: str, *, downloader=None) -> Path:
             downloader(spec["url"], archive_path)
         else:
             urllib.request.urlretrieve(spec["url"], str(archive_path))
-        verify_archive_sha256(archive_path, spec["sha256"])
+        verify_archive_sha256(archive_path, expected_sha256)
         extracted = safe_extract_tar(archive_path, tmp_dir, spec["dir_name"])
         validate_model_dir(extracted, required_files)
+        write_verification_marker(extracted, model_key, expected_sha256, required_files)
         if model_dir.exists():
             shutil.rmtree(model_dir)
         shutil.move(str(extracted), str(model_dir))
