@@ -12,13 +12,13 @@ const STORYBOARDS = {
       sid: 3,
       speed: 1.08,
       iflytek: {
-        vcn: 'x6_lingxiaoxuan_pro',
-        speed: 64,
-        pitch: 61,
-        volume: 80,
-        oralLevel: 'high',
+        vcn: 'x6_xiaoqiChat_pro',
+        speed: 62,
+        pitch: 50,
+        volume: 50,
+        oralLevel: 'mid',
         sparkAssist: 1,
-        remain: 0
+        remain: 1
       },
       gemini: {
         modelId: process.env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts',
@@ -46,7 +46,7 @@ const STORYBOARDS = {
       duration: 4.0,
       narration: '薄肌日课：练得更瘦、更强、更好，需要的都在这里。',
       spoken: '薄机日课，练得更瘦更强更好，需要的都在这里。',
-      iflytekSpoken: '来！薄肌日课！练得更瘦、更强、更好，需要的全都在这里！'
+      iflytekSpoken: '薄[=bo2]肌日课：练得更瘦、更强、更好，需要的都在这里。'
     },
     outroCard: {
       eyebrow: 'LEAN RITUAL · 薄肌日课',
@@ -57,12 +57,12 @@ const STORYBOARDS = {
       duration: 4.0,
       narration: '薄肌日课，邀请制内测中。',
       spoken: '薄机日课，邀请制内测中。',
-      iflytekSpoken: '薄肌日课，邀请制内测中，一起加油！'
+      iflytekSpoken: '薄[=bo2]肌日课，邀请制内测中。'
     },
     poster: {
       eyebrow: '薄肌日课 · LEAN RITUAL',
       headline: '一个 App，助你更瘦、更强、更好',
-      subline: '专属计划 · 拍照估餐 · AI 教练 · 数据随时带走',
+      subline: '专属计划 · 拍照估餐 · AI 教练 · 数据可以带走',
       badge: '邀请制内测 · leanritual.app'
     },
     scenes: [
@@ -76,14 +76,12 @@ const STORYBOARDS = {
           {
             caption: '1 分钟，填好目标和身体状况',
             callout: '1 分钟 · 伤病也考虑',
-            narration: '先花一分钟，说说你的目标和身体状况。',
-            iflytekSpoken: '先花一分钟，说说你的目标和身体状况！'
+            narration: '先花一分钟，说说你的目标和身体状况。'
           },
           {
             caption: '为你定制，AI 帮你调整',
             callout: '专属计划 · AI 教练',
-            narration: '计划按你的目标和身体定制，想调整时，AI 教练给你建议。',
-            iflytekSpoken: '计划按你的目标和身体量身定制，想调整时，AI 教练给你建议！'
+            narration: '计划按你的目标和身体定制，想调整时，AI 教练给你建议。'
           }
         ]
       },
@@ -97,13 +95,12 @@ const STORYBOARDS = {
           {
             caption: '每天快速打卡',
             narration: '每天打个卡，记下体重、步数和睡眠。',
-            iflytekSpoken: '每天打个卡，轻松记下体重、步数[=shu4]和睡眠！'
+            iflytekSpoken: '每天打个卡，记下体重、步数[=shu4]和睡眠。'
           },
           {
             caption: '7 天平均，看清趋势',
-            callout: '7 天平均 72.4 kg',
-            narration: '看七天平均，不被每天的起伏干扰。',
-            iflytekSpoken: '看七天平均，稳稳向前，不被每天的小起伏干扰！'
+            callout: '7 天平均 72.7 kg',
+            narration: '看七天平均，不被每天的起伏干扰。'
           }
         ]
       },
@@ -115,16 +112,15 @@ const STORYBOARDS = {
         minDuration: 9.5,
         beats: [
           {
-            caption: '每次训练，告诉你练多重',
+            caption: '练过的动作，告诉你练多重',
             callout: '今天建议 60 kg',
-            narration: '每个动作都会建议今天的重量，练完一键保存。',
-            iflytekSpoken: '每个动作都会给你建议今天的重量，练完一键保存，超省心！'
+            narration: '练过的动作会建议今天的重量，练完一键保存。',
+            iflytekSpoken: '练过的动作，会建议今天的重量，练完一键保存。'
           },
           {
             caption: '进步一目了然',
             callout: '体重 · 热量 · 力量',
-            narration: '体重、热量和力量的变化，都画成曲线。',
-            iflytekSpoken: '体重、热量和力量的进步，全都画成清晰曲线！'
+            narration: '体重、热量和力量的变化，都画成图表。'
           }
         ]
       },
@@ -137,14 +133,12 @@ const STORYBOARDS = {
         beats: [
           {
             caption: '拍张照，AI 帮你算热量',
-            narration: '吃饭不用称重，拍张照就行。',
-            iflytekSpoken: '吃饭不用称重，拍张照就搞定！'
+            narration: '吃饭不用称重，拍张照就行。'
           },
           {
-            caption: '热量、蛋白质，自动算好',
+            caption: '热量、蛋白质，AI 帮你估',
             callout: '540 kcal · 蛋白质 46.5 g',
-            narration: '自动算出热量和蛋白质，今天还差多少一看就知道。',
-            iflytekSpoken: '自动算出热量和蛋白质，今天还差多少一眼就知道！'
+            narration: '点一下，AI 帮你估算热量和蛋白质，今天还差多少一看就知道。'
           }
         ]
       },
@@ -158,13 +152,11 @@ const STORYBOARDS = {
           {
             caption: 'AI 教练帮你复盘',
             callout: '看两周数据 · 给出调整',
-            narration: '进入平台期了？写一句感受，AI 教练看完两周数据给你建议。',
-            iflytekSpoken: '进入平台期了？别担心！写一句感受，AI 教练看完两周数据给你支招！'
+            narration: '进入平台期了？写一句感受，AI 教练看完两周数据给你建议。'
           },
           {
             caption: '一键采纳，也能撤销',
-            narration: '喜欢就采纳，不合适也能撤销。',
-            iflytekSpoken: '喜欢就一键采纳，不合适也能撤销！'
+            narration: '喜欢就采纳，不合适也能撤销。'
           }
         ]
       },
@@ -178,23 +170,21 @@ const STORYBOARDS = {
           {
             caption: '像 App 一样放在主屏幕',
             callout: '中文 / English',
-            narration: '中英文随时切换，还能像 App 一样放在主屏幕。',
-            iflytekSpoken: '中英文随时切换，还能像 App 一样直接放在主屏幕！'
+            narration: '中英文随时切换，还能像 App 一样放在主屏幕。'
           }
         ]
       },
       {
         id: 'export',
-        label: '我的 · 一键导出数据',
-        chapter: '07 · 数据随时带走',
+        label: '我的 · 导出记录和照片',
+        chapter: '07 · 数据可以带走',
         transition: 'perspective_swing',
         minDuration: 4.8,
         beats: [
           {
-            caption: '你的数据，随时带走',
-            callout: '一键导出',
-            narration: '记录和照片，一键导出，永远属于你。',
-            iflytekSpoken: '所有记录和照片，一键导出，永远属于你！'
+            caption: '你的数据，可以带走',
+            callout: '导出记录和照片',
+            narration: '记录和照片，都能导出带走。'
           }
         ]
       }
@@ -292,7 +282,7 @@ const STORYBOARDS = {
     poster: {
       eyebrow: 'LEAN RITUAL',
       headline: 'One app to get leaner, stronger, better',
-      subline: 'Your plan · Photo calorie AI · AI coach · One-tap export',
+      subline: 'Your plan · Photo calorie AI · AI coach · Export your data',
       badge: 'Invite-only beta · leanritual.app'
     },
     scenes: [
@@ -328,7 +318,7 @@ const STORYBOARDS = {
           },
           {
             caption: '7-day average shows the trend',
-            callout: '7-day avg 72.4 kg',
+            callout: '7-day avg 72.7 kg',
             narration: 'Watch the 7-day average, not the daily ups and downs.'
           }
         ]
@@ -341,9 +331,9 @@ const STORYBOARDS = {
         minDuration: 9.5,
         beats: [
           {
-            caption: 'Know what weight to lift',
+            caption: "Logged lifts guide today's weight",
             callout: 'Today: 60 kg',
-            narration: "Each lift suggests today's weight. Log it in one tap."
+            narration: "Lifts you've logged suggest today's weight. Save it in one tap."
           },
           {
             caption: 'See your progress',
@@ -364,9 +354,9 @@ const STORYBOARDS = {
             narration: 'No scales. Just snap your meal.'
           },
           {
-            caption: 'Calories and protein, done for you',
+            caption: 'AI estimates calories and protein',
             callout: '540 kcal · 46.5 g protein',
-            narration: "It works out calories and protein, so you know what's left today."
+            narration: "Tap once, and AI estimates calories and protein, so you can see what's left today."
           }
         ]
       },
@@ -404,15 +394,15 @@ const STORYBOARDS = {
       },
       {
         id: 'export',
-        label: 'Me · One-Tap Data Export',
+        label: 'Me · Export Your Data',
         chapter: '07 · Your Data',
         transition: 'perspective_swing',
         minDuration: 4.8,
         beats: [
           {
-            caption: 'Your data, yours to keep',
-            callout: 'One-tap export',
-            narration: "Export everything in one tap. It's always yours."
+            caption: 'Take your data with you',
+            callout: 'Export logs & photos',
+            narration: 'Export your logs and photos, and take them with you.'
           }
         ]
       }
@@ -476,8 +466,8 @@ function formatScriptMarkdown(sb, timeline = [], meta = {}) {
   const lines = [];
   lines.push(
     isZh
-      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v12（中文版）`
-      : `# Lean Ritual Product Walkthrough Script v12 (English)`
+      ? `# 薄肌日课（Lean Ritual）产品介绍视频脚本 v13（中文版）`
+      : `# Lean Ritual Product Walkthrough Script v13 (English)`
   );
   lines.push('');
   lines.push(

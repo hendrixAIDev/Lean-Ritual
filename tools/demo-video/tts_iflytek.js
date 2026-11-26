@@ -8,13 +8,13 @@ const { execFileSync, spawnSync } = require('node:child_process');
 
 const DEFAULT_ENDPOINT = 'wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6';
 const DEFAULT_ENV_FILE = path.join(os.homedir(), '.openclaw', '.env.iflytek');
-const DEFAULT_VCN = 'x6_lingxiaoxuan_pro';
-const DEFAULT_SPEED = 64;
-const DEFAULT_PITCH = 61;
-const DEFAULT_VOLUME = 80;
-const DEFAULT_ORAL_LEVEL = 'high';
+const DEFAULT_VCN = 'x6_xiaoqiChat_pro';
+const DEFAULT_SPEED = 62;
+const DEFAULT_PITCH = 50;
+const DEFAULT_VOLUME = 50;
+const DEFAULT_ORAL_LEVEL = 'mid';
 const DEFAULT_SPARK_ASSIST = 1;
-const DEFAULT_REMAIN = 0;
+const DEFAULT_REMAIN = 1;
 const FFMPEG = process.env.FFMPEG_BIN || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg');
 const FFPROBE = process.env.FFPROBE_BIN || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe');
 
