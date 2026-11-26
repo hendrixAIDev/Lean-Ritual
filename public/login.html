@@ -36,7 +36,7 @@
     <div class="method-sw" id="method-tabs" role="group" aria-label="登录方式"><button type="button" data-method="email" class="on" aria-pressed="true">邮箱</button><button type="button" data-method="phone" aria-pressed="false">手机号</button></div>
     <label id="nw" hidden><span id="lbl-n">称呼</span><input id="n" maxlength="80" autocomplete="nickname"></label>
     <label id="ew"><span id="lbl-e">邮箱</span><input id="e" type="email" inputmode="email" autocomplete="email" required autocapitalize="off" spellcheck="false"></label>
-    <label id="phw" hidden><span id="lbl-ph">手机号</span><input id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="138 0013 8000 或 +国家代码" autocapitalize="off" spellcheck="false"></label>
+    <div class="phone-field" id="phw" role="group" aria-labelledby="lbl-ph" hidden><label class="field-label" id="lbl-ph" for="ph">手机号</label><div class="phone-row"><select id="cc" autocomplete="tel-country-code" aria-label="国家或地区代码" hidden></select><input id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="138 0013 8000 或 +国家代码" autocapitalize="off" spellcheck="false"></div></div>
     <label id="pw"><span id="lbl-p">密码</span><input id="p" type="password" autocomplete="current-password" required minlength="8" maxlength="200"></label>
     <label id="iw" hidden><span id="lbl-i">邀请码</span><input id="i" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <div class="consent-box" id="cw" hidden>
@@ -53,6 +53,7 @@
   </form>
 </main>
 <script src="/client-errors.js" referrerpolicy="no-referrer"></script>
+<script src="/site/phone-country.js"></script>
 <script>
 (function(){
   const $ = s => document.querySelector(s), params = new URLSearchParams(location.search), banner = $("#banner");
@@ -107,6 +108,10 @@
       "field.email": "邮箱",
       "field.phone": "手机号",
       "field.phonePlaceholder": "138 0013 8000 或 +国家代码",
+      "field.phoneNational": "不含国家代码的号码",
+      "field.countryCode": "国家或地区代码",
+      "cc.common": "常用",
+      "cc.all": "全部国家和地区",
       "field.password": "密码",
       "field.invite": "邀请码",
       "go.login": "登录",
@@ -119,7 +124,7 @@
       "btn.resend": "重新发送验证邮件",
       "forgot.phoneMsg": "请联系邀请你的人重置密码",
       "hint.body": "仅受邀邮箱可以注册。密码至少 8 位；完成邮箱验证后才能登录。",
-      "hint.bodyPhone": "仅受邀手机号可以注册。中国大陆 11 位手机号默认 +86，其他地区请加 +国家代码。密码至少 8 位，无需邮箱验证。",
+      "hint.bodyPhone": "仅受邀手机号可以注册。先选国家或地区代码，再填手机号。密码至少 8 位，无需邮箱验证。",
       "hint.terms": "使用条款",
       "hint.privacy": "隐私说明",
       "hint.help": "无法登录？发邮件反馈",
@@ -198,6 +203,10 @@
       "field.email": "Email",
       "field.phone": "Phone number",
       "field.phonePlaceholder": "+1 415 555 2671 or 138 0013 8000",
+      "field.phoneNational": "Number without the country code",
+      "field.countryCode": "Country or region code",
+      "cc.common": "Common",
+      "cc.all": "All countries and regions",
       "field.password": "Password",
       "field.invite": "Invite code",
       "go.login": "Sign in",
@@ -210,7 +219,7 @@
       "btn.resend": "Resend verification email",
       "forgot.phoneMsg": "Ask the person who invited you to reset your password",
       "hint.body": "Invite-only registration. Passwords must be at least 8 characters; verify your email before signing in. ",
-      "hint.bodyPhone": "Invite-only registration. 11-digit mainland China numbers default to +86; include +country code for other regions. Passwords must be at least 8 characters; no email verification needed. ",
+      "hint.bodyPhone": "Invite-only registration. Choose your country or region code, then enter your number. Passwords must be at least 8 characters; no email verification needed. ",
       "hint.terms": "Terms of Use",
       "hint.privacy": "Privacy Notice",
       "hint.help": "Can't sign in? Email feedback",
@@ -412,7 +421,34 @@
   let mode = params.has("token") ? "reset" : params.has("invite") ? "register" : "login";
   if(params.has("invite")) $("#i").value=params.get("invite");
   if(params.has("email")) $("#e").value=params.get("email");
-  if(params.has("phone") && $("#ph")) $("#ph").value=params.get("phone");
+  // Country code dropdown (site/phone-country.js). Without it the phone field takes a full number, as before.
+  const PC = typeof window !== "undefined" && window.ritualPhoneCountry ? window.ritualPhoneCountry : null;
+  const ccSel = PC ? $("#cc") : null;
+  let ccChoice = null;   // a code the user picked, typed as +number, or got from an invite link; otherwise it follows the page language
+  if(params.has("phone") && $("#ph")){
+    const parts = ccSel ? PC.split(params.get("phone")) : null;
+    if (parts) { ccChoice = parts.iso; $("#ph").value = parts.national; } else $("#ph").value = params.get("phone");
+  }
+  function phonePlaceholder(){ return ccSel ? (PC.example(ccSel.value) || t("field.phoneNational")) : t("field.phonePlaceholder"); }
+  function renderCountryCodes(){
+    if (!ccSel) return;
+    const groups = PC.options(curLang);
+    const group = (label, items) => { const g = document.createElement("optgroup"); g.label = label; items.forEach(o => g.appendChild(new Option(o.label, o.iso))); return g; };
+    ccSel.replaceChildren(group(t("cc.common"), groups.common), group(t("cc.all"), groups.rest));
+    ccSel.value = ccChoice || PC.defaultFor(curLang);
+    ccSel.setAttribute("aria-label", t("field.countryCode"));
+    ccSel.hidden = false;
+    $("#ph").autocomplete = "tel-national";
+  }
+  if (ccSel) {
+    ccSel.onchange = () => { ccChoice = ccSel.value; $("#ph").placeholder = phonePlaceholder(); };
+    // Someone who still types the full +number keeps it; the dropdown follows what they typed.
+    $("#ph").oninput = () => {
+      const parts = PC.split($("#ph").value, ccSel.value);
+      if (parts && parts.iso !== ccSel.value) { ccChoice = parts.iso; ccSel.value = parts.iso; $("#ph").placeholder = phonePlaceholder(); }
+      else if (parts) ccChoice = parts.iso;
+    };
+  }
   function updateMethodLabels(){
     const isPhone = method === "phone";
     const mTabs = $("#method-tabs");
@@ -427,7 +463,7 @@
     }
     setTxt("#lbl-ph", "field.phone");
     const phInput = $("#ph");
-    if (phInput) phInput.placeholder = t("field.phonePlaceholder");
+    if (phInput) phInput.placeholder = phonePlaceholder();
     setTxt("#phone-forgot-msg", "forgot.phoneMsg");
     setTxt("#hint-text", isPhone ? "hint.bodyPhone" : "hint.body");
     setTxt("#c-terms-post", isPhone ? "consent.termsPostPhone" : "consent.termsPost");
@@ -442,6 +478,7 @@
     setTxt("#subtitle", "hero.sub");
     const lsw = $("#lang-switch");
     if (lsw && lsw.setAttribute) lsw.setAttribute("aria-label", t("lang.aria"));
+    renderCountryCodes();
     if (document.querySelectorAll) {
       document.querySelectorAll("#lang-switch button").forEach(b => b.classList.toggle("on", b.dataset.lang === curLang));
       document.querySelectorAll("#tabs button").forEach(b => {
@@ -539,7 +576,7 @@
     if(method==="phone" && mode==="forgot") return;
     $("#go").disabled=true; setErr(null); clearBanner();
     const email=$("#e").value.trim(), password=$("#p").value;
-    const phoneNumber=$("#ph") ? $("#ph").value.trim() : "";
+    const phoneNumber=$("#ph") ? (ccSel ? PC.combine(ccSel.value, $("#ph").value) : $("#ph").value.trim()) : "";
     const isPhoneAuth = method === "phone" && (mode === "login" || mode === "register");
     const routes={login:isPhoneAuth?"sign-in/phone-number":"sign-in/email",register:isPhoneAuth?"sign-up/phone-number":"sign-up/email",forgot:"request-password-reset",reset:"reset-password",resend:"send-verification-email"};
     let body = isPhoneAuth ? {phoneNumber,password} : {email,password};
