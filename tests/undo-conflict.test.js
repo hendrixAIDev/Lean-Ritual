@@ -713,3 +713,175 @@ test('savedWorkout overwrite shows logged weight/rep diff on AI Feedback page 2 
   assert.doesNotMatch(app.appEl.innerHTML, /data-act="undo-force"/, 'Overwrite button must be hidden when target slot no longer matches');
 });
 
+test('savedWorkout undo blocks ambiguous duplicate name-only matches and stripped-plan hadPlan=true snapshots, while allowing unambiguous plan-less restore', async () => {
+  const today = '2026-11-27';
+  const prevDeadliftEx = { name: '硬拉', sets: [{ w: '80', r: '5' }, { w: '80', r: '5' }, { w: '80', r: '5' }] };
+  const prevDeadliftPlan = { name: '硬拉', sets: 3, lo: 4, hi: 6, rest: '3 分钟', inc: 5, orig: '硬拉', why: null };
+
+  // 1. Codex exact probe: plan-less workout with two duplicate 杠铃臀推 rows + legacy entry with prev.hadPlan: true
+  {
+    const app = createApp({
+      lang: 'zh',
+      profileOverrides: {
+        adjustLog: [{
+          id: 'leg-dup-hadplan',
+          date: today,
+          dayDate: today,
+          scope: 'today',
+          kind: 'swap',
+          from: '硬拉',
+          to: '杠铃臀推',
+          sets: 3,
+          lo: 8,
+          hi: 10,
+          prev: { mode: 'savedWorkout', exIdx: 0, hadPlan: true, planItem: prevDeadliftPlan, exercise: prevDeadliftEx },
+          reverted: false,
+          text: '只改今天（已保存记录）：「硬拉」→ 杠铃臀推 3×8–10'
+        }]
+      }
+    });
+    const dupWorkout = {
+      done: true,
+      key: 'pull',
+      exercises: [
+        { name: '杠铃臀推', sets: [{ w: '95', r: '6' }, { w: '95', r: '6' }, { w: '95', r: '6' }] },
+        { name: '杠铃臀推', sets: [{ w: '85', r: '8' }, { w: '85', r: '8' }, { w: '85', r: '8' }] }
+      ]
+    };
+    app.docs.set('days/' + today, { date: today, meals: [], workout: dupWorkout });
+    vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))}); render();`, app.ctx);
+
+    await app.click('undo-adjust', 'leg-dup-hadplan', { src: 'list' });
+    assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+    assert.doesNotMatch(app.appEl.innerHTML, /data-act="undo-force"/, 'must NOT offer Overwrite for duplicate name-only match or stripped plan');
+
+    // Direct forced call must also refuse and leave both rows and reverted flag untouched
+    await vm.runInContext('undoAdjust("leg-dup-hadplan", { force: true, expectedSnap: S.undoConflict?.confirmedSnap })', app.ctx);
+    const saved = app.docs.get('days/' + today).workout;
+    assert.equal(saved.exercises[0].name, '杠铃臀推');
+    assert.equal(saved.exercises[0].sets[0].w, '95');
+    assert.equal(saved.exercises[1].name, '杠铃臀推');
+    assert.equal(saved.exercises[1].sets[0].w, '85');
+    assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, false);
+  }
+
+  // 2. Duplicate name-only rows EVEN when prev.hadPlan: false -> still ambiguous -> Overwrite blocked!
+  {
+    const app = createApp({
+      lang: 'en',
+      profileOverrides: {
+        adjustLog: [{
+          id: 'leg-dup-noplan',
+          date: today,
+          dayDate: today,
+          scope: 'today',
+          kind: 'swap',
+          from: '硬拉',
+          to: '杠铃臀推',
+          sets: 3,
+          lo: 8,
+          hi: 10,
+          prev: { mode: 'savedWorkout', exIdx: 0, hadPlan: false, planItem: null, exercise: prevDeadliftEx },
+          reverted: false,
+          text: '只改今天（已保存记录）：「硬拉」→ 杠铃臀推 3×8–10'
+        }]
+      }
+    });
+    const dupWorkout = {
+      done: true,
+      key: 'pull',
+      exercises: [
+        { name: '杠铃臀推', sets: [{ w: '95', r: '6' }] },
+        { name: '杠铃臀推', sets: [{ w: '85', r: '8' }] }
+      ]
+    };
+    app.docs.set('days/' + today, { date: today, meals: [], workout: dupWorkout });
+    vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))}); render();`, app.ctx);
+
+    await app.click('undo-adjust', 'leg-dup-noplan', { src: 'list' });
+    assert.doesNotMatch(app.appEl.innerHTML, /data-act="undo-force"/, 'ambiguous duplicate rows without orig must block Overwrite');
+    assert.equal(app.docs.get('days/' + today).workout.exercises[0].sets[0].w, '95');
+  }
+
+  // 3. Single matching row on a plan-less workout when prev.hadPlan: true -> cannot restore prev.planItem -> Overwrite blocked!
+  {
+    const app = createApp({
+      lang: 'zh',
+      profileOverrides: {
+        adjustLog: [{
+          id: 'leg-stripped-plan',
+          date: today,
+          dayDate: today,
+          scope: 'today',
+          kind: 'swap',
+          from: '硬拉',
+          to: '杠铃臀推',
+          sets: 3,
+          lo: 8,
+          hi: 10,
+          prev: { mode: 'savedWorkout', exIdx: 0, hadPlan: true, planItem: prevDeadliftPlan, exercise: prevDeadliftEx },
+          reverted: false,
+          text: '只改今天（已保存记录）：「硬拉」→ 杠铃臀推 3×8–10'
+        }]
+      }
+    });
+    app.docs.set('days/' + today, {
+      date: today,
+      meals: [],
+      workout: { done: true, key: 'pull', exercises: [{ name: '杠铃臀推', sets: [{ w: '95', r: '6' }] }] }
+    });
+    vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))}); render();`, app.ctx);
+
+    await app.click('undo-adjust', 'leg-stripped-plan', { src: 'list' });
+    assert.doesNotMatch(app.appEl.innerHTML, /data-act="undo-force"/, 'stripped w.plan when prev.hadPlan=true must block Overwrite');
+    assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, false);
+  }
+
+  // 4. Unambiguous single matching row on a plan-less workout when prev.hadPlan: false -> Overwrite allowed and restores cleanly!
+  {
+    const app = createApp({
+      lang: 'zh',
+      profileOverrides: {
+        adjustLog: [{
+          id: 'leg-unambig-noplan',
+          date: today,
+          dayDate: today,
+          scope: 'today',
+          kind: 'swap',
+          from: '硬拉',
+          to: '杠铃臀推',
+          sets: 3,
+          lo: 8,
+          hi: 10,
+          prev: { mode: 'savedWorkout', exIdx: 0, hadPlan: false, planItem: null, exercise: prevDeadliftEx },
+          reverted: false,
+          text: '只改今天（已保存记录）：「硬拉」→ 杠铃臀推 3×8–10'
+        }]
+      }
+    });
+    app.docs.set('days/' + today, {
+      date: today,
+      meals: [],
+      workout: {
+        done: true,
+        key: 'pull',
+        exercises: [
+          { name: '杠铃臀推', sets: [{ w: '95', r: '6' }] },
+          { name: '杠铃划船', sets: [{ w: '60', r: '6' }] }
+        ]
+      }
+    });
+    vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))}); render();`, app.ctx);
+
+    await app.click('undo-adjust', 'leg-unambig-noplan', { src: 'list' });
+    assert.match(app.appEl.innerHTML, /data-act="undo-force"/);
+    assert.match(app.appEl.innerHTML, /95kg×6/);
+    assert.match(app.appEl.innerHTML, /80kg×5/);
+    await app.click('undo-force', 'leg-unambig-noplan');
+    const restored = app.docs.get('days/' + today).workout;
+    assert.equal(restored.exercises[0].name, '硬拉');
+    assert.equal(restored.exercises[0].sets[0].w, '80');
+    assert.equal(restored.plan, undefined, 'plan-less workout stays cleanly plan-less after restoring hadPlan=false snapshot');
+    assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, true);
+  }
+});

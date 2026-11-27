@@ -3981,10 +3981,20 @@ function verifySavedWorkoutSlot(w, entry){
   if (i == null || i < 0 || i >= w.exercises.length) return -1;
   const ex = w.exercises[i];
   if (!ex) return -1;
-  const pl = Array.isArray(w.plan) ? w.plan[i] : null;
+  const hasPlan = Array.isArray(w.plan) && w.plan.length > 0;
+  if (prev.hadPlan) {
+    if (!hasPlan || w.plan.length !== w.exercises.length || !prev.planItem) return -1;
+  } else if (hasPlan && w.plan.length !== w.exercises.length) {
+    return -1;
+  }
+  const pl = hasPlan ? w.plan[i] : null;
   if (pl?.extra) return -1;
   const orig = entry?.from || prev.planItem?.orig || null;
-  if (pl?.orig && orig) return pl.orig === orig ? i : -1;
+  if (pl?.orig && orig) {
+    if (pl.orig !== orig) return -1;
+    const origMatches = w.plan.filter((item, idx) => !item?.extra && item?.orig === orig && w.exercises[idx]).length;
+    return origMatches === 1 ? i : -1;
+  }
   const expectedNames = new Set([
     orig,
     entry?.to,
@@ -3995,7 +4005,17 @@ function verifySavedWorkoutSlot(w, entry){
   ].filter(Boolean));
   if (!expectedNames.size) return -1;
   const curName = pl?.name || ex.name;
-  return expectedNames.has(curName) || expectedNames.has(ex.name) ? i : -1;
+  if (!expectedNames.has(curName) && !expectedNames.has(ex.name)) return -1;
+  let matchCount = 0;
+  for (let k = 0; k < w.exercises.length; k++) {
+    const rowEx = w.exercises[k];
+    if (!rowEx) continue;
+    const rowPl = hasPlan ? w.plan[k] : null;
+    if (rowPl?.extra) continue;
+    const rowName = rowPl?.name || rowEx.name;
+    if (expectedNames.has(rowName) || expectedNames.has(rowEx.name)) matchCount++;
+  }
+  return matchCount === 1 ? i : -1;
 }
 function liveTargetSnapshot(p, day, entry){
   const prev = entryPrev(entry);

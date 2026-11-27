@@ -509,4 +509,3 @@ test('injury substitutions use grip-specific neutral cues on Gym and Home should
   assert.equal(homeLowback[1].name, '弹力带下拉（门扣或高处固定）');
   assert.equal(homeLowback[1].why, '新手默认');
 });
-
