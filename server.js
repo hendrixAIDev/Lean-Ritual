@@ -35,6 +35,7 @@ const CFG = {
   geminiModel: process.env.GEMINI_MODEL || "gemini-3.8-flash",
   aiGlobalDaily: +(process.env.AI_GLOBAL_DAILY_LIMIT ?? 300),
   aiMaxTokens: +(process.env.AI_MAX_OUTPUT_TOKENS ?? 2000),
+  aiMaxConcurrent: process.env.AI_MAX_CONCURRENT,
   aiDaily: +(process.env.AI_DAILY_LIMIT ?? 60),            // 每人每天 AI 次数上限
   aiUserMonthlyUsd: process.env.AI_USER_MONTHLY_USD,
   aiGlobalMonthlyUsd: process.env.AI_GLOBAL_MONTHLY_USD,

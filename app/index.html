@@ -1367,6 +1367,7 @@ const API_ERR_EN = {
   consent_required:"Please agree to the Terms, Privacy Notice, and data processing consent to continue.",
   consent_version_mismatch:"The Terms of Use or Privacy Notice have been updated. Please reload the page to review the latest version.",
   sampling_disabled:"AI is not enabled on this server.",
+  ai_busy:"AI is busy right now. Please try again in a moment.",
   ai_user_monthly_cap:"You've reached this month's AI limit (resets next month UTC). You can still log meals and workouts manually.",
   ai_global_monthly_cap:"AI features are paused for the rest of this month (UTC) after reaching the app budget. You can still log everything manually.",
   ai_failed:"AI is temporarily unavailable. Try again later or enter manually.",
@@ -1430,6 +1431,7 @@ const API_ERR_ZH = {
   consent_required:"请先同意使用条款、隐私说明及数据处理授权",
   consent_version_mismatch:"使用条款或隐私说明已更新，请刷新页面重新阅读后再同意",
   sampling_disabled:"服务器没有配置 AI",
+  ai_busy:"AI 正在处理中，请稍后再试。",
   ai_user_monthly_cap:"本月 AI 额度已用完，下月（UTC）自动重置。你仍可手动填写饮食和训练记录。",
   ai_global_monthly_cap:"本月全站 AI 额度已用完，AI 功能暂时暂停，下月（UTC）自动恢复。你仍可手动填写记录。",
   ai_failed:"AI 服务暂时不可用，请稍后再试或手动填写",
@@ -1731,7 +1733,7 @@ function formatSaveErr(e){
   const msg = e?.message || (code && hasOwn(API_ERR_ZH, code) ? API_ERR_ZH[code] : "");
   return msg ? "保存失败：" + msg : "保存失败（" + (code || "网络问题") + "），请稍后再试";
 }
-const EXPECTED_FLOW_ERRS = new Set(["cancelled", "session_expired", "network", "sampling_disabled", "not_granted", "rate_limited", "ai_user_monthly_cap", "ai_global_monthly_cap", "doc_quota", "doc_rate_limited"]);
+const EXPECTED_FLOW_ERRS = new Set(["cancelled", "session_expired", "network", "sampling_disabled", "not_granted", "rate_limited", "ai_busy", "ai_user_monthly_cap", "ai_global_monthly_cap", "doc_quota", "doc_rate_limited"]);
 function reportFlowErr(name, e){
   try {
     const code = typeof e?.code === "string" ? e.code.trim() : "";
@@ -2911,7 +2913,7 @@ async function estimateMeal(date, id, manual, prov){
   // 临时估算只在照片是营养成分表时做：饭菜照片只按文字算会偏差很大，不如等看图的结果
   const skipProv = () => prov && !ocrText;
   if (!tryImg && skipProv()) { delete S.busy["meal-"+id]; render(); return; }
-  const hard = c => ["cancelled","not_granted","sampling_disabled","rate_limited","ai_user_monthly_cap","ai_global_monthly_cap","session_expired","refused"].includes(c);
+  const hard = c => ["cancelled","not_granted","sampling_disabled","rate_limited","ai_busy","ai_user_monthly_cap","ai_global_monthly_cap","session_expired","refused"].includes(c);
   try {
     try { r = await ask(tryImg); if (tryImg) S.imgOK = true; }
     catch (e) {

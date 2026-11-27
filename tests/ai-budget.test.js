@@ -1446,6 +1446,7 @@ test("Re-review Finding 1: established per-route billing ceilings clamp max_toke
       aiDaily: 50,
       aiGlobalDaily: 50,
       aiMaxTokens: 300,
+      aiMaxConcurrent: 5,
       aiReasoningEffort: "low",
       aiUserMonthlyUsd: tightCapUsd,
       aiGlobalMonthlyUsd: tightCapUsd,
@@ -1462,15 +1463,16 @@ test("Re-review Finding 1: established per-route billing ceilings clamp max_toke
     });
     try {
       const results = await Promise.allSettled(
-        Array.from({ length: 5 }, () => proxy({ id: "u_conc" }, { messages: [{ content: "test" }] }))
+        Array.from({ length: 5 }, (_, i) => proxy({ id: `u_conc_${i}` }, { messages: [{ content: "test" }] }))
       );
       assert.equal(results.filter(r => r.status === "fulfilled").length, 2);
       assert.equal(results.filter(r => r.status === "rejected").length, 3);
       assert.equal(calls, 2);
-      const uSpentUsd = nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?").get("u_conc", "2026-11").cost_nanos);
       const gSpentUsd = nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_global_monthly_usage WHERE month = ?").get("2026-11").cost_nanos);
-      assert.ok(uSpentUsd <= tightCapUsd, `user spend ${uSpentUsd} must stay strictly <= cap ${tightCapUsd}`);
       assert.ok(gSpentUsd <= tightCapUsd, `global spend ${gSpentUsd} must stay strictly <= cap ${tightCapUsd}`);
+      for (const row of db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE month = ?").all("2026-11")) {
+        assert.ok(nanosToUsd(row.cost_nanos) <= tightCapUsd, "each user's spend must stay strictly <= cap");
+      }
     } finally {
       db.close();
     }
@@ -1526,9 +1528,13 @@ test("Re-review Finding 1: established per-route billing ceilings clamp max_toke
       const inflight = proxy({ id: "u_vio" }, { messages: [{ content: "test" }] });
       await enteredP;
 
-      // Second concurrent call MUST be blocked while first call holds its bounded reservation
+      // Second concurrent call from the same user gets 429 ai_busy, and another user hits global cap!
       await assert.rejects(
         proxy({ id: "u_vio" }, { messages: [{ content: "competing" }] }),
+        e => e.status === 429 && e.code === "ai_busy"
+      );
+      await assert.rejects(
+        proxy({ id: "u_vio_other" }, { messages: [{ content: "competing" }] }),
         e => e.status === 503 && e.code === "ai_global_monthly_cap"
       );
       assert.equal(calls, 1);
@@ -1751,6 +1757,218 @@ test("Re-review Finding 2: slow pending alert, midnight crossing during payload 
       assert.equal(roundUsd(nanosToUsd(janRow.cost_nanos)), 1.5, "re-admitted 2027 call must settle at 2027 $1.50/1M rate");
     } finally {
       db.close();
+    }
+  }
+});
+
+test("Concurrency limits: 1 in-flight call per user (blocks Codex two-concurrent-attempts repro) and global AI_MAX_CONCURRENT cap (default 4, env-configurable)", async t => {
+  // 1. Codex fourth-review reproduction: two simultaneous calls from the same user under $1 user & global caps
+  //    where each reserves $0.456 ($0.912 combined <= $1.00!) and an overbilling provider settles $1.10 per call.
+  //    Per-user concurrency = 1 MUST reject the 2nd call immediately with 429 ai_busy (zero provider call)
+  //    so total spend is $1.10 (1 call), never $2.20!
+  {
+    const db = makeDb();
+    const clock = Date.parse("2026-11-26T12:00:00.000Z");
+    const pricing = parsePricing({ AI_INPUT_PRICE_PER_1M: "1000", AI_OUTPUT_PRICE_PER_1M: "1000" });
+    let calls = 0;
+    let entered;
+    const enteredP = new Promise(r => { entered = r; });
+    let release;
+    const releaseP = new Promise(r => { release = r; });
+
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 100, // reserve = (292 + 164) = 456 tokens = $0.456 ($0.912 for 2 calls <= $1.00 cap!)
+      aiUserMonthlyUsd: 1.0,
+      aiGlobalMonthlyUsd: 1.0,
+      aiPricing: pricing,
+      getUserLang: u => (u.id === "u_en" ? "en" : "zh"),
+      now: () => clock,
+      log: () => {}
+    }, async () => {
+      calls++;
+      entered();
+      await releaseP;
+      return makeOkRes("overbill", { prompt_tokens: 200, completion_tokens: 900 }); // $1.10
+    });
+
+    try {
+      assert.equal(proxy.maxConcurrent, 4, "default AI_MAX_CONCURRENT must be 4");
+      const singleReserveUsd = nanosToUsd(proxy.estimateAttemptReserveNanos("openrouter", [{ role: "user", content: "test" }], [], clock).reserveNanos);
+      assert.ok(singleReserveUsd * 2 <= 1.0, "two reservations alone would fit under $1.00 without per-user concurrency=1");
+
+      const first = proxy({ id: "u_dup" }, { messages: [{ content: "test" }] });
+      await enteredP;
+
+      // Second concurrent call from the same user gets friendly 429 ai_busy without touching provider or DB
+      await assert.rejects(
+        proxy({ id: "u_dup" }, { messages: [{ content: "test" }] }),
+        e => e.status === 429 && e.code === "ai_busy" && /稍后再试/.test(e.message)
+      );
+      await assert.rejects(
+        proxy({ id: "u_dup", lang: "en" }, { messages: [{ content: "test" }] }),
+        e => e.status === 429 && e.code === "ai_busy" && /busy.*try again/i.test(e.message) && !/[\u3400-\u9fff]/.test(e.message)
+      );
+      assert.equal(calls, 1, "second concurrent same-user call must never hit provider");
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ai_budget_reservations WHERE uid = ?").get("u_dup").n, 1);
+
+      release();
+      await first;
+
+      // Settled spend is $1.10 (one call, NOT $2.20), and subsequent calls are blocked by monthly cap
+      const uSpent = roundUsd(nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_monthly_usage WHERE uid = ? AND month = ?").get("u_dup", "2026-11").cost_nanos));
+      const gSpent = roundUsd(nanosToUsd(db.prepare("SELECT cost_nanos FROM ai_global_monthly_usage WHERE month = ?").get("2026-11").cost_nanos));
+      assert.equal(uSpent, 1.1);
+      assert.equal(gSpent, 1.1);
+
+      await assert.rejects(
+        proxy({ id: "u_dup" }, { messages: [{ content: "after" }] }),
+        e => e.status === 503 && e.code === "ai_global_monthly_cap"
+      );
+      assert.equal(calls, 1);
+    } finally {
+      db.close();
+    }
+  }
+
+  // 2. Per-user slot is always released after success AND after provider error so the user can retry cleanly
+  {
+    const db = makeDb();
+    let step = 0;
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 100,
+      log: () => {}
+    }, async () => {
+      step++;
+      if (step === 1) throw new Error("upstream boom");
+      return makeOkRes("recovered", { prompt_tokens: 10, completion_tokens: 10 });
+    });
+    try {
+      await assert.rejects(proxy({ id: "u_rel" }, { messages: [{ content: "fail" }] }), e => e.code === "ai_failed");
+      const ok = await proxy({ id: "u_rel" }, { messages: [{ content: "retry" }] });
+      assert.deepEqual(ok, { text: "recovered", truncated: false });
+      assert.equal(step, 2);
+    } finally {
+      db.close();
+    }
+  }
+
+  // 3. Global AI_MAX_CONCURRENT limit (default 4, configurable via env):
+  //    distinct users up to maxConcurrent enter; the next distinct user gets 429 ai_busy (zero provider call);
+  //    releasing one slot immediately admits the next user.
+  for (const configured of [undefined, 2]) {
+    const expectedLimit = configured ?? 4;
+    const db = makeDb();
+    const gates = [];
+    const entered = [];
+    let calls = 0;
+
+    const proxy = createAIProxy(db, {
+      aiProvider: "openrouter",
+      orKey: "or-key",
+      orModel: "google/gemini-3.8-flash",
+      aiDaily: 50,
+      aiGlobalDaily: 50,
+      aiMaxTokens: 100,
+      ...(configured !== undefined ? { aiMaxConcurrent: configured } : {}),
+      log: () => {}
+    }, async () => {
+      const idx = calls++;
+      let resolveGate;
+      const gateP = new Promise(r => { resolveGate = r; });
+      gates.push(resolveGate);
+      if (entered[idx]) entered[idx]();
+      await gateP;
+      return makeOkRes(`ok-${idx}`, { prompt_tokens: 10, completion_tokens: 10 });
+    });
+
+    try {
+      assert.equal(proxy.maxConcurrent, expectedLimit);
+      const inflight = [];
+      for (let i = 0; i < expectedLimit; i++) {
+        let onEnter;
+        const pEnter = new Promise(r => { onEnter = r; });
+        entered[i] = onEnter;
+        inflight.push(proxy({ id: `u_glob_${i}` }, { messages: [{ content: `req-${i}` }] }));
+        await pEnter;
+      }
+      assert.equal(calls, expectedLimit);
+
+      // (maxConcurrent + 1)-th distinct user MUST get 429 ai_busy with zero provider call!
+      await assert.rejects(
+        proxy({ id: "u_glob_overflow", lang: "en" }, { messages: [{ content: "overflow" }] }),
+        e => e.status === 429 && e.code === "ai_busy" && /busy.*try again/i.test(e.message)
+      );
+      assert.equal(calls, expectedLimit, "overflow user must never reach provider");
+
+      // Release one slot -> a new user is admitted immediately!
+      gates[0]();
+      await inflight[0];
+
+      let onExtraEnter;
+      const pExtra = new Promise(r => { onExtraEnter = r; });
+      entered[expectedLimit] = onExtraEnter;
+      const extra = proxy({ id: "u_glob_after" }, { messages: [{ content: "after" }] });
+      await pExtra;
+      assert.equal(calls, expectedLimit + 1);
+
+      for (let i = 1; i < gates.length; i++) gates[i]();
+      await Promise.all([...inflight.slice(1), extra]);
+    } finally {
+      db.close();
+    }
+  }
+
+  // 4. Validation of AI_MAX_CONCURRENT (both in createAIProxy and server.js startup) + UI sampleErr("ai_busy") in zh & en
+  for (const bad of [0, -1, 1.5, 65, "bogus"]) {
+    const db = makeDb();
+    try {
+      assert.throws(
+        () => createAIProxy(db, { aiDaily: 10, aiGlobalDaily: 10, aiMaxTokens: 100, aiMaxConcurrent: bad, orKey: "k" }),
+        /AI_MAX_CONCURRENT/
+      );
+    } finally {
+      db.close();
+    }
+  }
+  const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-ai-conc-env-"));
+  t.after(() => fs.rmSync(envDir, { recursive: true, force: true }));
+  const badSrv = spawnSync(process.execPath, ["server.js"], {
+    cwd: ROOT,
+    env: { ...process.env, DATA_DIR: envDir, AI_MAX_CONCURRENT: "0" },
+    encoding: "utf8",
+    timeout: 5000
+  });
+  assert.notEqual(badSrv.status, 0);
+  assert.match(badSrv.stderr, /AI_MAX_CONCURRENT/);
+
+  const htmlSrc = fs.readFileSync(path.join(ROOT, "app/index.html"), "utf8");
+  const appScript = htmlSrc.match(/<script>([\s\S]*?)<\/script>/)[1].split("/* ============ 启动 ============ */")[0];
+  for (const lang of ["zh", "en"]) {
+    const ctx = vm.createContext({
+      window: { ritual: { hosted: true }, location: { hostname: "leanritual.app", search: "" } },
+      location: { hostname: "leanritual.app", search: "" },
+      document: { documentElement: { lang: lang === "en" ? "en" : "zh-CN" }, addEventListener() {}, querySelector() { return { innerHTML: "" }; } },
+      localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+      console, URL, URLSearchParams, Date, setTimeout, clearTimeout, Math, JSON, Set, Map, Array, Object, Number, String, Boolean, RegExp
+    });
+    vm.runInContext(appScript, ctx);
+    vm.runInContext(`S.explicitLang = ${JSON.stringify(lang)};`, ctx);
+    const msg = vm.runInContext(`sampleErr({ code: "ai_busy" })`, ctx);
+    if (lang === "en") {
+      assert.match(msg, /busy.*try again/i);
+      assert.doesNotMatch(msg, /[\u3400-\u9fff]/);
+    } else {
+      assert.match(msg, /稍后再试/);
     }
   }
 });
