@@ -42,7 +42,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright" --no-audit --no-fund playwright@1.58.2
           "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps chromium
-          NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node --test --test-concurrency=1 tests/landing-browser.test.js tests/site-browser.test.js tests/phone-rules.test.js
+          NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node --test --test-concurrency=1 tests/landing-browser.test.js tests/site-browser.test.js tests/phone-rules.test.js tests/invite-requests.test.js
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Package tested runtime
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

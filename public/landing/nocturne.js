@@ -1,6 +1,7 @@
 // Landing page behaviour: zh/en copy swap without reload, the intro video when the
-// server includes it (fetched only on play), scroll reveals and count-ups, and the
-// scroll story. Links are left alone, and everything reads fine without this file.
+// server includes it (fetched only on play), scroll reveals and count-ups, the
+// scroll story, and the on-page invite-request modal. Navigation links are left
+// alone, and everything reads fine without this file.
 // boot.js has already chosen the language and set html.js.
 (() => {
   "use strict";
@@ -12,7 +13,7 @@
       "nav.signin": "登录", beta: "邀请制内测", "h.full": "一个 App，助你更瘦、更强、更好", "h.pre": "一个 App，助你",
       "h.l2": "更瘦、更强、更好",
       lede: "训练、饮食、体重，需要的都在这里。计划按你的目标定制，AI 帮你估餐和复盘。",
-      "cta.invite": "用邀请码注册", "cta.signin": "登录", "cta.ask": "还没有邀请码？发邮件申请",
+      "cta.invite": "用邀请码注册", "cta.signin": "登录", "cta.ask": "申请内测",
       "st1.k": "今天建议", "st2.k": "7 天平均", "st3.k": "AI 估算",
       "video.t": "看看薄肌日课怎么用", "video.d": "从建档到复盘，一次看完一天怎么用。", "video.play": "播放介绍视频", "video.meta": "中文配音",
       "video.error": "视频暂时无法播放，请稍后再试。",
@@ -27,17 +28,42 @@
       "x1.t": "你的数据，随时带走", "x1.d": "记录和照片，都能导出。", "x2.t": "像 App 一样放在主屏幕", "x2.d": "不用下载安装，浏览器打开就能用。", "x3.d": "中英文随时切换。",
       "ai.t": "AI 帮你做三件事", "ai.1t": "估算一餐", "ai.1d": "看餐食照片或文字，估算热量和蛋白质，结果可以改。", "ai.2t": "推荐替代动作", "ai.2d": "想换动作时，最多推荐 3 个替代，用不用由你定。", "ai.3t": "帮你复盘", "ai.3d": "你提出时，它看最近 14 天的记录给建议，可采纳，也可撤销。",
       "ai.note": "起始的训练计划和热量目标由公式计算，不用 AI。AI 结果仅供参考，不构成医疗建议。",
-      "end.t": "更瘦、更强、更好，\n从这里开始", "end.d": "薄肌日课正在邀请制内测。有邀请码就能注册；还没有的话，给我们发封邮件。",
+      "end.t": "更瘦、更强、更好，\n从这里开始", "end.d": "薄肌日课正在邀请制内测。有邀请码就能注册；还没有的话，可以申请内测。",
       "foot.aria": "页脚", "foot.privacy": "隐私说明", "foot.terms": "使用条款", "foot.guide": "训练与饮食纲领", "foot.contact": "联系我们", "foot.op": "© 2026 杰瑞智能技术服务部",
-      mailSubject: "申请薄肌日课内测邀请", mailBody: "你好，我想申请薄肌日课的内测邀请。\n\n我的称呼：\n想达成的目标：\n",
-      "alt.workout": "训练页：按上次记录建议今天的重量"
+      mailSubject: "薄肌日课咨询与联系", mailBody: "你好，我想咨询薄肌日课相关事宜：\n\n",
+      "alt.workout": "训练页：按上次记录建议今天的重量",
+      "apply.title": "申请内测", "apply.close": "关闭",
+      "apply.intro": "留下联系方式和目标，我们会尽快把专属邀请链接发给你。",
+      "apply.name": "称呼", "apply.namePh": "怎么称呼你",
+      "apply.contact": "联系方式", "apply.phone": "手机号", "apply.email": "邮箱",
+      "apply.ccAria": "国家或地区代码", "apply.ccCommon": "常用", "apply.ccAll": "全部国家和地区",
+      "apply.phoneFallbackPh": "手机号（含国家代码）", "apply.phoneNationalPh": "手机号（不含国家代码）",
+      "apply.emailPh": "name@example.com",
+      "apply.goal": "想达成的目标", "apply.goalPh": "例如：减脂、增肌或保持规律训练",
+      "apply.note": "补充说明（选填）", "apply.notePh": "选填：微信号、方便联系的时间或其他说明",
+      "apply.submit": "提交申请", "apply.submitting": "提交中…",
+      "apply.privPre": "提交即同意按", "apply.privLink": "《隐私说明》", "apply.privPost": "处理申请信息",
+      "apply.doneTitle": "收到申请",
+      "apply.doneMsg": "已收到你的内测申请！我们会尽快把专属邀请链接发到你留下的联系方式。",
+      "apply.doneBtn": "完成",
+      "apply.err.name_required": "请填写你的称呼",
+      "apply.err.name_too_long": "称呼最多 80 字",
+      "apply.err.invalid_contact_kind": "请选择手机号或邮箱",
+      "apply.err.invalid_phone": "请填写有效的手机号（中国大陆 11 位或含国家代码）",
+      "apply.err.invalid_email": "请填写有效的邮箱地址",
+      "apply.err.goal_required": "请填写你想达成的目标",
+      "apply.err.goal_too_long": "目标最多 500 字",
+      "apply.err.note_too_long": "补充说明最多 500 字",
+      "apply.err.rate_limited": "提交太频繁了，请稍后再试",
+      "apply.err.network": "网络暂时无法连接，请稍后重试",
+      "apply.err.fallback": "提交失败，请稍后再试"
     },
     en: {
       title: "Lean Ritual · One app to get leaner, stronger, better", brand: "Lean Ritual", "lang.aria": "Language",
       "nav.signin": "Sign in", beta: "Invite-only beta", "h.full": "One app to get leaner, stronger, better", "h.pre": "One app to get",
       "h.l2": "leaner, stronger, better",
       lede: "Workouts, meals and weight, all in one place. A plan built around your goal, with AI help for meals and reviews.",
-      "cta.invite": "Use your invite", "cta.signin": "Sign in", "cta.ask": "No invite yet? Ask for one",
+      "cta.invite": "Use your invite", "cta.signin": "Sign in", "cta.ask": "Request an invite",
       "st1.k": "Today", "st2.k": "7-day avg", "st3.k": "AI estimate",
       "video.t": "See Lean Ritual in action", "video.d": "From setup to coach review: one day with the app.", "video.play": "Play the intro video", "video.meta": "English voiceover",
       "video.error": "The video can't play right now. Please try again later.",
@@ -52,10 +78,35 @@
       "x1.t": "Your data, yours to keep", "x1.d": "Export your records and photos.", "x2.t": "On your home screen", "x2.d": "Nothing to install. It opens right in your browser.", "x3.d": "Switch languages anytime.",
       "ai.t": "Three things AI helps with", "ai.1t": "Estimates a meal", "ai.1d": "Calories and protein from a photo or a few words. You can edit the result.", "ai.2t": "Suggests exercise swaps", "ai.2d": "Want a different exercise? Get up to 3 options and pick one, or none.", "ai.3t": "Reviews your last 14 days", "ai.3d": "When you ask, it suggests changes you can apply or undo.",
       "ai.note": "Your starting workouts and calorie target come from formulas, not AI. AI results are for reference only, not medical advice.",
-      "end.t": "Leaner, stronger, better\nstarts here", "end.d": "Lean Ritual is in invite-only beta. Have a code? Sign up. No code yet? Send us an email.",
+      "end.t": "Leaner, stronger, better\nstarts here", "end.d": "Lean Ritual is in invite-only beta. Have a code? Sign up. No code yet? Request an invite.",
       "foot.aria": "Footer", "foot.privacy": "Privacy", "foot.terms": "Terms", "foot.guide": "Training guide", "foot.contact": "Contact", "foot.op": "© 2026 Jierui Intelligent Technology Service Department",
-      mailSubject: "Lean Ritual invite request", mailBody: "Hi, I'd like an invite to the Lean Ritual beta.\n\nName:\nMy goal:\n",
-      "alt.workout": "Workout screen suggesting today's weight from the last session"
+      mailSubject: "Lean Ritual inquiry", mailBody: "Hi, I have a question about Lean Ritual:\n\n",
+      "alt.workout": "Workout screen suggesting today's weight from the last session",
+      "apply.title": "Request an invite", "apply.close": "Close",
+      "apply.intro": "Share your contact and goal, and we'll send you a personal invite link soon.",
+      "apply.name": "Name or nickname", "apply.namePh": "What should we call you?",
+      "apply.contact": "Contact", "apply.phone": "Phone", "apply.email": "Email",
+      "apply.ccAria": "Country or region code", "apply.ccCommon": "Common", "apply.ccAll": "All countries and regions",
+      "apply.phoneFallbackPh": "Phone number with country code", "apply.phoneNationalPh": "Phone number",
+      "apply.emailPh": "name@example.com",
+      "apply.goal": "Your goal", "apply.goalPh": "e.g. lose fat, build muscle, or stay consistent",
+      "apply.note": "Note (optional)", "apply.notePh": "Optional: WeChat ID, preferred time, or extra context",
+      "apply.submit": "Submit request", "apply.submitting": "Sending…",
+      "apply.privPre": "Submitting agrees to processing your request under our ", "apply.privLink": "Privacy Notice", "apply.privPost": ".",
+      "apply.doneTitle": "Request received",
+      "apply.doneMsg": "Request received! We'll send your personal invite link to the contact you provided soon.",
+      "apply.doneBtn": "Done",
+      "apply.err.name_required": "Please enter your name or nickname.",
+      "apply.err.name_too_long": "Name must be 80 characters or fewer.",
+      "apply.err.invalid_contact_kind": "Please choose phone or email.",
+      "apply.err.invalid_phone": "Please enter a valid phone number.",
+      "apply.err.invalid_email": "Please enter a valid email address.",
+      "apply.err.goal_required": "Please tell us your goal.",
+      "apply.err.goal_too_long": "Goal must be 500 characters or fewer.",
+      "apply.err.note_too_long": "Note must be 500 characters or fewer.",
+      "apply.err.rate_limited": "Too many requests. Please try again later.",
+      "apply.err.network": "Cannot reach the server. Please try again.",
+      "apply.err.fallback": "Could not submit your request. Please try again."
     }
   };
   const root = document.documentElement;
@@ -97,6 +148,300 @@
     wide.addEventListener("change", () => { if (film.paused) resetFilm(); });
   }
 
+  /* ---------- Invite-request modal ---------- */
+  const PC = window.ritualPhone || null;
+  const applyModal = document.getElementById("apply-modal");
+  const applyDialog = applyModal ? applyModal.querySelector(".apply-dialog") : null;
+  const applyForm = document.getElementById("apply-form");
+  const applyFields = document.getElementById("apply-fields");
+  const applyDone = document.getElementById("apply-done");
+  const applyDoneTitle = document.getElementById("apply-done-title");
+  const applyName = document.getElementById("apply-name");
+  const applyMethod = document.getElementById("apply-method");
+  const applyPhoneWrap = document.getElementById("apply-phone-wrap");
+  const applyEmailWrap = document.getElementById("apply-email-wrap");
+  const applyCcWrap = document.getElementById("apply-cc-wrap");
+  const applyCc = document.getElementById("apply-cc");
+  const applyPhone = document.getElementById("apply-phone");
+  const applyEmail = document.getElementById("apply-email");
+  const applyGoal = document.getElementById("apply-goal");
+  const applyNote = document.getElementById("apply-note");
+  const applyWebsite = document.getElementById("apply-website");
+  const applyErr = document.getElementById("apply-err");
+  const applySubmit = document.getElementById("apply-submit");
+
+  let contactKind = lang === "en" ? "email" : "phone";
+  let contactKindChosen = false;
+  let ccChoice = null;
+  let applyErrKey = null;
+  let applySubmitting = false;
+  let applySubmitted = false;
+  let lastTrigger = null;
+
+  function applyPhonePlaceholder() {
+    const d = I18N[lang];
+    return PC && applyCc ? (PC.example(applyCc.value) || d["apply.phoneNationalPh"]) : d["apply.phoneFallbackPh"];
+  }
+
+  function renderApplyCountryCodes() {
+    if (!PC || !applyCc || !applyCcWrap) return;
+    const d = I18N[lang];
+    const groups = PC.options(lang);
+    const makeGroup = (label, items) => {
+      const g = document.createElement("optgroup");
+      g.label = label;
+      for (const o of items) g.appendChild(new Option(o.label, o.iso));
+      return g;
+    };
+    applyCc.replaceChildren(
+      makeGroup(d["apply.ccCommon"], groups.common),
+      makeGroup(d["apply.ccAll"], groups.rest)
+    );
+    applyCc.value = ccChoice || PC.defaultFor(lang);
+    applyCcWrap.hidden = false;
+    if (applyPhone) {
+      applyPhone.autocomplete = "tel-national";
+      applyPhone.placeholder = applyPhonePlaceholder();
+    }
+  }
+
+  function syncContactKind() {
+    const isPhone = contactKind === "phone";
+    if (applyPhoneWrap) applyPhoneWrap.hidden = !isPhone;
+    if (applyEmailWrap) applyEmailWrap.hidden = isPhone;
+    if (applyMethod) {
+      for (const btn of applyMethod.querySelectorAll("button[data-kind]")) {
+        btn.setAttribute("aria-pressed", String(btn.dataset.kind === contactKind));
+      }
+    }
+    if (applyPhone) applyPhone.placeholder = applyPhonePlaceholder();
+    if (applyEmail) applyEmail.placeholder = I18N[lang]["apply.emailPh"];
+  }
+
+  function clearInvalidMarks() {
+    for (const el of [applyName, applyPhone, applyEmail, applyGoal, applyNote]) {
+      if (el) el.removeAttribute("aria-invalid");
+    }
+  }
+
+  function setApplyError(key, fieldEl) {
+    applyErrKey = key || null;
+    if (applyErr) applyErr.textContent = applyErrKey ? (I18N[lang][applyErrKey] || I18N[lang]["apply.err.fallback"]) : "";
+    clearInvalidMarks();
+    if (fieldEl) {
+      fieldEl.setAttribute("aria-invalid", "true");
+      fieldEl.focus();
+    }
+  }
+
+  function resetApplyAfterSuccess() {
+    if (!applyForm) return;
+    applyForm.reset();
+    applySubmitted = false;
+    applyErrKey = null;
+    if (applyErr) applyErr.textContent = "";
+    clearInvalidMarks();
+    if (applyFields) applyFields.hidden = false;
+    if (applyDone) applyDone.hidden = true;
+    contactKindChosen = false;
+    contactKind = lang === "en" ? "email" : "phone";
+    ccChoice = null;
+    renderApplyCountryCodes();
+    syncContactKind();
+  }
+
+  function openApply(triggerEl) {
+    if (!applyModal) return;
+    lastTrigger = triggerEl || document.activeElement;
+    if (applySubmitted) resetApplyAfterSuccess();
+    applyModal.hidden = false;
+    document.body.classList.add("apply-open");
+    if (applySubmitted && applyDoneTitle) applyDoneTitle.focus();
+    else if (applyName) applyName.focus();
+  }
+
+  function closeApply() {
+    if (!applyModal || applyModal.hidden) return;
+    applyModal.hidden = true;
+    document.body.classList.remove("apply-open");
+    const target = lastTrigger;
+    lastTrigger = null;
+    if (target && typeof target.focus === "function" && document.contains(target)) {
+      target.focus();
+    }
+  }
+
+  function applyFocusable() {
+    if (!applyDialog) return [];
+    return [...applyDialog.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.closest("[hidden]") && !el.closest('[aria-hidden="true"]'));
+  }
+
+  if (applyModal && applyForm) {
+    for (const btn of document.querySelectorAll("[data-open-apply]")) {
+      btn.addEventListener("click", () => openApply(btn));
+    }
+    for (const el of applyModal.querySelectorAll("[data-close-apply]")) {
+      el.addEventListener("click", closeApply);
+    }
+    if (applyMethod) {
+      applyMethod.addEventListener("click", e => {
+        const btn = e.target.closest("button[data-kind]");
+        if (!btn) return;
+        const nextKind = btn.dataset.kind === "email" ? "email" : "phone";
+        contactKindChosen = true;
+        if (nextKind !== contactKind) {
+          contactKind = nextKind;
+          syncContactKind();
+          setApplyError(null);
+        }
+      });
+    }
+    if (PC && applyCc) {
+      applyCc.addEventListener("change", () => {
+        ccChoice = applyCc.value;
+        if (applyPhone) applyPhone.placeholder = applyPhonePlaceholder();
+      });
+    }
+    if (applyPhone) {
+      applyPhone.addEventListener("input", () => {
+        contactKindChosen = true;
+        if (PC && applyCc) {
+          const parts = PC.split(applyPhone.value, applyCc.value);
+          if (parts && parts.iso !== applyCc.value) {
+            ccChoice = parts.iso;
+            applyCc.value = parts.iso;
+            applyPhone.placeholder = applyPhonePlaceholder();
+          } else if (parts) {
+            ccChoice = parts.iso;
+          }
+        }
+      });
+    }
+    if (applyEmail) {
+      applyEmail.addEventListener("input", () => { contactKindChosen = true; });
+    }
+
+    document.addEventListener("keydown", e => {
+      if (applyModal.hidden) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeApply();
+        return;
+      }
+      if (e.key === "Tab") {
+        const items = applyFocusable();
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !applyDialog.contains(document.activeElement))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    const CODE_TO_ERR = {
+      name_required: "apply.err.name_required",
+      name_too_long: "apply.err.name_too_long",
+      invalid_contact_kind: "apply.err.invalid_contact_kind",
+      invalid_phone: "apply.err.invalid_phone",
+      invalid_email: "apply.err.invalid_email",
+      goal_required: "apply.err.goal_required",
+      goal_too_long: "apply.err.goal_too_long",
+      note_too_long: "apply.err.note_too_long",
+      rate_limited: "apply.err.rate_limited"
+    };
+
+    applyForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      if (applySubmitting) return;
+      setApplyError(null);
+
+      const nameVal = applyName ? applyName.value.trim() : "";
+      const goalVal = applyGoal ? applyGoal.value.trim() : "";
+      const noteVal = applyNote ? applyNote.value.trim() : "";
+      const websiteVal = applyWebsite ? applyWebsite.value : "";
+
+      if (!nameVal) { setApplyError("apply.err.name_required", applyName); return; }
+      if (Array.from(nameVal).length > 80) { setApplyError("apply.err.name_too_long", applyName); return; }
+
+      let contactVal = "";
+      if (contactKind === "phone") {
+        const rawPhone = applyPhone ? applyPhone.value.trim() : "";
+        contactVal = PC && applyCc ? PC.toE164(applyCc.value, rawPhone) : rawPhone;
+        const validPhone = PC ? Boolean(PC.normalizePhone(contactVal)) : /^\+?[0-9\s\-().]{7,20}$/.test(contactVal);
+        if (!contactVal || !validPhone) { setApplyError("apply.err.invalid_phone", applyPhone); return; }
+      } else {
+        contactVal = applyEmail ? applyEmail.value.trim().toLowerCase() : "";
+        if (!contactVal || contactVal.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactVal)) {
+          setApplyError("apply.err.invalid_email", applyEmail);
+          return;
+        }
+      }
+
+      if (!goalVal) { setApplyError("apply.err.goal_required", applyGoal); return; }
+      if (Array.from(goalVal).length > 500) { setApplyError("apply.err.goal_too_long", applyGoal); return; }
+      if (Array.from(noteVal).length > 500) { setApplyError("apply.err.note_too_long", applyNote); return; }
+
+      applySubmitting = true;
+      if (applySubmit) {
+        applySubmit.disabled = true;
+        applySubmit.textContent = I18N[lang]["apply.submitting"];
+      }
+      try {
+        let res;
+        try {
+          res = await fetch("/api/invite-requests", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Bojin": "1",
+              "X-Ritual-Lang": lang
+            },
+            body: JSON.stringify({
+              name: nameVal,
+              contactKind,
+              contactValue: contactVal,
+              goal: goalVal,
+              note: noteVal,
+              website: websiteVal,
+              lang
+            })
+          });
+        } catch {
+          setApplyError("apply.err.network");
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 429) { setApplyError("apply.err.rate_limited"); return; }
+          const mapped = data && typeof data.error === "string" && Object.prototype.hasOwnProperty.call(CODE_TO_ERR, data.error)
+            ? CODE_TO_ERR[data.error]
+            : "apply.err.fallback";
+          setApplyError(mapped);
+          return;
+        }
+        applySubmitted = true;
+        setApplyError(null);
+        if (applyFields) applyFields.hidden = true;
+        if (applyDone) applyDone.hidden = false;
+        if (applyDoneTitle) applyDoneTitle.focus();
+      } catch {
+        setApplyError("apply.err.fallback");
+      } finally {
+        applySubmitting = false;
+        if (applySubmit) {
+          applySubmit.disabled = false;
+          applySubmit.textContent = I18N[lang]["apply.submit"];
+        }
+      }
+    });
+  }
+
   function apply(next) {
     lang = next;
     const d = I18N[next];
@@ -105,6 +450,7 @@
     document.title = d.title;
     for (const el of document.querySelectorAll("[data-i]")) { const v = d[el.dataset.i]; if (v != null) el.textContent = v; }
     for (const el of document.querySelectorAll("[data-i-aria]")) { const v = d[el.dataset.iAria]; if (v) el.setAttribute("aria-label", v); }
+    for (const el of document.querySelectorAll("[data-i-placeholder]")) { const v = d[el.dataset.iPlaceholder]; if (v != null) el.placeholder = v; }
     for (const img of document.querySelectorAll("img[data-shot]")) {
       img.src = "/landing/img/" + next + "-" + img.dataset.shot + ".webp";
       if (img.hasAttribute("data-alt")) img.alt = d["alt." + img.dataset.shot];
@@ -112,6 +458,11 @@
     const mailto = "mailto:" + CONTACT + "?subject=" + encodeURIComponent(d.mailSubject) + "&body=" + encodeURIComponent(d.mailBody);
     for (const a of document.querySelectorAll("a[data-ask]")) a.href = mailto;
     for (const b of document.querySelectorAll("button[data-lang]")) b.setAttribute("aria-pressed", String(b.dataset.lang === next));
+    if (!contactKindChosen) contactKind = next === "en" ? "email" : "phone";
+    renderApplyCountryCodes();
+    syncContactKind();
+    if (applySubmit && applySubmitting) applySubmit.textContent = d["apply.submitting"];
+    if (applyErrKey && applyErr) applyErr.textContent = d[applyErrKey] || d["apply.err.fallback"];
     if (film && film.getAttribute("src") && !film.paused) film.pause();
     resetFilm();
     if (note) note.textContent = "";
@@ -126,6 +477,15 @@
     });
   }
   apply(lang);
+
+  // Auto-open the invite-request modal when linked via #apply or ?apply=1.
+  function wantsApply() {
+    try {
+      return window.location.hash === "#apply" || new URLSearchParams(window.location.search).get("apply") === "1";
+    } catch { return false; }
+  }
+  if (wantsApply()) openApply();
+  window.addEventListener("hashchange", () => { if (window.location.hash === "#apply") openApply(); });
 
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   function countUp(el) {

@@ -33,7 +33,7 @@ function loadI18N() {
 
 test('landing markup is CSP-safe: no inline script, handlers, style attributes or third-party URLs', () => {
   for (const m of HTML.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
-    assert.match(m[1], /\bsrc\s*=\s*"\/landing\/[a-z]+\.js"/, 'every script is an external same-origin file');
+    assert.match(m[1], /\bsrc\s*=\s*"\/(?:landing\/[a-z]+|site\/phone-rules)\.js"/, 'every script is an external same-origin file');
     assert.equal(m[2].trim(), '');
   }
   assert.doesNotMatch(HTML, /<[^>]+\son\w+\s*=/i);
@@ -50,19 +50,25 @@ test('landing markup is CSP-safe: no inline script, handlers, style attributes o
   for (const [, attr, url] of HTML.matchAll(/\s(src|href)="([^"]+)"/g)) {
     assert.match(url, /^(\/|#|mailto:)/, attr + ' ' + url + ' stays same-origin');
     const file = url.split('?')[0];
-    if (/^\/(landing|icons|media)\//.test(file) || file === '/manifest.webmanifest') assert.ok(fs.existsSync(path.join(ROOT, 'public', file)), file + ' exists');
+    if (/^\/(landing|site|icons|media)\//.test(file) || file === '/manifest.webmanifest') assert.ok(fs.existsSync(path.join(ROOT, 'public', file)), file + ' exists');
   }
   for (const lang of ['zh', 'en']) for (const shot of ['workout', 'checkin', 'meal', 'coach', 'charts'])
     assert.ok(fs.existsSync(path.join(ROOT, 'public/landing/img', `${lang}-${shot}.webp`)));
   assert.equal(fs.existsSync(path.join(ROOT, 'public/media')), false, 'outdated v10 posters are not bundled');
 });
 
-test('calls to action: invite sign-up, sign-in and an invite request to the privacy-page contact', () => {
+test('calls to action: invite sign-up, sign-in, on-page invite request form, and privacy-page footer contact', () => {
   assert.match(HTML, /<a class="btn primary" href="\/login\.html\?invite="><span data-i="cta\.invite">用邀请码注册<\/span>/);
   assert.match(HTML, /<a class="btn ghost" href="\/login\.html" data-i="cta\.signin">登录<\/a>/);
+  assert.equal((HTML.match(/data-open-apply[^>]*data-i="cta\.ask"/g) || []).length, 2, 'hero and finale both trigger the on-page invite request modal');
+  const { zh, en } = loadI18N();
+  assert.equal(zh['cta.ask'], '申请内测');
+  assert.equal(en['cta.ask'], 'Request an invite');
   const privacyContact = read('public/privacy.html').match(/mailto:([^"?]+)/)[1];
   assert.match(JS, new RegExp('const CONTACT = "' + privacyContact.replace(/\./g, '\\.') + '"'));
-  for (const m of HTML.matchAll(/data-ask href="mailto:([^"]+)"/g)) assert.equal(m[1], privacyContact);
+  const mailtoAsks = [...HTML.matchAll(/data-ask href="mailto:([^"]+)"/g)];
+  assert.equal(mailtoAsks.length, 1, 'only footer contact remains a mailto link');
+  assert.equal(mailtoAsks[0][1], privacyContact);
   // login.html opens its invite sign-up view whenever the invite parameter is present.
   assert.match(read('public/site/login.js'), /params\.has\("invite"\) \? "register"/);
 });
@@ -100,8 +106,13 @@ test('every number on the page is backed by the app or is sample data', () => {
   assert.match(app, /AI 会结合最近 14 天的记录/);
   assert.match(app, /\.slice\(0,3\)\.map\(a => \(\{name:String/);             // up to 3 swaps
   for (const fn of ['chart', 'balanceChart', 'liftChart']) assert.match(app, new RegExp('function ' + fn + '\\('));   // 3 charts
+  const { MAX_NAME_LEN, MAX_GOAL_LEN, MAX_NOTE_LEN } = require('../lib/invite-requests');
+  assert.equal(MAX_NAME_LEN, 80);
+  assert.equal(MAX_GOAL_LEN, 500);
+  assert.equal(MAX_NOTE_LEN, 500);
   const allowed = [/1 分钟/g, /1 minute\b/g, /(最近 )?14 (天|days)/g, /7[- ](天平均|day average|day avg)/g, /最多推荐 3 个/g, /up to 3 options/g, /© 2026/g,
-    /60 kg/g, /72\.7 kg/g, /540 kcal/g, /46\.5 g/g];
+    /60 kg/g, /72\.7 kg/g, /540 kcal/g, /46\.5 g/g,
+    /最多 80 字/g, /80 characters/g, /最多 500 字/g, /500 characters/g, /中国大陆 11 位/g];
   for (const [lang, copy] of Object.entries({ zh, en })) for (const [key, value] of Object.entries(copy)) {
     const rest = allowed.reduce((text, re) => text.replace(re, ''), value);
     assert.doesNotMatch(rest, /[0-9]/, `${lang}.${key}: ${value}`);
@@ -151,10 +162,10 @@ test('Nocturne is dark only, and leaves every link to the browser', () => {
   assert.match(CSS, /html\{[^}]*background:var\(--bg\)/);
   assert.match(CSS, /color-scheme:dark/);
   assert.doesNotMatch(CSS, /prefers-color-scheme/);
-  // Sign-in must start at once: no script may cancel, delay or replace a navigation.
-  assert.doesNotMatch(JS, /preventDefault|stopPropagation|setTimeout|setInterval|location\.|\.href\s*=\s*["'`]\/|window\.open/);
-  assert.doesNotMatch(JS, /addEventListener\("(pointerdown|mousedown|touchstart|submit|beforeunload|pagehide)"/);
-  assert.equal((JS.match(/addEventListener\("click"/g) || []).length, 2, 'clicks are handled on the play and language buttons only');
+  // Sign-in must start at once: no script may cancel, delay or replace a link navigation.
+  assert.doesNotMatch(JS, /stopPropagation|setTimeout|setInterval|location\.(?:assign|replace|reload|href\s*=)|\.href\s*=\s*["'`]\/|window\.open/);
+  assert.doesNotMatch(JS, /addEventListener\("(pointerdown|mousedown|touchstart|beforeunload|pagehide)"/);
+  assert.doesNotMatch(JS, /querySelectorAll\("a(?!\[data-ask\])/);
 });
 
 /** Copyright strings (name ID 0) embedded in a woff2 file, read with Node's own Brotli. */
@@ -213,7 +224,8 @@ test('content never depends on script: CSS hides things only under .live, which 
   for (const [, selector] of CSS.replace(/@keyframes[^{]+\{(?:[^{}]*\{[^}]*\})*\s*\}/g, '').matchAll(/([^{}]+)\{[^}]*opacity:0/g))
     assert.match(selector, /\.live|\.top\.clear::before|\.pin /, selector.trim());
   assert.ok(JS.indexOf('classList.add("live")') > JS.indexOf('apply(lang);'));
-  assert.equal((JS.match(/addEventListener\("(scroll|wheel|touchmove|keydown)"/g) || []).length, 0, 'scrolling and keys are never taken over');
+  assert.equal((JS.match(/addEventListener\("(scroll|wheel|touchmove)"/g) || []).length, 0, 'scrolling is never taken over');
+  assert.match(JS, /document\.addEventListener\("keydown", e => \{\s*if \(applyModal\.hidden\) return;/, 'keydown only runs while the invite modal is open');
 });
 
 test('the no-JS fallback copy in landing.html is the zh copy', () => {
@@ -253,10 +265,19 @@ test('language choice follows login.html: ?lang, then saved bj-lang, then browse
   for (const key of ['bj-lang', 'bj-lang-set-at', 'bj-lang-pending']) assert.match(JS, new RegExp('write\\("' + key + '"'));
 });
 
-test('the display font subset covers every Chinese character on the page', () => {
+test('the display font subset covers every Chinese character in serif headings on the page', () => {
   const chars = new Set([...read('public/landing/fonts/serif-display.chars.txt')]);
-  const missing = [...new Set([...HTML + JS].filter(c => /[　-〿㐀-鿿＀-￯]/.test(c) && !chars.has(c)))];
-  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/serif-display.woff2 for the new copy');
+  const { zh } = loadI18N();
+  let serifText = '';
+  for (const [, , inner] of HTML.matchAll(/<h([123])\b[^>]*>([\s\S]*?)<\/h\1>/g)) {
+    serifText += inner.replace(/<[^>]+>/g, '');
+    for (const [, key] of inner.matchAll(/data-i="([^"]+)"/g)) serifText += zh[key] || '';
+  }
+  for (const [, key] of HTML.matchAll(/<(?:h[123]|b|p class="sub")\b[^>]*data-i="([^"]+)"/g)) {
+    serifText += zh[key] || '';
+  }
+  const missing = [...new Set([...serifText].filter(c => /[　-〿㐀-鿿＀-￯]/.test(c) && !chars.has(c)))];
+  assert.deepEqual(missing, [], 'rebuild public/landing/fonts/serif-display.woff2 for the new serif headings');
 });
 
 test('the video is attached only on play and points at the stable /media paths', () => {

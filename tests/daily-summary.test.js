@@ -1221,3 +1221,78 @@ test("daily summary tallies client-error-filtered noise separately from real cli
   assert.match(text, /近24h: 2 \(SaveError: 1, TypeError: 1\), 已过滤噪音 3 \(non_origin: 1, resize_observer: 1, script_error: 1\)/);
   assert.match(text, /累计:\s+3 \(TypeError: 2, SaveError: 1\), 已过滤噪音 4 \(script_error: 2, non_origin: 1, resize_observer: 1\)/);
 });
+
+test("daily summary reports invite-request counts from snapshots and handles older snapshots without invite_requests", (t) => {
+  const fx = createFixture(t);
+
+  // 1. Default fixture snapshot has no invite_requests table yet -> graceful fallback
+  const legacy = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    snapshotDir: fx.snapshotDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(legacy.inviteRequests.snapshotAvailable, true);
+  assert.equal(legacy.inviteRequests.tablePresent, false);
+  assert.equal(legacy.inviteRequests.pendingTotal, 0);
+  assert.deepEqual(legacy.inviteRequests.last24h, { new: 0, byKind: { phone: 0, email: 0 } });
+  assert.deepEqual(legacy.inviteRequests.trialToDate, { new: 0, byKind: { phone: 0, email: 0 } });
+  const legacyText = formatSummaryText(legacy);
+  assert.match(legacyText, /\[内测申请 \/ Invite Requests\]/);
+  assert.match(legacyText, /尚无 invite_requests 表/);
+
+  // 2. Add invite_requests table to snapshot and regenerate manifest -> accurate counts, zero PII
+  const snapMs = Date.parse("2026-11-24T04:01:15.000Z");
+  const snapAgo = h => new Date(snapMs - h * 3600 * 1000).toISOString();
+  const db = new DatabaseSync(path.join(fx.snapshotDir, "bojin.db"));
+  db.exec(`
+    CREATE TABLE invite_requests (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      contact_kind TEXT NOT NULL,
+      contact_value TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      lang TEXT NOT NULL DEFAULT 'zh',
+      status TEXT NOT NULL DEFAULT 'pending',
+      status_note TEXT NOT NULL DEFAULT '',
+      created TEXT NOT NULL,
+      updated TEXT NOT NULL
+    );
+  `);
+  const ins = db.prepare(
+    "INSERT INTO invite_requests (id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)"
+  );
+  ins.run("req_111111111111", "SecretOne", "phone", "+8613800138999", "Secret goal 1", "wx1", "zh", "pending", snapAgo(3), snapAgo(3));
+  ins.run("req_222222222222", "SecretTwo", "email", "secret2@example.com", "Secret goal 2", "", "en", "pending", snapAgo(12), snapAgo(12));
+  ins.run("req_333333333333", "SecretThree", "phone", "+14155559999", "Secret goal 3", "", "en", "invited", snapAgo(48), snapAgo(20));
+  ins.run("req_444444444444", "SecretFour", "email", "secret4@example.com", "Secret goal 4", "", "zh", "dismissed", snapAgo(72), snapAgo(60));
+  db.close();
+  writeSnapshotManifest(fx.snapshotDir, "2026-11-24T04:01:15.000Z");
+
+  const summary = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    snapshotDir: fx.snapshotDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(summary.inviteRequests.snapshotAvailable, true);
+  assert.equal(summary.inviteRequests.tablePresent, true);
+  assert.equal(summary.inviteRequests.pendingTotal, 2);
+  assert.deepEqual(summary.inviteRequests.byStatus, { pending: 2, invited: 1, dismissed: 1 });
+  assert.deepEqual(summary.inviteRequests.last24h, { new: 2, byKind: { phone: 1, email: 1 } });
+  assert.deepEqual(summary.inviteRequests.trialToDate, { new: 4, byKind: { phone: 2, email: 2 } });
+
+  const text = formatSummaryText(summary);
+  assert.match(text, /待处理 \(pending\): 2 \(累计状态: pending 2, invited 1, dismissed 1\)/);
+  assert.match(text, /近24h 新增: 2 \(手机 1, 邮箱 1\)/);
+  assert.match(text, /累计新增:\s+4 \(手机 2, 邮箱 2\)/);
+  const combined = JSON.stringify(summary) + "\n" + text;
+  for (const leak of ["SecretOne", "SecretTwo", "+8613800138999", "secret2@example.com", "Secret goal 1", "req_111111111111"]) {
+    assert.ok(!combined.includes(leak), `daily-summary leaked invite request PII: ${leak}`);
+  }
+});

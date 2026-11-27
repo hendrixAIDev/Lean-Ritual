@@ -84,6 +84,8 @@ const feedback = createFeedback(db, CFG.dataDir, {
   releaseRevision,
   ...feedbackOptions()
 });
+const { createInviteRequests, inviteRequestOptions, MAX_BODY_BYTES: INVITE_REQUEST_MAX_BODY } = require("./lib/invite-requests");
+const inviteRequests = createInviteRequests(db, inviteRequestOptions());
 const normName = s => String(s || "").trim().toLowerCase();
 const clientIP = req => (CFG.trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress || "?";
 
@@ -226,6 +228,45 @@ async function handle(req, res){
     return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
   }
   if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: aiProxy.enabled });
+  if (p === "/api/invite-requests") {
+    if (m !== "POST") throw httpErr(405, "method");
+    const cl = Number(req.headers["content-length"]);
+    if (Number.isFinite(cl) && cl > INVITE_REQUEST_MAX_BODY) {
+      res.setHeader("Connection", "close");
+      throw httpErr(413, "too_large", "内容太大");
+    }
+    const raw = await new Promise((resolve, reject) => {
+      const chunks = []; let n = 0; let rejected = false;
+      req.on("data", c => {
+        n += c.length;
+        if (n > INVITE_REQUEST_MAX_BODY) {
+          if (!rejected) { rejected = true; res.setHeader("Connection", "close"); reject(httpErr(413, "too_large", "内容太大")); }
+          req.pause();
+          return;
+        }
+        chunks.push(c);
+      });
+      req.on("end", () => { if (!rejected) resolve(Buffer.concat(chunks)); });
+      req.on("error", err => { if (!rejected) reject(err); });
+      req.on("close", () => { if (!req.complete && !rejected) reject(httpErr(400, "bad_request")); });
+    });
+    let b;
+    try { b = JSON.parse(raw.toString("utf8") || "{}"); } catch { throw httpErr(400, "bad_json"); }
+    const result = await inviteRequests.submit(b, {
+      ip: clientIP(req),
+      headerLang: typeof req.headers["x-ritual-lang"] === "string" ? req.headers["x-ritual-lang"] : null
+    });
+    if (result.honeypot) {
+      console.log("invite-request", JSON.stringify({ status: "dropped" }));
+    } else {
+      console.log("invite-request", JSON.stringify({
+        id: result.id,
+        contactKind: result.contactKind,
+        status: result.deduplicated ? "updated" : "created"
+      }));
+    }
+    return send(res, 200, { ok: true });
+  }
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
     throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");

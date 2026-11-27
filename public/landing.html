@@ -45,7 +45,7 @@
         <div class="ctas rise">
           <a class="btn primary" href="/login.html?invite="><span data-i="cta.invite">用邀请码注册</span><span class="arr" aria-hidden="true">→</span></a>
           <a class="btn ghost" href="/login.html" data-i="cta.signin">登录</a>
-          <a class="textlink" data-ask href="mailto:hendrix.ai.dev@gmail.com" data-i="cta.ask">还没有邀请码？发邮件申请</a>
+          <button type="button" class="textlink apply-trigger" data-open-apply data-i="cta.ask">申请内测</button>
         </div>
       </div>
       <div class="stage">
@@ -150,12 +150,12 @@
       <p class="eyebrow" data-i="beta">邀请制内测</p>
       <h2 id="end-h" data-i="end.t">更瘦、更强、更好，
 从这里开始</h2>
-      <p class="d" data-i="end.d">薄肌日课正在邀请制内测。有邀请码就能注册；还没有的话，给我们发封邮件。</p>
+      <p class="d" data-i="end.d">薄肌日课正在邀请制内测。有邀请码就能注册；还没有的话，可以申请内测。</p>
       <div class="ctas">
           <a class="btn primary" href="/login.html?invite="><span data-i="cta.invite">用邀请码注册</span><span class="arr" aria-hidden="true">→</span></a>
           <a class="btn ghost" href="/login.html" data-i="cta.signin">登录</a>
       </div>
-      <a class="textlink" data-ask href="mailto:hendrix.ai.dev@gmail.com" data-i="cta.ask">还没有邀请码？发邮件申请</a>
+      <button type="button" class="textlink apply-trigger" data-open-apply data-i="cta.ask">申请内测</button>
     </div>
   </section>
 </main>
@@ -171,6 +171,74 @@
     <span class="op" data-i="foot.op">© 2026 杰瑞智能技术服务部</span>
   </div>
 </footer>
+
+<div class="apply-modal" id="apply-modal" role="dialog" aria-modal="true" aria-labelledby="apply-title" hidden>
+  <div class="apply-backdrop" data-close-apply></div>
+  <div class="apply-dialog" role="document">
+    <div class="apply-head">
+      <div>
+        <p class="eyebrow" data-i="beta">邀请制内测</p>
+        <h2 id="apply-title" data-i="apply.title">申请内测</h2>
+      </div>
+      <button type="button" class="apply-close" id="apply-close" data-close-apply aria-label="关闭" data-i-aria="apply.close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <form class="apply-form" id="apply-form" novalidate>
+      <div class="apply-fields" id="apply-fields">
+        <p class="apply-intro" data-i="apply.intro">留下联系方式和目标，我们会尽快把专属邀请链接发给你。</p>
+        <label class="apply-field" for="apply-name">
+          <span data-i="apply.name">称呼</span>
+          <input id="apply-name" name="name" type="text" maxlength="80" autocomplete="nickname" required placeholder="怎么称呼你" data-i-placeholder="apply.namePh">
+        </label>
+        <div class="apply-field">
+          <span class="apply-label" id="apply-contact-lbl" data-i="apply.contact">联系方式</span>
+          <div class="apply-method" id="apply-method" role="group" aria-labelledby="apply-contact-lbl">
+            <button type="button" data-kind="phone" aria-pressed="true" data-i="apply.phone">手机号</button>
+            <button type="button" data-kind="email" aria-pressed="false" data-i="apply.email">邮箱</button>
+          </div>
+          <div class="apply-phone-wrap" id="apply-phone-wrap">
+            <div class="apply-phone-row">
+              <span class="apply-select-wrap" id="apply-cc-wrap" hidden>
+                <select id="apply-cc" autocomplete="tel-country-code" aria-label="国家或地区代码" data-i-aria="apply.ccAria"></select>
+                <svg class="apply-select-chev" viewBox="0 0 12 8" width="12" height="8" aria-hidden="true"><path d="M1 1.5 6 6.5 11 1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <input id="apply-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="138 0013 8000" autocapitalize="off" spellcheck="false" aria-label="手机号" data-i-aria="apply.phone">
+            </div>
+          </div>
+          <div class="apply-email-wrap" id="apply-email-wrap" hidden>
+            <input id="apply-email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="name@example.com" autocapitalize="off" spellcheck="false" aria-label="邮箱" data-i-aria="apply.email">
+          </div>
+        </div>
+        <label class="apply-field" for="apply-goal">
+          <span data-i="apply.goal">想达成的目标</span>
+          <textarea id="apply-goal" name="goal" rows="3" maxlength="500" required placeholder="例如：减脂、增肌或保持规律训练" data-i-placeholder="apply.goalPh"></textarea>
+        </label>
+        <label class="apply-field" for="apply-note">
+          <span data-i="apply.note">补充说明（选填）</span>
+          <textarea id="apply-note" name="note" rows="2" maxlength="500" placeholder="选填：微信号、方便联系的时间或其他说明" data-i-placeholder="apply.notePh"></textarea>
+        </label>
+        <div class="apply-hp" aria-hidden="true">
+          <label for="apply-website">Website</label>
+          <input id="apply-website" name="website" type="text" tabindex="-1" autocomplete="off">
+        </div>
+        <p class="apply-err" id="apply-err" role="status" aria-live="polite"></p>
+        <button type="submit" class="btn primary apply-submit" id="apply-submit" data-i="apply.submit">提交申请</button>
+        <p class="apply-privacy"><span data-i="apply.privPre">提交即同意按</span><a href="/privacy.html" data-i="apply.privLink">《隐私说明》</a><span data-i="apply.privPost">处理申请信息</span></p>
+      </div>
+      <div class="apply-done" id="apply-done" hidden>
+        <div class="apply-done-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 9.5 17 19 7.5"/></svg>
+        </div>
+        <h3 id="apply-done-title" tabindex="-1" data-i="apply.doneTitle">收到申请</h3>
+        <p class="apply-done-msg" data-i="apply.doneMsg">已收到你的内测申请！我们会尽快把专属邀请链接发到你留下的联系方式。</p>
+        <button type="button" class="btn primary apply-done-btn" id="apply-done-close" data-close-apply data-i="apply.doneBtn">完成</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/site/phone-rules.js"></script>
 <script src="/landing/nocturne.js"></script>
 </body>
 </html>

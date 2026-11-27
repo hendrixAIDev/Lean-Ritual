@@ -326,7 +326,7 @@ test('landing page in a real browser', { skip: playwright ? false : 'Playwright 
       assert.ok(at.bottom <= at.vh && (at.inHeader || at.top >= 68), `${at.name} is visible: ${at.top}-${at.bottom}`);
       stops.push(at.name.replace(/\s*→$/, ''));
     }
-    assert.deepEqual(stops, ['Lean Ritual', '中', 'EN', 'Sign in', 'Use your invite', 'Sign in', 'No invite yet? Ask for one', 'Use your invite', 'Sign in', 'No invite yet? Ask for one', 'Privacy', 'Terms', 'Training guide', 'Contact']);
+    assert.deepEqual(stops, ['Lean Ritual', '中', 'EN', 'Sign in', 'Use your invite', 'Sign in', 'Request an invite', 'Use your invite', 'Sign in', 'Request an invite', 'Privacy', 'Terms', 'Training guide', 'Contact']);
     // What a screen reader gets: one ordered list of five, each a heading and its text; the pinned phone is silent.
     const tree = await page.locator('#story').ariaSnapshot();
     assert.equal((tree.match(/- listitem/g) || []).length, 5);
