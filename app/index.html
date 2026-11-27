@@ -192,6 +192,26 @@ details.how summary{font-size:13px;color:var(--accent);font-weight:500;padding-b
 details.how[open]{padding-bottom:10px}
 details.how[open] > *:not(summary){margin-top:6px}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:99px;font-size:14px;z-index:20;pointer-events:none}
+.meal-shortcuts{display:flex;flex-direction:column;gap:8px;padding-top:2px}
+.shortcut-list{display:flex;flex-wrap:wrap;gap:8px}
+.shortcut-chip{display:inline-flex;align-items:center;gap:6px;min-height:44px;min-width:44px;max-width:100%;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:13px;text-align:left;cursor:pointer}
+.shortcut-chip:hover{border-color:var(--accent)}
+.shortcut-chip:disabled{opacity:.5;cursor:default}
+.shortcut-chip .sc-name{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:18em}
+.shortcut-chip .sc-meta{color:var(--muted);flex:none;white-space:nowrap;font-size:13px}
+.rest-slot:empty{display:none}
+.rest-slot{position:sticky;top:calc(58px + env(safe-area-inset-top,0px));z-index:4}
+.rest-bar{background:var(--surface);border:1.5px solid var(--accent);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.rest-bar.done{background:var(--accent-soft);border-color:var(--accent)}
+.rest-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.rest-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rest-ex{font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rest-status{font-size:12px;color:var(--muted)}
+.rest-bar.done .rest-status{color:var(--ink);font-weight:700;font-size:14px}
+.rest-time{font-size:28px;font-weight:700;line-height:1;color:var(--accent);flex:none}
+.rest-bar.done .rest-time{color:var(--ink)}
+.rest-controls{display:flex;gap:8px;flex-wrap:wrap}
+.rest-btn{border-color:var(--line);background:var(--surface);color:var(--ink)}
 .hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
 .hero .big{font-size:40px;color:var(--accent)}
 @media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
@@ -638,6 +658,17 @@ const I18N = {
     "ex.delExtraConfirm":"再点一次确认删除", "ex.delExtra":"删除这个加练",
     "ex.editSaved":"改这个动作（已记录的这次）", "ex.edit":"编辑这个动作",
     "ex.restBetween":"组间 {rest}",
+    "rest.startBtn":"休 {time}", "rest.startAria":"{btn}，开始 {ex} 组间休息计时",
+    "rest.barAria":"组间休息计时器", "rest.title":"组间休息", "rest.paused":"已暂停",
+    "rest.doneText":"休息结束 · 开始下一组",
+    "rest.minus15Aria":"-15s，减少 15 秒", "rest.plus30Aria":"+30s，增加 30 秒",
+    "rest.pause":"暂停", "rest.pauseAria":"暂停休息计时",
+    "rest.resume":"继续", "rest.resumeAria":"继续休息计时",
+    "rest.dismiss":"关闭", "rest.dismissAria":"关闭休息计时器",
+    "rest.announceStart":"{ex} 组间休息开始，{time}",
+    "rest.announcePaused":"休息计时已暂停，剩余 {time}",
+    "rest.announceResumed":"休息计时继续，剩余 {time}",
+    "rest.announceDone":"{ex} 休息结束，开始下一组",
     "ex.stall":"连续 3 次没进步。先检查睡眠和热量，再考虑换动作变体。",
     "ex.addedWeight":"负重 kg（自重填 0）", "ex.weight":"重量 kg",
     "ex.secCol":"秒", "ex.repsCol":"次数",
@@ -674,6 +705,8 @@ const I18N = {
     "food.targetsTitle":"营养目标{suffix}", "food.previewSuffix":" · 预览", "food.pastSuffix":" · 历史日期",
     "food.targetsHint":"蛋白分 3–4 顿，每顿 30–50 g。含糖饮料不喝。",
     "food.logTitle":"记一餐", "food.mealTypeAria":"餐次",
+    "food.shortcutsTitle":"常用餐食", "food.shortcutsHint":"点一下直接记入当前餐次",
+    "food.shortcutAria":"{name} {kcal} kcal，蛋白 {protein}g，碳水 {carbs}g，脂肪 {fat}g，一键添加到{type}",
     "food.photoLabel":"照片（可选，可加多张，比如吃之前和吃完各一张）", "food.maxPhotos":"最多 4 张",
     "food.choosePhotos":"选择照片", "food.noPhotoSelected":"未选择", "food.photosSelected":"已选 {n} 张", "food.addPhotoSr":"，{type}",
     "food.photoAlt":"第 {n} 张照片", "food.removePhotoAria":"去掉第 {n} 张照片",
@@ -942,6 +975,7 @@ const I18N = {
     "toast.httpsOnly":"请粘贴以 https:// 开头的链接",
     "toast.favSaved":"已收藏", "toast.favRemoved":"已取消收藏",
     "toast.mealTypeChanged":"已改成{type}", "toast.max4Photos":"一餐最多 4 张照片",
+    "toast.mealQuickAdded":"已添加「{name}」",
     "toast.restoredWorkouts":"已从备份恢复 {n} 天的训练记录",
     "toast.rescueDrafts":"找到 {dates} 填了但没保存的训练，打开那天点“完成训练，保存”即可",
     "ufb.title":"意见反馈",
@@ -1081,6 +1115,17 @@ const I18N = {
     "ex.delExtraConfirm":"Tap again to delete", "ex.delExtra":"Remove extra",
     "ex.editSaved":"Edit exercise (this log)", "ex.edit":"Edit exercise",
     "ex.restBetween":"Rest {rest}",
+    "rest.startBtn":"Rest {time}", "rest.startAria":"{btn}, start rest timer for {ex}",
+    "rest.barAria":"Workout rest timer", "rest.title":"Rest timer", "rest.paused":"Paused",
+    "rest.doneText":"Rest done · Next set!",
+    "rest.minus15Aria":"-15s, subtract 15 seconds", "rest.plus30Aria":"+30s, add 30 seconds",
+    "rest.pause":"Pause", "rest.pauseAria":"Pause rest timer",
+    "rest.resume":"Resume", "rest.resumeAria":"Resume rest timer",
+    "rest.dismiss":"Dismiss", "rest.dismissAria":"Dismiss rest timer",
+    "rest.announceStart":"Rest timer started for {ex}, {time}",
+    "rest.announcePaused":"Rest timer paused with {time} remaining",
+    "rest.announceResumed":"Rest timer resumed with {time} remaining",
+    "rest.announceDone":"Rest done for {ex}. Next set!",
     "ex.stall":"No progress in 3 sessions. Check sleep and calories first, then consider a variation.",
     "ex.addedWeight":"Added kg (0 = BW)", "ex.weight":"Weight kg",
     "ex.secCol":"Sec", "ex.repsCol":"Reps",
@@ -1117,6 +1162,8 @@ const I18N = {
     "food.targetsTitle":"Macro Targets{suffix}", "food.previewSuffix":" · Preview", "food.pastSuffix":" · Past date",
     "food.targetsHint":"Split protein across 3–4 meals (30–50 g each). Skip sugary drinks.",
     "food.logTitle":"Log a Meal", "food.mealTypeAria":"Meal type",
+    "food.shortcutsTitle":"Quick-add meals", "food.shortcutsHint":"1 tap to log under selected meal",
+    "food.shortcutAria":"{name} {kcal} kcal, protein {protein}g, carbs {carbs}g, fat {fat}g, add to {type}",
     "food.photoLabel":"Photos (optional, up to 4 — e.g. before & leftovers)", "food.maxPhotos":"Max 4 photos",
     "food.choosePhotos":"Choose photos", "food.noPhotoSelected":"No photo selected", "food.photosSelected":"{n} selected", "food.addPhotoSr":", {type}",
     "food.photoAlt":"Photo {n}", "food.removePhotoAria":"Remove photo {n}",
@@ -1385,6 +1432,7 @@ const I18N = {
     "toast.httpsOnly":"Please paste a link starting with https://",
     "toast.favSaved":"Video saved", "toast.favRemoved":"Video removed",
     "toast.mealTypeChanged":"Changed to {type}", "toast.max4Photos":"Up to 4 photos per meal",
+    "toast.mealQuickAdded":'Added "{name}"',
     "toast.restoredWorkouts":"Restored {n} day(s) of workouts from backup",
     "toast.rescueDrafts":"Found unsaved workout entries on {dates} — open that day and tap \"Finish & save workout\"",
     "ufb.title":"Send feedback",
@@ -1760,7 +1808,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], pages:{}, tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
-  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null };
+  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null, restTimer:null, mealShortcuts:[] };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
 
@@ -2415,6 +2463,349 @@ function weekStrip(){
 function viewFuture(){
   return viewToday();
 }
+/* ---- 组间休息计时器（基于墙钟时间戳 endAt，锁屏/切后台回来零漂移） ---- */
+const REST_TIMER_PREFIX = "lr_rest_timer_";
+let restTimerTickId = null;
+// 解析组间休息时长为秒数；区间（如 "2–3 分钟"、"1–2 分钟"、"60–90s"）统一取中值，无法解析时回退 90 秒
+function parseRestSeconds(raw){
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.max(5, Math.min(3600, Math.round(raw)));
+  const s = String(raw ?? "").trim();
+  if (!s) return 90;
+  const clock = s.match(/^(\d+)\s*:\s*(\d{1,2})$/);
+  if (clock) {
+    const sec = (+clock[1]) * 60 + (+clock[2]);
+    return sec > 0 ? Math.max(5, Math.min(3600, sec)) : 90;
+  }
+  const isSecUnit = u => /^(?:秒钟?|seconds?|secs?|s)$/i.test(u);
+  const range = s.match(/^(\d+(?:\.\d+)?)\s*(?:[-–—~]|to)\s*(\d+(?:\.\d+)?)\s*(分钟|分|minutes?|mins?|m|秒钟?|seconds?|secs?|s)$/i);
+  if (range) {
+    const mid = (parseFloat(range[1]) + parseFloat(range[2])) / 2;
+    const sec = Math.round(isSecUnit(range[3]) ? mid : mid * 60);
+    return Number.isFinite(sec) && sec > 0 ? Math.max(5, Math.min(3600, sec)) : 90;
+  }
+  const single = s.match(/^(\d+(?:\.\d+)?)\s*(分钟|分|minutes?|mins?|m|秒钟?|seconds?|secs?|s)$/i);
+  if (single) {
+    const val = parseFloat(single[1]);
+    const sec = Math.round(isSecUnit(single[2]) ? val : val * 60);
+    return Number.isFinite(sec) && sec > 0 ? Math.max(5, Math.min(3600, sec)) : 90;
+  }
+  return 90;
+}
+function fmtTimer(sec){
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${pad(s % 60)}`;
+}
+function restTimerUserId(){ return S.uid || S.user?.id || S.hostUser?.id || storageUser || null; }
+function restTimerKey(id = restTimerUserId()){ return id ? `${REST_TIMER_PREFIX}${id}` : null; }
+function restTimerRemainingMs(rt = S.restTimer, now = Date.now()){
+  if (!rt || rt.done) return 0;
+  if (rt.pausedRemainingMs != null) return Math.max(0, Number(rt.pausedRemainingMs) || 0);
+  if (rt.endAt != null) return Math.max(0, Number(rt.endAt) - now);
+  return 0;
+}
+function restTimerRemainingSec(rt = S.restTimer, now = Date.now()){
+  return Math.max(0, Math.ceil(restTimerRemainingMs(rt, now) / 1000));
+}
+function persistRestTimer(){
+  const k = restTimerKey();
+  if (!k || typeof sessionStorage === "undefined") return;
+  try {
+    if (!S.restTimer) sessionStorage.removeItem(k);
+    else sessionStorage.setItem(k, JSON.stringify(S.restTimer));
+  } catch {}
+}
+function clearRestTimerStorage(id = restTimerUserId()){
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const k = restTimerKey(id);
+    if (k) sessionStorage.removeItem(k);
+  } catch {}
+}
+function clearOtherRestTimers(keepId){
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const keepKey = keepId ? `${REST_TIMER_PREFIX}${keepId}` : null;
+    const keys = new Set();
+    if (typeof sessionStorage.length === "number" && typeof sessionStorage.key === "function") {
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith(REST_TIMER_PREFIX) && k !== keepKey) keys.add(k);
+      }
+    }
+    Object.keys(sessionStorage).forEach(k => { if (k.startsWith(REST_TIMER_PREFIX) && k !== keepKey) keys.add(k); });
+    keys.forEach(k => sessionStorage.removeItem(k));
+  } catch {}
+}
+function stopRestTimerTick(){
+  if (restTimerTickId != null) {
+    if (typeof clearInterval === "function") clearInterval(restTimerTickId);
+    restTimerTickId = null;
+  }
+}
+function ensureRestTimerTick(){
+  if (!S.restTimer || S.restTimer.done || S.restTimer.pausedRemainingMs != null) { stopRestTimerTick(); return; }
+  if (restTimerTickId != null || typeof setInterval !== "function") return;
+  restTimerTickId = setInterval(() => syncRestTimer(), 300);
+  if (restTimerTickId && typeof restTimerTickId.unref === "function") restTimerTickId.unref();
+}
+function hydrateRestTimer(id = restTimerUserId()){
+  stopRestTimerTick();
+  S.restTimer = null;
+  if (!id) return;
+  clearOtherRestTimers(id);
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const raw = sessionStorage.getItem(restTimerKey(id));
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return;
+    const endAt = parsed.endAt != null && Number.isFinite(Number(parsed.endAt)) ? Number(parsed.endAt) : null;
+    const pausedMs = parsed.pausedRemainingMs != null && Number.isFinite(Number(parsed.pausedRemainingMs)) ? Math.max(0, Number(parsed.pausedRemainingMs)) : null;
+    const done = !!parsed.done;
+    if (!done && endAt == null && pausedMs == null) return;
+    S.restTimer = {
+      exName: String(parsed.exName || ""),
+      totalSec: Math.max(1, Math.round(Number(parsed.totalSec) || 90)),
+      endAt: done || pausedMs != null ? null : endAt,
+      pausedRemainingMs: done ? null : pausedMs,
+      done,
+      announcedDone: !!parsed.announcedDone,
+      date: typeof parsed.date === "string" ? parsed.date : S.date
+    };
+    syncRestTimer();
+    ensureRestTimerTick();
+  } catch {
+    S.restTimer = null;
+  }
+}
+function resetRestTimerState(id = restTimerUserId()){
+  stopRestTimerTick();
+  S.restTimer = null;
+  clearRestTimerStorage(id);
+}
+function isRestTimerVisibleFor(date = S.date, rt = S.restTimer){
+  if (!rt || !rt.date || rt.date !== date) return false;
+  if (S.days?.[rt.date]?.workout?.done) return false;
+  return true;
+}
+function isRestTimerViewVisible(rt = S.restTimer){
+  return !!S.ready && S.tab === "today" && !S.editing && !S.consentRequired && isRestTimerVisibleFor(S.date, rt);
+}
+function restTimerBarHtml(now = Date.now(), date = S.date){
+  const rt = S.restTimer;
+  if (!rt) return "";
+  if (rt.date && S.days?.[rt.date]?.workout?.done) {
+    resetRestTimerState();
+    return "";
+  }
+  if (!rt.done && rt.pausedRemainingMs == null && rt.endAt != null && now >= rt.endAt) {
+    rt.done = true;
+    rt.endAt = null;
+    rt.pausedRemainingMs = null;
+    stopRestTimerTick();
+    persistRestTimer();
+  }
+  if (!isRestTimerVisibleFor(date, rt)) return "";
+  if (rt.done && !rt.announcedDone && isRestTimerViewVisible(rt)) {
+    rt.announcedDone = true;
+    persistRestTimer();
+    announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+  }
+  const isPaused = !rt.done && rt.pausedRemainingMs != null;
+  const remSec = restTimerRemainingSec(rt, now);
+  const exLabel = exName(rt.exName);
+  const statusText = rt.done ? t("rest.doneText") : isPaused ? `${t("rest.title")} · ${t("rest.paused")}` : t("rest.title");
+  const toggleLabel = isPaused ? t("rest.resume") : t("rest.pause");
+  const toggleAria = isPaused ? t("rest.resumeAria") : t("rest.pauseAria");
+  return `<div id="rest-timer-bar" class="rest-bar${rt.done ? " done" : ""}" role="group" aria-label="${esc(t("rest.barAria"))}">
+    <div class="rest-head">
+      <div class="rest-info">
+        <span class="rest-ex">${esc(exLabel)}</span>
+        <span class="rest-status">${esc(statusText)}</span>
+      </div>
+      <span id="rest-timer-val" class="num rest-time">${esc(fmtTimer(remSec))}</span>
+    </div>
+    <div class="rest-controls">
+      <button type="button" id="rt-minus" class="btn small" data-act="rest-adj" data-v="-15" aria-label="${esc(t("rest.minus15Aria"))}" ${rt.done ? "disabled" : ""}>-15s</button>
+      <button type="button" id="rt-plus" class="btn small" data-act="rest-adj" data-v="30" aria-label="${esc(t("rest.plus30Aria"))}">+30s</button>
+      <button type="button" id="rt-toggle" class="btn small" data-act="rest-toggle" aria-label="${esc(toggleAria)}" ${rt.done ? "disabled" : ""}>${esc(toggleLabel)}</button>
+      <button type="button" id="rt-dismiss" class="btn small" data-act="rest-dismiss" aria-label="${esc(t("rest.dismissAria"))}">${esc(t("rest.dismiss"))}</button>
+    </div>
+  </div>`;
+}
+function mountRestTimerSlot(restoreFocusId = null){
+  if (typeof document === "undefined" || typeof document.getElementById !== "function") return;
+  const slot = document.getElementById("rest-timer-slot");
+  if (!slot) return;
+  slot.innerHTML = restTimerBarHtml();
+  if (restoreFocusId && slot.innerHTML) {
+    const target = document.getElementById(restoreFocusId);
+    if (target && !target.disabled) focusEl(target);
+  }
+}
+function syncRestTimer(now = Date.now()){
+  const rt = S.restTimer;
+  if (!rt) { stopRestTimerTick(); return; }
+  if (rt.date && S.days?.[rt.date]?.workout?.done) {
+    resetRestTimerState();
+    mountRestTimerSlot();
+    return;
+  }
+  const visible = isRestTimerViewVisible(rt);
+  if (rt.done || rt.pausedRemainingMs != null) {
+    stopRestTimerTick();
+    if (visible) {
+      const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
+      const txt = fmtTimer(restTimerRemainingSec(rt, now));
+      if (valEl && valEl.textContent !== txt) valEl.textContent = txt;
+    }
+    return;
+  }
+  const remMs = Math.max(0, (rt.endAt || now) - now);
+  const remSec = Math.max(0, Math.ceil(remMs / 1000));
+  if (remMs <= 0 || remSec <= 0) {
+    rt.done = true;
+    rt.endAt = null;
+    rt.pausedRemainingMs = null;
+    stopRestTimerTick();
+    const needAnnounce = visible && !rt.announcedDone;
+    if (needAnnounce) rt.announcedDone = true;
+    persistRestTimer();
+    if (visible) {
+      const ae = typeof document !== "undefined" ? document.activeElement : null;
+      const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
+      const focusInside = !!(ae && slot && slot.contains?.(ae));
+      mountRestTimerSlot(focusInside ? "rt-dismiss" : null);
+      if (needAnnounce) announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+    }
+    return;
+  }
+  if (!visible) return;
+  const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
+  const nextText = fmtTimer(remSec);
+  if (valEl && valEl.textContent !== nextText) valEl.textContent = nextText;
+}
+function startRestTimer(exNameCanon, durationSec){
+  if (S.days?.[S.date]?.workout?.done) return;
+  const sec = Math.max(1, Math.round(Number(durationSec) || 90));
+  const now = Date.now();
+  S.restTimer = {
+    exName: String(exNameCanon || ""),
+    totalSec: sec,
+    endAt: now + sec * 1000,
+    pausedRemainingMs: null,
+    done: false,
+    announcedDone: false,
+    date: S.date
+  };
+  persistRestTimer();
+  ensureRestTimerTick();
+  mountRestTimerSlot();
+  announce(t("rest.announceStart", { ex: exName(S.restTimer.exName), time: fmtTimer(sec) }));
+}
+function adjustRestTimer(deltaSec){
+  const rt = S.restTimer;
+  if (!isRestTimerVisibleFor(S.date, rt)) return;
+  const deltaMs = (Number(deltaSec) || 0) * 1000;
+  const now = Date.now();
+  const focusId = deltaSec < 0 ? "rt-minus" : "rt-plus";
+  const ae = typeof document !== "undefined" ? document.activeElement : null;
+  const keepBtnFocus = ae && ae.id === focusId;
+  if (rt.done) {
+    if (deltaMs <= 0) return;
+    rt.done = false;
+    rt.announcedDone = false;
+    rt.pausedRemainingMs = null;
+    rt.endAt = now + deltaMs;
+    persistRestTimer();
+    ensureRestTimerTick();
+    mountRestTimerSlot(keepBtnFocus ? focusId : null);
+    return;
+  }
+  if (rt.pausedRemainingMs != null) {
+    const nextMs = Math.max(0, rt.pausedRemainingMs + deltaMs);
+    if (nextMs <= 0) {
+      rt.done = true;
+      rt.pausedRemainingMs = null;
+      rt.endAt = null;
+      const needAnnounce = !rt.announcedDone;
+      rt.announcedDone = true;
+      persistRestTimer();
+      mountRestTimerSlot(keepBtnFocus ? "rt-dismiss" : null);
+      if (needAnnounce) announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+      return;
+    }
+    rt.pausedRemainingMs = nextMs;
+    persistRestTimer();
+    const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
+    if (valEl) valEl.textContent = fmtTimer(Math.ceil(nextMs / 1000));
+    return;
+  }
+  const remMs = Math.max(0, (rt.endAt || now) - now);
+  const nextMs = Math.max(0, remMs + deltaMs);
+  if (nextMs <= 0) {
+    rt.endAt = now;
+    syncRestTimer(now);
+    return;
+  }
+  rt.endAt = now + nextMs;
+  persistRestTimer();
+  const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
+  if (valEl) valEl.textContent = fmtTimer(Math.ceil(nextMs / 1000));
+}
+function toggleRestTimerPause(){
+  const rt = S.restTimer;
+  if (!isRestTimerVisibleFor(S.date, rt) || rt.done) return;
+  const now = Date.now();
+  const ae = typeof document !== "undefined" ? document.activeElement : null;
+  const keepBtnFocus = ae && ae.id === "rt-toggle";
+  if (rt.pausedRemainingMs == null) {
+    const remMs = Math.max(0, (rt.endAt || now) - now);
+    if (remMs <= 0) { syncRestTimer(now); return; }
+    rt.pausedRemainingMs = remMs;
+    rt.endAt = null;
+    stopRestTimerTick();
+    persistRestTimer();
+    mountRestTimerSlot(keepBtnFocus ? "rt-toggle" : null);
+    announce(t("rest.announcePaused", { time: fmtTimer(Math.ceil(remMs / 1000)) }));
+  } else {
+    const remMs = Math.max(0, rt.pausedRemainingMs);
+    if (remMs <= 0) {
+      rt.done = true;
+      rt.pausedRemainingMs = null;
+      rt.endAt = null;
+      persistRestTimer();
+      mountRestTimerSlot(keepBtnFocus ? "rt-dismiss" : null);
+      return;
+    }
+    rt.endAt = now + remMs;
+    rt.pausedRemainingMs = null;
+    persistRestTimer();
+    ensureRestTimerTick();
+    mountRestTimerSlot(keepBtnFocus ? "rt-toggle" : null);
+    announce(t("rest.announceResumed", { time: fmtTimer(Math.ceil(remMs / 1000)) }));
+  }
+}
+function dismissRestTimer(){
+  const rt = S.restTimer;
+  if (!isRestTimerVisibleFor(S.date, rt)) return;
+  const ae = typeof document !== "undefined" ? document.activeElement : null;
+  const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
+  const focusInside = !!(ae && slot && slot.contains?.(ae));
+  stopRestTimerTick();
+  S.restTimer = null;
+  clearRestTimerStorage();
+  if (slot) slot.innerHTML = "";
+  if (focusInside) focusEl($('[data-act="rest-start"]'));
+}
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  document.addEventListener("visibilitychange", () => { if (S.restTimer) syncRestTimer(); });
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("pageshow", () => { if (S.restTimer) syncRestTimer(); });
+  window.addEventListener("focus", () => { if (S.restTimer) syncRestTimer(); });
+}
+
 function viewToday(){
   const p = S.profile, date = S.date, plan = planFor(date), day = S.days[date] || {}, tg = targets(), m = dayMacros(date), dt = dayTargets(date);
   const wk = weekIndex(date) + 1;
@@ -2431,6 +2822,7 @@ function viewToday(){
       <p class="tip">${esc(slotTip(plan.slot))}</p>
       ${plan.deload ? `<p class="tip warn">${esc(t("today.deloadTip", {who:plan.deload==="manual"?t("today.deloadManual"):t("today.deloadScheduled")}))}</p>` : ""}
       ${(p.injuries||[]).length ? `<p class="tip bad">${esc(t("today.injTip", {list:joinList(p.injuries.map(injLabel))}))}</p>` : ""}
+      <div id="rest-timer-slot" class="rest-slot">${restTimerBarHtml()}</div>
       ${plan.custom ? customEditor(day) : ""}
       ${plan.ex.map((e,i) => exCard(e, i, d, date, plan)).join("")}
       ${plan.custom ? "" : extraEditor()}
@@ -2484,10 +2876,21 @@ function viewToday(){
 function exCard(e, i, d, date, plan){
   const s = suggest(e, date, plan.deload), de = d.exercises[i], exLabel = exName(e.name);
   const warm = i === 0 && s.w ? `<p class="small muted">${esc(t("ex.warmup", {w1:r25(s.w*0.5), w2:r25(s.w*0.7), w3:r25(s.w*0.9)}))}</p>` : "";
+  const editing = !e.extra && !plan.custom && S.ed?.date === date && S.ed.i === i;
+  const exBtns = [];
+  if (e.extra) exBtns.push(`<button type="button" class="chip ${S.exDel === date + "|" + i ? "bad" : ""}" data-act="ex-del" data-v="${i}">${esc(S.exDel === date + "|" + i ? t("ex.delExtraConfirm") : t("ex.delExtra"))}</button>`);
+  else if (!plan.custom && !editing) exBtns.push(`<button type="button" class="chip" data-act="ed-open" data-v="${i}">${esc(plan.saved ? t("ex.editSaved") : t("ex.edit"))}</button>`);
+  if (!plan.saved) {
+    const restSec = parseRestSeconds(e.rest), restDisp = fmtTimer(restSec);
+    const btnText = t("rest.startBtn", { time: restDisp });
+    const btnAria = t("rest.startAria", { btn: btnText, ex: exLabel });
+    exBtns.push(`<button type="button" class="chip rest-btn" data-act="rest-start" data-v="${i}" data-sec="${restSec}" aria-label="${esc(btnAria)}">${esc(btnText)}</button>`);
+  }
   return `<div class="ex" role="group" aria-labelledby="ex-h-${i}">
     <div class="ex-h"><b id="ex-h-${i}">${esc(exLabel)}</b><span class="presc">${esc(e.sets)}${e.lo!==""&&e.lo!=null?` × ${esc(e.lo)}–${esc(e.hi)}${isTimed(e.name)?esc(t("ex.secSuffix")):""}`:esc(t("ex.setsSuffix"))}</span></div>
     ${e.why ? `<span class="small muted">${e.name !== e.orig ? esc(t("ex.swappedFrom", {orig:exName(e.orig)})) : ""}${esc(fmtWhy(e.why))}</span>` : ""}
-    ${e.extra ? `<div><button class="chip ${S.exDel === date + "|" + i ? "bad" : ""}" data-act="ex-del" data-v="${i}">${esc(S.exDel === date + "|" + i ? t("ex.delExtraConfirm") : t("ex.delExtra"))}</button></div>` : !plan.custom ? (S.ed?.date === date && S.ed.i === i ? editor(e) : `<div><button class="chip" data-act="ed-open" data-v="${i}">${esc(plan.saved ? t("ex.editSaved") : t("ex.edit"))}</button></div>`) : ""}
+    ${editing ? editor(e) : ""}
+    ${exBtns.length ? `<div class="row">${exBtns.join("")}</div>` : ""}
     <p class="small">${esc(s.text)} <span class="muted">${esc(t("ex.restBetween", {rest:fmtRest(e.rest)}))}</span></p>
     ${s.stall ? `<p class="tip warn">${esc(t("ex.stall"))}</p>` : ""}
     ${warm}
@@ -2660,19 +3063,180 @@ const PHOTO_ICO = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h3l2
 function photoStatusText(n){
   return !n ? t("food.noPhotoSelected") : n >= 4 ? `${t("food.photosSelected", {n})} · ${t("food.maxPhotos")}` : t("food.photosSelected", {n});
 }
+function defaultMealType(){
+  const hour = new Date().getHours();
+  return hour < 10 ? "早餐" : hour < 14 ? "午餐" : hour < 17 ? "加餐" : "晚餐";
+}
+function selectedMealType(){
+  const checked = typeof document !== "undefined" && typeof document.querySelector === "function" ? document.querySelector('input[name="mtype"]:checked')?.value : null;
+  if (checked && MEAL_TYPES.includes(checked)) return checked;
+  return S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defaultMealType();
+}
+function recentMealShortcuts(selectedType = selectedMealType(), max = 6){
+  const finiteNonNeg = v => v !== "" && v != null && typeof v !== "boolean" && Number.isFinite(Number(v)) && Number(v) >= 0;
+  const groups = new Map();
+  for (const [date, day] of Object.entries(S.days || {})) {
+    const meals = Array.isArray(day?.meals) ? day.meals : [];
+    for (let idx = 0; idx < meals.length; idx++) {
+      const m = meals[idx];
+      if (!m || typeof m !== "object") continue;
+      if (m.visionReq?.status === "pending" || m.visionReq?.status === "failed") continue;
+      if (m.id && S.busy?.["meal-" + m.id]) continue;
+      const e = m.est;
+      if (!e || typeof e !== "object" || e.failed || e.error) continue;
+      if (!finiteNonNeg(e.kcal) || !finiteNonNeg(e.protein) || !finiteNonNeg(e.carbs) || !finiteNonNeg(e.fat)) continue;
+      const kcal = roundMacro("kcal", e.kcal);
+      const protein = roundMacro("protein", e.protein);
+      const carbs = roundMacro("carbs", e.carbs);
+      const fat = roundMacro("fat", e.fat);
+      if (kcal == null || protein == null || carbs == null || fat == null) continue;
+      if (kcal === 0 && protein === 0 && carbs === 0 && fat === 0) continue;
+      const rawText = String(m.text ?? "").trim();
+      const itemText = !rawText && Array.isArray(e.items)
+        ? e.items.map(x => String(x?.name || "").trim()).filter(Boolean).join(getLang() === "en" ? ", " : "、")
+        : "";
+      const title = rawText || itemText;
+      if (!title) continue;
+      const norm = title.replace(/\s+/g, " ").toLowerCase();
+      const key = `${norm}|${kcal}|${protein}|${carbs}|${fat}`;
+      const timeStr = typeof m.time === "string" && /^\d{1,2}:\d{2}/.test(m.time) ? m.time.slice(0, 5).padStart(5, "0") : "00:00";
+      const order = `${date}|${timeStr}|${String(idx).padStart(4, "0")}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, text: title, kcal, protein, carbs, fat, count: 0, typeCounts: {}, lastDate: date, lastOrder: order };
+        groups.set(key, g);
+      }
+      g.count += 1;
+      if (m.type) g.typeCounts[m.type] = (g.typeCounts[m.type] || 0) + 1;
+      if (order >= g.lastOrder) {
+        g.lastOrder = order;
+        g.lastDate = date;
+        g.text = title;
+      }
+    }
+  }
+  const list = [...groups.values()].map(g => ({
+    key: g.key,
+    text: g.text,
+    kcal: g.kcal,
+    protein: g.protein,
+    carbs: g.carbs,
+    fat: g.fat,
+    count: g.count,
+    typeCount: selectedType ? (g.typeCounts[selectedType] || 0) : 0,
+    lastDate: g.lastDate,
+    lastOrder: g.lastOrder
+  }));
+  list.sort((a, b) =>
+    ((b.typeCount > 0 ? 1 : 0) - (a.typeCount > 0 ? 1 : 0)) ||
+    (b.typeCount - a.typeCount) ||
+    (b.count - a.count) ||
+    b.lastOrder.localeCompare(a.lastOrder) ||
+    a.text.localeCompare(b.text)
+  );
+  return list.slice(0, max);
+}
+function mealShortcutsInner(curType, savingMeal = !!S.busy.addMeal){
+  const shortcuts = recentMealShortcuts(curType, 6);
+  S.mealShortcuts = shortcuts;
+  if (!shortcuts.length) return "";
+  return `<div class="row between"><span class="lbl" id="meal-shortcuts-lbl">${esc(t("food.shortcutsTitle"))}</span><span class="small muted">${esc(t("food.shortcutsHint"))}</span></div>
+    <div class="shortcut-list">${shortcuts.map((sc, i) => {
+      const aria = t("food.shortcutAria", { name: sc.text, kcal: sc.kcal, protein: sc.protein, carbs: sc.carbs, fat: sc.fat, type: mealTypeLabel(curType) });
+      return `<button type="button" class="shortcut-chip" data-act="quick-meal" data-v="${i}" aria-label="${esc(aria)}" ${savingMeal ? "disabled" : ""}><span class="sc-name">${esc(sc.text)}</span> <span class="sc-meta num">${esc(sc.kcal)} kcal</span></button>`;
+    }).join("")}</div>`;
+}
+function mealShortcutsHtml(curType, savingMeal = !!S.busy.addMeal){
+  const inner = mealShortcutsInner(curType, savingMeal);
+  return inner ? `<div class="meal-shortcuts" id="meal-shortcuts" role="group" aria-labelledby="meal-shortcuts-lbl">${inner}</div>` : "";
+}
+function refreshMealShortcuts(){
+  if (typeof document === "undefined" || typeof document.getElementById !== "function") return;
+  const box = document.getElementById("meal-shortcuts");
+  if (!box) return;
+  box.innerHTML = mealShortcutsInner(selectedMealType(), !!S.busy.addMeal);
+}
+async function quickAddMeal(idx, btn){
+  if (S.busy.addMeal) return;
+  const curType = selectedMealType();
+  const list = S.mealShortcuts?.length ? S.mealShortcuts : recentMealShortcuts(curType, 6);
+  const sc = list[+idx];
+  if (!sc) return;
+  const date = S.date;
+  S.busy.addMeal = true;
+  if (btn) btn.disabled = true;
+  try {
+    const now = new Date();
+    // 独立营养快照：绝不复制历史餐食的 photo / photoId / thumb / more 等图片引用
+    const m = {
+      id: uid(),
+      type: curType,
+      text: sc.text,
+      time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+      photo: null,
+      est: {
+        kcal: sc.kcal,
+        protein: sc.protein,
+        carbs: sc.carbs,
+        fat: sc.fat,
+        by: "manual",
+        at: now.toISOString()
+      }
+    };
+    await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }, { quiet: true });
+    S.busy.addMeal = false;
+    if (S.tab === "food" && S.date !== date) {
+      // 用户在保存期间切到了别的日期：只就地刷新常用餐食排序，不触碰当前日期的草稿输入框
+      refreshMealShortcuts();
+    } else {
+      const renderedDate = S.date;
+      const liveEl = S.tab === "food" && renderedDate === date ? $("#m-text") : null;
+      const liveText = liveEl ? liveEl.value : null;
+      const sel = liveEl && typeof document !== "undefined" && document.activeElement === liveEl
+        ? [(() => { try { return liveEl.selectionStart; } catch { return null; } })(), (() => { try { return liveEl.selectionEnd; } catch { return null; } })()]
+        : null;
+      render();
+      if (liveText != null && S.tab === "food" && S.date === date && S.date === renderedDate) {
+        const nextEl = $("#m-text");
+        if (nextEl) {
+          nextEl.value = liveText;
+          if (sel && sel[0] != null && sel[1] != null) { try { nextEl.setSelectionRange(sel[0], sel[1]); } catch {} }
+        }
+      }
+    }
+    const shortName = sc.text.length > 40 ? sc.text.slice(0, 39) + "…" : sc.text;
+    toast(t("toast.mealQuickAdded", { name: shortName }));
+  } catch {}
+  finally {
+    S.busy.addMeal = false;
+    if (btn) btn.disabled = false;
+  }
+}
+const mealTextKey = date => `bj-mtext:${date || S.date}`;
+function getMealTextDraft(date = S.date){
+  const v = lsGet(mealTextKey(date), null);
+  if (typeof v === "string") return v;
+  return date === todayStr() ? (lsGet("bj-mtext", "") || "") : "";
+}
+function setMealTextDraft(date = S.date, val = ""){
+  lsSet(mealTextKey(date), String(val ?? ""));
+}
 function viewFood(){
   const date = S.date, tg = dayTargets(date), m = dayMacros(date), meals = S.days[date]?.meals || [];
-  const hour = new Date().getHours(), mode = mealMode();
-  const defType = hour < 10 ? "早餐" : hour < 14 ? "午餐" : hour < 17 ? "加餐" : "晚餐";
+  const mode = mealMode();
+  const defType = defaultMealType();
+  const curType = S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defType;
   const isFuture = date > todayStr();
   const suffix = isFuture ? t("food.previewSuffix") : date < todayStr() ? t("food.pastSuffix") : "";
   const pending = S.pendingPhotos || [], pn = pending.length, atMax = pn >= 4, savingMeal = !!S.busy.addMeal, photoDisabled = atMax || savingMeal;
   const photoStatus = photoStatusText(pn);
+  const shortcutsHtml = mealShortcutsHtml(curType, savingMeal);
   return `<h1 class="sr">${esc(t("tab.food"))} · ${esc(fmtDate(date))}</h1>` + dateBar() + `<div class="stack">
   <section class="card"><div class="row between"><h2>${esc(t("food.targetsTitle", {suffix}))}</h2><span class="small muted">${esc(stageLabel(tg.st))}</span></div>${macroBars(tg, m)}
     <p class="small muted">${esc(t("food.targetsHint"))}</p></section>
   <section class="card"><h2>${esc(t("food.logTitle"))}</h2>
-    <div class="row" role="radiogroup" aria-label="${esc(t("food.mealTypeAria"))}">${MEAL_TYPES.map(x => `<label class="checks" style="display:inline-flex"><input type="radio" name="mtype" value="${x}" ${x===(S.mtype && MEAL_TYPES.includes(S.mtype) ? S.mtype : defType)?"checked":""}><span>${esc(mealTypeLabel(x))}</span></label>`).join("")}</div>
+    <div class="row" role="radiogroup" aria-label="${esc(t("food.mealTypeAria"))}">${MEAL_TYPES.map(x => `<label class="checks" style="display:inline-flex"><input type="radio" name="mtype" value="${x}" ${x===curType?"checked":""}><span>${esc(mealTypeLabel(x))}</span></label>`).join("")}</div>
+    ${shortcutsHtml}
     <div class="file-field" role="group" aria-labelledby="m-photo-lbl">
       <span class="lbl" id="m-photo-lbl">${esc(t("food.photoLabel"))}</span>
       <input id="m-photo" class="file-input" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true" ${photoDisabled?"disabled":""}>
@@ -2682,7 +3246,7 @@ function viewFood(){
       </div>
       ${pn ? `<div class="previews">${pending.map((f, i) => `<figure><img class="preview" src="${esc(safeImage(f.url))}" alt="${esc(t("food.photoAlt", {n:i+1}))}"><button type="button" id="m-photo-rm-${i}" class="thumb-del" data-act="unpick" data-v="${i}" aria-label="${esc(t("food.removePhotoAria", {n:i+1}))}" ${savingMeal?"disabled":""}><span aria-hidden="true">×</span></button></figure>`).join("")}</div>` : ""}
     </div>
-    <label>${esc(t("food.whatAte"))}<textarea id="m-text" placeholder="${esc(t("food.whatAtePh"))}">${esc(lsGet("bj-mtext",""))}</textarea></label>
+    <label>${esc(t("food.whatAte"))}<textarea id="m-text" placeholder="${esc(t("food.whatAtePh"))}">${esc(getMealTextDraft(date))}</textarea></label>
     <div class="row"><span class="small muted">${esc(t("food.macrosMode"))}</span>
       <button class="chip ${mode==="ai"?"on":""}" aria-pressed="${mode==="ai"}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>${esc(t("food.aiEst"))}</button>
       <button class="chip ${mode==="manual"?"on":""}" aria-pressed="${mode==="manual"}" data-act="mmode" data-v="manual">${esc(t("food.manual"))}</button></div>
@@ -2884,7 +3448,7 @@ async function addMeal(mode, btn){
     picked.forEach(f => { try { URL.revokeObjectURL(f.url); } catch {} });
     const remaining = (S.pendingPhotos || []).filter(f => !savedSet.has(f));
     S.pendingPhotos = remaining.length ? remaining : null;
-    S.mtype = null; lsSet("bj-mtext", "");
+    S.mtype = null; setMealTextDraft(date, ""); if (date === todayStr()) lsSet("bj-mtext", "");
     S.busy.addMeal = false;
     const warnPhoto = m.photoErr ? PHOTO_ERR(m.photoErr, !!(S.files[m.id]?.blob && S.assets && m.photoErr !== "decode")) : null;
     if (mode === "manual") { S.mfill = {}; render(); toast(warnPhoto || t("toast.mealNoted"), warnPhoto ? 6000 : 2200); return; }
@@ -4586,12 +5150,22 @@ document.addEventListener("click", async ev => {
       try {
         await updateDay(date, day => { day.workout = {...(day.workout || {}), ...clone(w)}; delete day.override; delete day.workoutDraft; delete day.extra; }, {quiet:true});
         backupWorkout(date, w);
+        if (S.restTimer && (!S.restTimer.date || S.restTimer.date === date)) resetRestTimerState();
         delete S.drafts[draftKey(date, plan.key)]; persistDrafts(); render();
         toast(t("toast.workoutSaved"));
       } catch {}
       finally { S.busy.saveWorkout = false; b.disabled = false; }
       break;
     }
+    case "rest-start": {
+      const plan = planFor(S.date), ex = plan.ex?.[+v];
+      if (!ex || plan.saved || S.days?.[S.date]?.workout?.done) break;
+      startRestTimer(ex.name, parseRestSeconds(ex.rest));
+      break;
+    }
+    case "rest-adj": adjustRestTimer(+v); break;
+    case "rest-toggle": toggleRestTimerPause(); break;
+    case "rest-dismiss": dismissRestTimer(); break;
     case "save-checkin": {
       const date = S.date, c = {}, snap = {};
       [["weight","#c-weight"],["steps","#c-steps"],["sleep","#c-sleep"],["bf","#c-bf"],["waist","#c-waist"]].forEach(([k,id]) => {
@@ -4609,6 +5183,7 @@ document.addEventListener("click", async ev => {
       break;
     }
     case "add-meal": await addMeal(v === "manual" ? "manual" : "ai", b); break;
+    case "quick-meal": await quickAddMeal(+v, b); break;
     case "mmode": S.mealMode = v; lsSet("bj-mmode", v); { const keep = $("#m-text")?.value; render(); if (keep != null && $("#m-text")) $("#m-text").value = keep; } break;
     case "ai-meal": {
       let anchor = null; if (S.comments) { try { anchor = await S.comments.anchorFor(b); } catch {} }
@@ -4693,6 +5268,7 @@ function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
 let logoutSyncMs = 5000;
 function clearUserLocal(id = S.uid || storageUser){
   if (!id) return;
+  resetRestTimerState(id);
   try {
     const prefix = `bj-user:${id}:`, keys = new Set(Object.keys(localStorage).filter(k => k.startsWith(prefix)));
     if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
@@ -4864,7 +5440,7 @@ document.addEventListener("input", ev => {
     const pl = planFor(S.date), d = getDraft(S.date, pl); d.exercises[+i].sets[+j][k] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
   } else if (el.dataset.f) {
     const pl = planFor(S.date), d = getDraft(S.date, pl); d[el.dataset.f] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
-  } else if (el.id === "m-text") lsSet("bj-mtext", el.value);
+  } else if (el.id === "m-text") setMealTextDraft(S.date, el.value);
   else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
   else if (el.id === "ufb-msg" && S.ufb) { S.ufb.message = el.value; const c = $("#ufb-count"); if (c) c.textContent = `${Array.from(el.value).length} / 2000`; }
   else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }
@@ -4892,7 +5468,7 @@ document.addEventListener("change", async ev => {
     focusEl($("#ufb-file-btn"));
     return;
   }
-  if (el.name === "mtype") { S.mtype = el.value; return; }
+  if (el.name === "mtype") { S.mtype = el.value; refreshMealShortcuts(); return; }
   if (el.dataset.mtypeOf) {
     const id = el.dataset.mtypeOf, v = el.value;
     updateDay(S.date, d => { const m = d.meals.find(x => x.id === id); if (m) m.type = v; }).then(() => toast(t("toast.mealTypeChanged", {type:mealTypeLabel(v)}))).catch(()=>{});
@@ -4957,6 +5533,7 @@ async function finishBootAfterConsent(){
   S.drafts = lsGet("bj-drafts", {});
   S.hostUser = me;
   S.uid = me?.id || null; S.owner = !!(me?.isOwner || me?.canEdit); // 主人或编辑者（admin）才能读旧的共享根路径
+  hydrateRestTimer(S.uid);
   S.cloud = !!(db && S.uid); S.raw = S.cloud ? db : null; S.assets = assets; S.sample = sample;
   S.noId = !!db && !S.uid;
   S.store = mkCloud(db, `data/users/${S.uid}/app`);
