@@ -14,7 +14,7 @@ const ROOT = path.resolve(__dirname, "..");
 const clientScript = fs.readFileSync(path.join(ROOT, "public/client-errors.js"), "utf8");
 const serverErrors = require(path.join(ROOT, "lib/client-errors.js"));
 
-function loadClientModule({ fetchImpl = async () => ({ ok: true, json: async () => ({}) }), ua = "", pathname = "/", lang = "zh-CN", storageMap = null } = {}) {
+function loadClientModule({ fetchImpl = async () => ({ ok: true, json: async () => ({}) }), ua = "", pathname = "/", origin, lang = "zh-CN", storageMap = null } = {}) {
   const listeners = new Map();
   const storage = storageMap ? {
     getItem: k => (storageMap.has(k) ? storageMap.get(k) : null),
@@ -26,13 +26,15 @@ function loadClientModule({ fetchImpl = async () => ({ ok: true, json: async () 
       listeners.get(type).push(fn);
     }
   };
+  const loc = { protocol: "https:", pathname, search: "?invite=SECRET_TOKEN&email=a@b.com", hash: "#frag" };
+  if (origin !== undefined) loc.origin = origin;
   const ctx = vm.createContext({
     window: win,
     globalThis: {},
     fetch: fetchImpl,
     sessionStorage: storage,
     navigator: { userAgent: ua },
-    location: { protocol: "https:", pathname, search: "?invite=SECRET_TOKEN&email=a@b.com", hash: "#frag" },
+    location: loc,
     document: { documentElement: { lang } },
     Date,
     Promise,
@@ -597,9 +599,260 @@ test("headless Chromium: client error reporting on login and app pages with zero
   await page.evaluate(() => { setTimeout(() => { throw new RangeError("App boom 13812345678"); }, 0); });
   await appPostP;
 
+  // 3. Dispatch filtered browser noise (Script error. + ResizeObserver loop) and verify separate filtered logging
+  const scriptNoiseP = page.waitForResponse(r => new URL(r.url()).pathname === "/api/client-error" && r.status() === 204);
+  await page.evaluate(() => {
+    window.dispatchEvent(new ErrorEvent("error", { message: "Script error.", filename: "", lineno: 0, colno: 0, error: null }));
+  });
+  await scriptNoiseP;
+
+  const roNoiseP = page.waitForResponse(r => new URL(r.url()).pathname === "/api/client-error" && r.status() === 204);
+  await page.evaluate(() => {
+    window.dispatchEvent(new ErrorEvent("error", { message: "ResizeObserver loop completed with undelivered notifications.", filename: "", lineno: 0, colno: 0, error: null }));
+  });
+  await roNoiseP;
+
   await page.waitForTimeout(100);
   const lines = stdout.split("\n").filter(l => l.startsWith("client-error "));
+  const filteredLines = stdout.split("\n").filter(l => l.startsWith("client-error-filtered "));
+  assert.equal(lines.length, 2, `filtered noise must not log as client-error: ${lines.join("\n")}`);
   assert.ok(lines.some(l => l.includes("auth=anon page=login ") && l.includes("name=TypeError") && !l.includes("leak@example.com") && !l.includes("secret12345678") && !l.includes("SECRET_URL_INVITE")), `expected scrubbed anon log in: ${lines.join("\n")}`);
   assert.ok(lines.some(l => l.includes("auth=user page=setup ") && l.includes("name=RangeError") && !l.includes("13812345678")), `expected scrubbed auth log in: ${lines.join("\n")}`);
+  assert.ok(filteredLines.some(l => l.includes("auth=user page=setup ") && l.includes("reason=script_error")), `expected script_error filtered log in: ${filteredLines.join("\n")}`);
+  assert.ok(filteredLines.some(l => l.includes("auth=user page=setup ") && l.includes("reason=resize_observer")), `expected resize_observer filtered log in: ${filteredLines.join("\n")}`);
   assert.deepEqual(cspViolations, [], `expected zero CSP violations, got: ${cspViolations.join("; ")}`);
+});
+
+test("every HTML page and script loaded or shipped under public/ is recognised by client-errors SOURCE_RE", () => {
+  const { api } = loadClientModule();
+  const publicDir = path.join(ROOT, "public");
+
+  function walkFiles(dir) {
+    const out = [];
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) out.push(...walkFiles(full));
+      else out.push(full);
+    }
+    return out;
+  }
+
+  const allPublicFiles = walkFiles(publicDir);
+  const htmlFiles = allPublicFiles.filter(f => f.endsWith(".html"));
+  // Always check app/index.html too in case public/index.html was not yet built.
+  const pageSources = new Set(["index.html"]);
+  const loadedScriptBasenames = new Set(["client-errors.js", "shim.js", "heic2any.min.js", "heic2any-worker.js"]);
+
+  for (const file of [...htmlFiles, path.join(ROOT, "app/index.html")]) {
+    const base = path.basename(file);
+    pageSources.add(base);
+    const html = fs.readFileSync(file, "utf8");
+    for (const m of html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)) {
+      const raw = m[1].replace(/[?#][\s\S]*$/, "");
+      if (/^https?:\/\//i.test(raw)) continue;
+      loadedScriptBasenames.add(path.basename(raw));
+    }
+  }
+
+  for (const file of allPublicFiles) {
+    if (file.endsWith(".js")) loadedScriptBasenames.add(path.basename(file));
+  }
+
+  // PR #57 scripts must be explicitly present in the checked set
+  for (const expected of ["login.js", "phone-rules.js", "privacy.js", "terms.js", "guide.js", "boot.js", "nocturne.js"]) {
+    assert.ok(loadedScriptBasenames.has(expected), `expected ${expected} to be discovered in public/`);
+  }
+
+  for (const name of [...pageSources, ...loadedScriptBasenames]) {
+    const formatted = api.formatSource(`https://leanritual.app/site/${name}?v=123`, 42, 7, "");
+    assert.equal(formatted, `${name}:42:7`, `client-errors.js SOURCE_RE does not recognise ${name}`);
+    const validated = serverErrors.validateReport(
+      { name: "Error", message: "boom", source: `${name}:42:7`, page: "today" },
+      { isAuthenticated: true }
+    );
+    assert.equal(validated.source, `${name}:42:7`, `lib/client-errors.js did not accept source ${name}`);
+  }
+});
+
+test("client reporter filters cross-origin Script error., extension/non-origin URLs, and ResizeObserver loop events into separate filtered tally", async () => {
+  const sent = [];
+  const storageMap = new Map();
+  const fetchImpl = async (url, opts) => {
+    if (url === "/api/health") return { ok: true, json: async () => ({ ok: true, revision: "1e51b8e456ad" }) };
+    sent.push(JSON.parse(opts.body));
+    return { ok: true, status: 204 };
+  };
+  const { api, listeners } = loadClientModule({
+    fetchImpl,
+    ua: "Mozilla/5.0 (Linux; Android 16; Model) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36",
+    pathname: "/login.html",
+    origin: "https://leanritual.app",
+    lang: "zh-CN",
+    storageMap
+  });
+  await new Promise(r => setImmediate(r));
+  const onError = listeners.get("error")[0];
+
+  // 1. Cross-origin muted "Script error." -> filtered as script_error (deduped on repeat)
+  onError({ message: "Script error.", filename: "", lineno: 0, colno: 0, error: null });
+  onError({ message: "Script error.", filename: "", lineno: 0, colno: 0, error: null });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].filtered, "script_error");
+  assert.equal(sent[0].source, "unknown");
+
+  // 2. Extension & non-origin script URLs -> filtered as non_origin (deduped per reason on same page-load)
+  onError({ message: "ext boom", filename: "chrome-extension://abcdef/content.js", lineno: 10, colno: 2, error: new Error("ext boom") });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].filtered, "non_origin");
+  assert.equal(sent[1].source, "unknown");
+
+  // Additional non-origin variants are classified as non_origin too
+  assert.equal(api.classifyWindowError({ message: "x", filename: "safari-web-extension://1234/inject.js", lineno: 1, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
+  assert.equal(api.classifyWindowError({ message: "x", filename: "webkit-masked-url://hidden/", lineno: 0, colno: 0, error: null }, "https://leanritual.app"), "non_origin");
+  assert.equal(api.classifyWindowError({ message: "x", filename: "https://other-host.example/inject.js", lineno: 5, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
+
+  // 3. Benign ResizeObserver loop events -> filtered as resize_observer even with same-origin filename
+  onError({ message: "ResizeObserver loop completed with undelivered notifications.", filename: "https://leanritual.app/", lineno: 0, colno: 0, error: null });
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].filtered, "resize_observer");
+  assert.equal(api.classifyWindowError({ message: "ResizeObserver loop limit exceeded", filename: "", lineno: 0, colno: 0, error: null }, "https://leanritual.app"), "resize_observer");
+  assert.equal(api.getFilteredCount(), 3);
+  assert.equal(storageMap.get("bj-err-filtered-count"), "3");
+
+  // 4. Unhandled rejection purely from an extension/non-origin stack -> filtered, not real error
+  const extRej = new Error("ext async fail");
+  extRej.stack = "Error: ext async fail\n    at fn (moz-extension://xyz/bg.js:12:3)";
+  const freshSent = [];
+  const fresh = api.createReporter({
+    fetch: async (_u, o) => { freshSent.push(JSON.parse(o.body)); return { ok: true }; },
+    location: { protocol: "https:", origin: "https://leanritual.app", pathname: "/" },
+    navigator: { userAgent: "" },
+    document: { documentElement: { lang: "zh" } },
+    sessionStorage: null
+  });
+  fresh.handleRejection({ reason: extRej });
+  assert.equal(freshSent.length, 1);
+  assert.equal(freshSent[0].filtered, "non_origin");
+
+  // Mixed stack (app + extension) MUST NOT be filtered
+  const mixedRej = new TypeError("Cannot read properties of undefined (reading 'x')");
+  mixedRej.stack = "TypeError: ...\n    at appFn (https://leanritual.app/site/login.js:44:9)\n    at extWrap (chrome-extension://xyz/hook.js:1:1)";
+  fresh.handleRejection({ reason: mixedRej });
+  assert.equal(freshSent.length, 2);
+  assert.equal(freshSent[1].filtered, undefined);
+  assert.equal(freshSent[1].source, "login.js:44:9");
+
+  // 5. Real same-origin errors (including login.js and phone-rules.js, and same-origin message "Script error.") are NOT filtered
+  onError({ message: "Script error.", filename: "https://leanritual.app/site/login.js", lineno: 88, colno: 4, error: new Error("Script error.") });
+  onError({ message: "bad phone", filename: "https://leanritual.app/site/phone-rules.js", lineno: 365, colno: 5, error: new TypeError("bad phone") });
+  assert.equal(sent.length, 5);
+  assert.equal(sent[3].filtered, undefined);
+  assert.equal(sent[3].source, "login.js:88:4");
+  assert.equal(sent[4].filtered, undefined);
+  assert.equal(sent[4].source, "phone-rules.js:365:5");
+
+  // 6. Filtered counter does not consume real error session budget (all 10 real errors can still be sent)
+  const capSent = [];
+  const capStorage = new Map();
+  const capped = api.createReporter({
+    fetch: async (_u, o) => { capSent.push(JSON.parse(o.body)); return { ok: true }; },
+    location: { protocol: "https:", origin: "https://leanritual.app", pathname: "/" },
+    navigator: { userAgent: "" },
+    document: { documentElement: { lang: "zh" } },
+    sessionStorage: { getItem: k => capStorage.get(k) ?? null, setItem: (k, v) => capStorage.set(k, String(v)) },
+    maxPerSession: 2
+  });
+  capped.reportFiltered("script_error");
+  capped.reportFiltered("non_origin");
+  capped.reportFiltered("resize_observer"); // hits filtered cap of 2
+  assert.equal(capSent.filter(p => p.filtered).length, 2);
+  assert.equal(capped.report({ name: "Error", message: "real 1", source: "index.html:1:1" }), true);
+  assert.equal(capped.report({ name: "Error", message: "real 2", source: "index.html:2:1" }), true);
+  assert.equal(capped.report({ name: "Error", message: "real 3", source: "index.html:3:1" }), false);
+  assert.equal(capSent.filter(p => !p.filtered).length, 2);
+});
+
+test("server lib/client-errors logs filtered noise separately under client-error-filtered with independent rate limits", async () => {
+  const logs = [];
+  const handler = serverErrors.createClientErrors({
+    expectedOrigin: "https://leanritual.app",
+    releaseRevision: "1e51b8e456adad3d3578300507aeac723056f6ae",
+    userLimit: 2,
+    ipLimit: 2,
+    anonIpLimit: 1,
+    globalLimit: 2,
+    windowMs: 60_000,
+    log: line => logs.push(line)
+  });
+
+  const invoke = async ({ body, user = { id: "u1" }, ip = "203.0.113.20" }) => {
+    const raw = Buffer.from(JSON.stringify(body));
+    let status = null;
+    const res = { writeHead(s) { status = s; }, end() {} };
+    const req = {
+      method: "POST",
+      headers: {
+        "x-bojin": "1",
+        origin: "https://leanritual.app",
+        "sec-fetch-site": "same-origin",
+        "content-type": "application/json"
+      }
+    };
+    await handler.handle(req, res, {
+      getUser: async () => user,
+      ip,
+      readBody: async () => raw
+    });
+    return status;
+  };
+
+  // Invalid filtered reasons are rejected with 400
+  await assert.rejects(
+    () => invoke({ body: { page: "today", filtered: "arbitrary_secret_reason" } }),
+    err => err.status === 400
+  );
+  await assert.rejects(
+    () => invoke({ body: { page: "today", filtered: "script_error\n" } }),
+    err => err.status === 400
+  );
+  await assert.rejects(
+    () => invoke({ body: { page: "today", filtered: 123 } }),
+    err => err.status === 400
+  );
+
+  // Valid filtered noise logs as client-error-filtered with no secrets/source/msg and respects its own limit (2)
+  assert.equal(await invoke({
+    body: {
+      page: "today",
+      lang: "zh",
+      ua: "Chrome/Android16",
+      filtered: "script_error",
+      source: "index.html:1:1",
+      message: "SECRET_SHOULD_NOT_APPEAR",
+      ts: "2026-11-27T01:55:40.335Z"
+    }
+  }), 204);
+  assert.equal(await invoke({
+    body: { page: "me", lang: "zh", ua: "Chrome/Android16", filtered: "non_origin", ts: "2026-11-27T01:55:40.386Z" }
+  }), 204);
+  assert.equal(await invoke({
+    body: { page: "login", lang: "zh", ua: "Chrome/Android16", filtered: "resize_observer", ts: "2026-11-27T01:55:40.402Z" }
+  }), 204); // dropped silently by filtered cap of 2
+
+  const filteredLogs = logs.filter(l => l.startsWith("client-error-filtered "));
+  assert.equal(filteredLogs.length, 2);
+  assert.equal(logs.filter(l => l.startsWith("client-error ")).length, 0);
+  assert.equal(
+    filteredLogs[0],
+    "client-error-filtered auth=user page=today lang=zh rev=1e51b8e456ad ua=Chrome/Android16 reason=script_error ts=2026-11-27T01:55:40.335Z"
+  );
+  assert.ok(!filteredLogs[0].includes("SECRET_SHOULD_NOT_APPEAR"));
+
+  // Exhausting filtered rate limit must NOT starve real app error reports
+  assert.equal(await invoke({
+    body: { page: "login", lang: "zh", ua: "Chrome/Android16", name: "TypeError", message: "Cannot read properties of null", source: "login.js:42:9" }
+  }), 204);
+  const realLogs = logs.filter(l => l.startsWith("client-error "));
+  assert.equal(realLogs.length, 1);
+  assert.match(realLogs[0], /source=login\.js:42:9 name=TypeError/);
 });
