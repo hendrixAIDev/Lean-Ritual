@@ -395,6 +395,66 @@ test('sessionStorage is strictly user-scoped, cleared on logout, and isolated ac
   assert.equal(u1.intervals.size, 0);
 });
 
+test('rest timer date-scoping regression: hidden on adjacent completed or other workout dates, preserved on return, and cleared when owning workout is marked done', async () => {
+  const env = mountTimerEnv({ lang: 'zh', uid: 'u1' });
+  // Seed adjacent date 2026-11-19 with a completed workout and 2026-11-21 with an active workout
+  vm.runInContext(`
+    S.days["2026-11-19"] = {
+      date: "2026-11-19",
+      meals: [],
+      workout: { key: "pull", slot: "eve", done: true, exercises: [{ name: "硬拉", sets: [{ w: 100, r: 5 }] }] }
+    };
+    S.days["2026-11-21"] = { date: "2026-11-21", override: "legs", meals: [] };
+    render();
+  `, env.ctx);
+
+  // Start 3:00 timer on active workout date 2026-11-20
+  await env.click('rest-start', '0');
+  assert.equal(env.valEl.textContent, '3:00');
+  assert.equal(vm.runInContext('S.restTimer.date', env.ctx), '2026-11-20');
+
+  // Switch to adjacent date 2026-11-19 (completed workout): bar and controls must be hidden!
+  await env.click('date', '-1');
+  assert.equal(vm.runInContext('S.date', env.ctx), '2026-11-19');
+  assert.doesNotMatch(env.appEl.innerHTML, /id="rest-timer-bar"/, 'completed adjacent date hides prior timer bar');
+  assert.doesNotMatch(env.appEl.innerHTML, /data-act="rest-(?:adj|toggle|dismiss|start)"/, 'completed adjacent date renders no timer controls');
+  assert.equal(env.slotEl.innerHTML, '', 'rest-timer-slot is empty on completed adjacent date');
+
+  // Direct control clicks while on 2026-11-19 must NOT mutate or dismiss 2026-11-20's timer
+  await env.click('rest-adj', '-15');
+  await env.click('rest-toggle');
+  await env.click('rest-dismiss');
+  await env.click('rest-start', '0');
+  assert.ok(vm.runInContext('S.restTimer', env.ctx), 'owning date timer remains intact while viewing another date');
+  assert.equal(vm.runInContext('S.restTimer.pausedRemainingMs', env.ctx), null, 'owning date timer was not paused from another date');
+
+  // Advance wall clock by 45s while away and tick -> bar stays hidden on 2026-11-19
+  env.advanceMs(45_000);
+  env.tickAll();
+  assert.equal(env.slotEl.innerHTML, '');
+
+  // Also check navigating to another active workout date (2026-11-21) hides 2026-11-20's timer
+  await env.click('date', '1'); // -> 2026-11-20
+  await env.click('date', '1'); // -> 2026-11-21
+  assert.equal(vm.runInContext('S.date', env.ctx), '2026-11-21');
+  assert.doesNotMatch(env.appEl.innerHTML, /id="rest-timer-bar"/, 'different active workout date hides 2026-11-20 timer');
+
+  // Navigate back to owning active workout date 2026-11-20 -> timer reappears with exact remaining time (2:15)
+  await env.click('date', '-1');
+  assert.equal(vm.runInContext('S.date', env.ctx), '2026-11-20');
+  assert.match(env.appEl.innerHTML, /id="rest-timer-bar"/, 'returning to owning workout date shows active timer bar');
+  assert.equal(env.valEl.textContent, '2:15', 'accurate wall-clock remaining time after navigating away and back');
+
+  // Marking owning workout done clears the timer state, storage, and UI bar
+  vm.runInContext(`
+    S.days["2026-11-20"].workout = { key: "push", slot: "eve", done: true, exercises: [{ name: "上斜杠铃卧推", sets: [{ w: 60, r: 5 }] }] };
+    render();
+  `, env.ctx);
+  assert.equal(vm.runInContext('S.restTimer', env.ctx), null, 'marking owning workout done clears timer');
+  assert.equal(env.sessionStorage.getItem('lr_rest_timer_u1'), null, 'sessionStorage entry cleared when owning workout is done');
+  assert.doesNotMatch(env.appEl.innerHTML, /id="rest-timer-bar"/);
+});
+
 function resolvePlaywright() {
   const candidates = ['playwright'];
   const home = os.homedir();

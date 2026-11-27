@@ -20,7 +20,7 @@ function extractInlineScript(html) {
   return inline[2];
 }
 
-function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-20T12:30:00' } = {}) {
+function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-20T12:30:00', onCommit = null } = {}) {
   const html = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
   const script = extractInlineScript(html).split('/* ============ 启动 ============ */')[0];
 
@@ -58,11 +58,23 @@ function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-
 
   const deletedAssets = [];
   const listeners = {};
-  const appEl = { id: 'app', innerHTML: '', contains: () => false };
+  const mTextEl = { id: 'm-text', value: '' };
+  const appEl = {
+    id: 'app',
+    _html: '',
+    get innerHTML() { return this._html; },
+    set innerHTML(v) {
+      this._html = String(v);
+      const tm = this._html.match(/<textarea\b[^>]*id="m-text"[^>]*>([\s\S]*?)<\/textarea>/);
+      if (tm) {
+        mTextEl.value = tm[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+      }
+    },
+    contains: () => false
+  };
   const tabsEl = { id: 'tabs', innerHTML: '', hidden: true, setAttribute() {} };
   const toastEl = { id: 'toast', innerHTML: '', textContent: '', hidden: true };
   const srEl = { id: 'sr-status', textContent: '' };
-  const mTextEl = { id: 'm-text', value: '' };
   const shortcutsEl = { id: 'meal-shortcuts', innerHTML: '' };
   let checkedMtype = null;
 
@@ -93,6 +105,7 @@ function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-
     async get(p) { return storeData.has(p) ? JSON.parse(JSON.stringify(storeData.get(p))) : null; },
     async set(p, d) { storeData.set(p, JSON.parse(JSON.stringify(d))); },
     async commit(changes) {
+      if (onCommit) await onCommit(changes);
       for (const c of changes) {
         if (c.after !== undefined) storeData.set(c.path, JSON.parse(JSON.stringify(c.after)));
       }
@@ -382,6 +395,73 @@ test('meal shortcuts: HTML-escapes hostile meal names, enforces WCAG 2.5.3 aria-
   enApp.setCheckedMtype('午餐');
   await enApp.click('quick-meal', '0');
   assert.equal(enApp.toastEl.textContent, `Added "${hostile}"`);
+});
+
+test('meal shortcuts delayed-write regression: preserves edits typed while write is pending and never leaks drafts across dates', async () => {
+  let releaseCommit = null;
+  let commitCount = 0;
+  const days = {
+    '2026-11-18': {
+      date: '2026-11-18',
+      meals: [
+        { id: 'h1', type: '午餐', text: '鸡胸肉米饭', time: '12:30', est: { kcal: 640, protein: 48, carbs: 70, fat: 16, by: 'manual' } }
+      ]
+    },
+    '2026-11-19': { date: '2026-11-19', meals: [] },
+    '2026-11-20': { date: '2026-11-20', meals: [] }
+  };
+
+  const app = mountApp({
+    lang: 'zh',
+    days,
+    onCommit: () => {
+      commitCount++;
+      return new Promise(resolve => { releaseCommit = resolve; });
+    }
+  });
+
+  // Scenario A: same date — overlapping double-tap + editing #m-text while write is pending
+  app.mTextEl.value = 'Pre-tap draft';
+  const tap1 = app.click('quick-meal', '0');
+  // Wait microtasks until commit is in-flight
+  for (let i = 0; i < 10 && !releaseCommit; i++) await Promise.resolve();
+  assert.ok(releaseCommit, 'first shortcut tap entered async commit');
+
+  // Overlapping second tap while first is in-flight must be ignored
+  await app.click('quick-meal', '0');
+  assert.equal(commitCount, 1, 'overlapping double-tap commits only once');
+
+  // Edit draft while write is still pending (even without firing input/lsSet)
+  app.mTextEl.value = 'Pre-tap draft + broccoli';
+
+  const done1 = releaseCommit;
+  releaseCommit = null;
+  done1();
+  await tap1;
+
+  assert.equal(vm.runInContext('S.days["2026-11-20"].meals.length', app.ctx), 1, 'exactly one meal saved');
+  assert.equal(app.mTextEl.value, 'Pre-tap draft + broccoli', 'latest edits typed while write was pending are preserved');
+
+  // Scenario B: user switches dates while shortcut write is pending -> draft for new date is preserved & old date draft never leaks
+  app.mTextEl.value = 'Day 20 draft';
+  const tap2 = app.click('quick-meal', '0');
+  for (let i = 0; i < 10 && !releaseCommit; i++) await Promise.resolve();
+  assert.ok(releaseCommit, 'second shortcut tap entered async commit');
+
+  // Navigate to previous day (2026-11-19) while 2026-11-20 write is still pending, and type a new draft there
+  await app.click('date', '-1');
+  assert.equal(vm.runInContext('S.date', app.ctx), '2026-11-19');
+  app.mTextEl.value = 'Day 19 draft';
+
+  const done2 = releaseCommit;
+  releaseCommit = null;
+  done2();
+  await tap2;
+
+  assert.equal(vm.runInContext('S.date', app.ctx), '2026-11-19', 'stays on switched date');
+  assert.equal(app.mTextEl.value, 'Day 19 draft', 'switched date draft is preserved and never clobbered by prior date draft');
+  assert.equal(vm.runInContext('S.days["2026-11-19"].meals.length', app.ctx), 0, 'meal was NOT written to switched date');
+  assert.equal(vm.runInContext('S.days["2026-11-20"].meals.length', app.ctx), 2, 'meal was written to owning date 2026-11-20');
 });
 
 function resolvePlaywright() {

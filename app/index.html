@@ -2583,9 +2583,18 @@ function resetRestTimerState(id = restTimerUserId()){
   S.restTimer = null;
   clearRestTimerStorage(id);
 }
-function restTimerBarHtml(now = Date.now()){
+function isRestTimerVisibleFor(date = S.date, rt = S.restTimer){
+  if (!rt || !rt.date || rt.date !== date) return false;
+  if (S.days?.[rt.date]?.workout?.done) return false;
+  return true;
+}
+function restTimerBarHtml(now = Date.now(), date = S.date){
   const rt = S.restTimer;
   if (!rt) return "";
+  if (rt.date && S.days?.[rt.date]?.workout?.done) {
+    resetRestTimerState();
+    return "";
+  }
   if (!rt.done && rt.pausedRemainingMs == null && rt.endAt != null && now >= rt.endAt) {
     rt.done = true;
     rt.endAt = null;
@@ -2596,6 +2605,7 @@ function restTimerBarHtml(now = Date.now()){
     }
     persistRestTimer();
   }
+  if (!isRestTimerVisibleFor(date, rt)) return "";
   const isPaused = !rt.done && rt.pausedRemainingMs != null;
   const remSec = restTimerRemainingSec(rt, now);
   const exLabel = exName(rt.exName);
@@ -2623,7 +2633,7 @@ function mountRestTimerSlot(restoreFocusId = null){
   const slot = document.getElementById("rest-timer-slot");
   if (!slot) return;
   slot.innerHTML = restTimerBarHtml();
-  if (restoreFocusId) {
+  if (restoreFocusId && slot.innerHTML) {
     const target = document.getElementById(restoreFocusId);
     if (target && !target.disabled) focusEl(target);
   }
@@ -2631,11 +2641,19 @@ function mountRestTimerSlot(restoreFocusId = null){
 function syncRestTimer(now = Date.now()){
   const rt = S.restTimer;
   if (!rt) { stopRestTimerTick(); return; }
+  if (rt.date && S.days?.[rt.date]?.workout?.done) {
+    resetRestTimerState();
+    mountRestTimerSlot();
+    return;
+  }
+  const visible = isRestTimerVisibleFor(S.date, rt);
   if (rt.done || rt.pausedRemainingMs != null) {
     stopRestTimerTick();
-    const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
-    const txt = fmtTimer(restTimerRemainingSec(rt, now));
-    if (valEl && valEl.textContent !== txt) valEl.textContent = txt;
+    if (visible) {
+      const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
+      const txt = fmtTimer(restTimerRemainingSec(rt, now));
+      if (valEl && valEl.textContent !== txt) valEl.textContent = txt;
+    }
     return;
   }
   const remMs = Math.max(0, (rt.endAt || now) - now);
@@ -2650,16 +2668,18 @@ function syncRestTimer(now = Date.now()){
     persistRestTimer();
     const ae = typeof document !== "undefined" ? document.activeElement : null;
     const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
-    const focusInside = !!(ae && slot && slot.contains?.(ae));
+    const focusInside = !!(visible && ae && slot && slot.contains?.(ae));
     mountRestTimerSlot(focusInside ? "rt-dismiss" : null);
     if (needAnnounce) announce(t("rest.announceDone", { ex: exName(rt.exName) }));
     return;
   }
+  if (!visible) return;
   const valEl = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-val") : null;
   const nextText = fmtTimer(remSec);
   if (valEl && valEl.textContent !== nextText) valEl.textContent = nextText;
 }
 function startRestTimer(exNameCanon, durationSec){
+  if (S.days?.[S.date]?.workout?.done) return;
   const sec = Math.max(1, Math.round(Number(durationSec) || 90));
   const now = Date.now();
   S.restTimer = {
@@ -2678,7 +2698,7 @@ function startRestTimer(exNameCanon, durationSec){
 }
 function adjustRestTimer(deltaSec){
   const rt = S.restTimer;
-  if (!rt) return;
+  if (!isRestTimerVisibleFor(S.date, rt)) return;
   const deltaMs = (Number(deltaSec) || 0) * 1000;
   const now = Date.now();
   const focusId = deltaSec < 0 ? "rt-minus" : "rt-plus";
@@ -2728,7 +2748,7 @@ function adjustRestTimer(deltaSec){
 }
 function toggleRestTimerPause(){
   const rt = S.restTimer;
-  if (!rt || rt.done) return;
+  if (!isRestTimerVisibleFor(S.date, rt) || rt.done) return;
   const now = Date.now();
   const ae = typeof document !== "undefined" ? document.activeElement : null;
   const keepBtnFocus = ae && ae.id === "rt-toggle";
@@ -2760,6 +2780,8 @@ function toggleRestTimerPause(){
   }
 }
 function dismissRestTimer(){
+  const rt = S.restTimer;
+  if (!isRestTimerVisibleFor(S.date, rt)) return;
   const ae = typeof document !== "undefined" ? document.activeElement : null;
   const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
   const focusInside = !!(ae && slot && slot.contains?.(ae));
@@ -3134,7 +3156,6 @@ async function quickAddMeal(idx, btn){
   const sc = list[+idx];
   if (!sc) return;
   const date = S.date;
-  const keep = $("#m-text")?.value;
   S.busy.addMeal = true;
   if (btn) btn.disabled = true;
   try {
@@ -3157,8 +3178,25 @@ async function quickAddMeal(idx, btn){
     };
     await updateDay(date, day => { day.meals = [...day.meals.filter(x => x.id !== m.id), clone(m)]; }, { quiet: true });
     S.busy.addMeal = false;
-    render();
-    if (keep != null && $("#m-text")) $("#m-text").value = keep;
+    if (S.tab === "food" && S.date !== date) {
+      // 用户在保存期间切到了别的日期：只就地刷新常用餐食排序，不触碰当前日期的草稿输入框
+      refreshMealShortcuts();
+    } else {
+      const renderedDate = S.date;
+      const liveEl = S.tab === "food" && renderedDate === date ? $("#m-text") : null;
+      const liveText = liveEl ? liveEl.value : null;
+      const sel = liveEl && typeof document !== "undefined" && document.activeElement === liveEl
+        ? [(() => { try { return liveEl.selectionStart; } catch { return null; } })(), (() => { try { return liveEl.selectionEnd; } catch { return null; } })()]
+        : null;
+      render();
+      if (liveText != null && S.tab === "food" && S.date === date && S.date === renderedDate) {
+        const nextEl = $("#m-text");
+        if (nextEl) {
+          nextEl.value = liveText;
+          if (sel && sel[0] != null && sel[1] != null) { try { nextEl.setSelectionRange(sel[0], sel[1]); } catch {} }
+        }
+      }
+    }
     const shortName = sc.text.length > 40 ? sc.text.slice(0, 39) + "…" : sc.text;
     toast(t("toast.mealQuickAdded", { name: shortName }));
   } catch {}
@@ -5105,7 +5143,7 @@ document.addEventListener("click", async ev => {
     }
     case "rest-start": {
       const plan = planFor(S.date), ex = plan.ex?.[+v];
-      if (!ex) break;
+      if (!ex || plan.saved || S.days?.[S.date]?.workout?.done) break;
       startRestTimer(ex.name, parseRestSeconds(ex.rest));
       break;
     }
