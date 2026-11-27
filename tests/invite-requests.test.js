@@ -14,6 +14,10 @@ const {
   MAX_NAME_LEN,
   MAX_GOAL_LEN,
   MAX_NOTE_LEN,
+  DEFAULT_RETENTION_DAYS,
+  MAX_RETENTION_DAYS,
+  inviteRequestOptions,
+  pruneInviteRequestData,
   formatAlertBody,
   sendInviteRequestAlert,
   createInviteRequests
@@ -237,19 +241,30 @@ test("unit: validation, strict no-op pending dedup, decoupled metadata-only aler
   await assert.rejects(() => svc.submit({ name: "A", contactKind: "email", contactValue: "a@b.com", goal: "g".repeat(MAX_GOAL_LEN + 1) }), e => e.code === "goal_too_long");
   await assert.rejects(() => svc.submit({ name: "A", contactKind: "email", contactValue: "a@b.com", goal: "ok", note: "n".repeat(MAX_NOTE_LEN + 1) }), e => e.code === "note_too_long");
 
-  // 9. Deterministic retention & expired rate-limit bucket pruning (without needing new submissions)
+  // 9. Retention max cap clamping (<= 90 days) & deterministic retention/rate-limit pruning
+  assert.equal(DEFAULT_RETENTION_DAYS, 90);
+  assert.equal(MAX_RETENTION_DAYS, 90);
+  assert.equal(inviteRequestOptions({}).retentionDays, 90);
+  assert.equal(inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "30" }).retentionDays, 30);
+  assert.equal(inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "91" }).retentionDays, 90);
+  assert.equal(inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "3650" }).retentionDays, 90);
+  assert.throws(() => inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "0" }));
+  assert.throws(() => inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "-5" }));
+  assert.throws(() => inviteRequestOptions({ INVITE_REQUEST_RETENTION_DAYS: "abc" }));
+
+  // Even when a caller passes retentionDays > 90 directly to pruneInviteRequestData, it clamps to 90 days
   nowMs += 95 * 24 * 60 * 60 * 1000; // 95 days later -> all prior requests & rate-limit buckets expired
   const fresh = await svc.submit({ name: "Fresh", contactKind: "email", contactValue: "fresh@example.com", goal: "Keep me" }, { ip: "203.0.113.99" });
   await svc.flushPendingAlerts();
   // Insert an old rate-limit bucket explicitly to prove deterministic prune clears it independently of submit()
   db.prepare("INSERT OR REPLACE INTO invite_request_rate_limits (bucket, window, n) VALUES ('ip:oldbucket', 'd:2026-01-01', 3)").run();
-  const pruned = svc.pruneExpired();
-  assert.ok(pruned.deletedRequests >= 6, `expected expired requests pruned, got ${pruned.deletedRequests}`);
+  const pruned = pruneInviteRequestData(db, { nowMs, retentionDays: 365 });
+  assert.ok(pruned.deletedRequests >= 6, `expected expired requests pruned under 90-day clamp, got ${pruned.deletedRequests}`);
   assert.ok(pruned.deletedRateLimits >= 1, `expected expired rate-limit buckets pruned, got ${pruned.deletedRateLimits}`);
   assert.deepEqual(
     db.prepare("SELECT id FROM invite_requests").all().map(r => r.id),
     [fresh.id],
-    "only fresh request remains after 90-day retention prune"
+    "only fresh request remains after 90-day clamped retention prune"
   );
   // Expired requests get tombstones in invite_request_deletions (zero PII)
   assert.ok(db.prepare("SELECT 1 FROM invite_request_deletions WHERE id = ?").get(r1.id));
@@ -560,10 +575,12 @@ test("HTTP integration + body timeout + admin CLI (list/show/mark/delete/prune) 
     restoredDb.close();
   }
 
-  // Admin CLI prune command runs cleanly
+  // Admin CLI prune command runs cleanly and rejects --days > 90
   const pruneOut = runAdmin(["prune", "--days", "90", "--json"]);
   assert.equal(pruneOut.status, 0, pruneOut.stderr);
   assert.equal(JSON.parse(pruneOut.stdout).ok, true);
+  const pruneTooHigh = runAdmin(["prune", "--days", "91"]);
+  assert.notEqual(pruneTooHigh.status, 0, "prune --days must reject values above 90");
 });
 
 test("Playwright Chromium: landing invite-request form (zh/en, 375px & desktop, a11y, CSP, phone/email submit)", {
@@ -767,7 +784,7 @@ test("Playwright Chromium: landing invite-request form (zh/en, 375px & desktop, 
   ]);
 });
 
-test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts, status note, 90-day retention, and deletion-ledger replay", () => {
+test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts, status note, 90-day live-DB vs backup retention, and ledger-conditional restore replay", () => {
   const html = fs.readFileSync(path.join(ROOT, "public/privacy.html"), "utf8");
   const zh = html.match(/<article id="doc-zh">([\s\S]*?)<\/article>/)[1];
   const en = html.match(/<article id="doc-en" hidden>([\s\S]*?)<\/article>/)[1];
@@ -780,7 +797,10 @@ test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts,
     "2 天后自动清理",
     "仅含元数据的纯文本提醒",
     "不包含你的称呼、手机号、邮箱地址、目标正文、补充说明或状态备注",
-    "保留最多 90 天",
+    "实时主机数据库中默认并最多保留 90 天",
+    "服务启动时及每小时会自动清理超期记录",
+    "服务器备份快照按下方独立的备份保留策略留存副本",
+    "恢复时可用的最新删除清单",
     "随机申请编号与删除时间"
   ]) {
     assert.ok(zh.includes(term), `privacy.html zh missing term: ${term}`);
@@ -792,7 +812,11 @@ test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts,
     "pruned after 2 days",
     "metadata-only plain-text notification",
     "never your name, phone number, email address, goal text, optional note, or status note",
-    "up to 90 days",
+    "In the live host database",
+    "capped at 90 days maximum",
+    "swept automatically at server startup and hourly",
+    "Server backup snapshots retain copies under their own separate backup retention schedule",
+    "latest available deletion ledger is replayed on restore",
     "random request ID and deletion timestamp only"
   ]) {
     assert.ok(en.includes(term), `privacy.html en missing term: ${term}`);
@@ -803,10 +827,14 @@ test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts,
   for (const term of [
     "INVITE_REQUEST_BODY_TIMEOUT_MS=5000",
     "INVITE_REQUEST_RETENTION_DAYS",
+    "values above `90` are clamped to `90`",
     "[invite-request] #id (phone|email, zh|en)",
     "invite_request_deletions",
     "invite-requests-admin.js delete",
-    "invite-requests-admin.js prune"
+    "invite-requests-admin.js prune",
+    "deletions-live.json",
+    "When the outgoing `DATA_DIR` is unavailable",
+    "deleted_req_ids"
   ]) {
     assert.ok(ops.includes(term), `docs/OPERATIONS.md missing term: ${term}`);
   }

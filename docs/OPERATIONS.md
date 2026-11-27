@@ -74,35 +74,67 @@ sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin-re
 
 ### Finding the true newest deletion ledger
 
-The latest deletion ledger is mandatory, even if `users` is empty (`[]`). Never assume the ledger paired with the selected snapshot — or even the newest file in `/var/backups/bojin/` alone — is the newest ledger on the host:
+The latest deletion ledger is mandatory, even if `users` and `inviteRequests` are empty (`[]`). Never assume the ledger paired with the selected snapshot — or even the newest file in `/var/backups/bojin/` and `/var/backups/bojin-deploy/` alone — is the newest ledger on the host:
 
 - Daily scheduled backups write `/var/backups/bojin/deletions-<UTC>.json`.
 - Pre-deploy backups write `/var/backups/bojin-deploy/<UTC>-<id>/deletions.json`.
+- Any account deletion, `invite-requests-admin.js delete`, or hourly retention prune that ran **after** the last backup export exists only in the live `/var/lib/bojin/bojin.db` (`deletion_jobs` and `invite_request_deletions`).
 
-If a deploy ran after the last daily backup and a user deleted their account in between, restoring with `/var/backups/bojin/deletions-*.json` uses a stale ledger and **can resurrect deleted accounts** (along with their records, photos, and credentials). If the newest ledger was lost, do not reopen restored accounts until deletion requests have been reconciled. Because `/var/backups/bojin` and `/var/backups/bojin-deploy` are `0710 root:bojin` with `0700`/`0600` `root:root` entries, unquoted globs in `admin`'s shell fail before `sudo`; discover the newest ledger by `exportedAt` inside `sudo python3`:
+If a deploy, account deletion, or standalone invite-request deletion/prune ran after the last backup export, restoring with only `/var/backups/bojin/deletions-*.json` uses a stale ledger and **can resurrect deleted accounts or deleted invite requests**.
+
+1. **Production restore when outgoing `/var/lib/bojin` is readable (required):** After acquiring `bojin-maintenance-lock` and stopping `bojin.service` and all writers, **first export a fresh deletion ledger from the outgoing `DATA_DIR`** (`deletions-live.json`), then build a **union ledger** across that fresh live export plus every valid export under `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` before running `data-backup.js restore --deletions`:
 
 ```sh
-LATEST_LEDGER=$(sudo python3 -c '
+# 1a. Export a fresh ledger from the stopped outgoing DATA_DIR whenever /var/lib/bojin/bojin.db is readable
+sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin \
+  /usr/bin/node /opt/bojin/scripts/data-backup.js ledger /var/tmp/bojin-restore-stage/deletions-live.json
+
+# 1b. Merge the fresh live export (if present) with all valid daily + pre-deploy ledgers into one union ledger
+sudo python3 - /var/tmp/bojin-restore-stage/deletions-live.json /var/tmp/bojin-restore-stage/deletions.json <<'PY'
 import datetime, glob, json, os, sys
-candidates = []
-for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
-    for p in glob.glob(pattern):
-        if os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
+
+live_path, out_path = sys.argv[1], sys.argv[2]
+sources = []
+for p in [live_path, *glob.glob("/var/backups/bojin/deletions-*.json"), *glob.glob("/var/backups/bojin-deploy/*/deletions.json")]:
+    if not p or os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
+        continue
+    with open(p, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if data.get("version") == 1 and isinstance(data.get("users"), list) and isinstance(data.get("exportedAt"), str):
+        reqs = data.get("inviteRequests", [])
+        if not isinstance(reqs, list):
             continue
-        with open(p, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if data.get("version") == 1 and isinstance(data.get("users"), list) and isinstance(data.get("exportedAt"), str):
-            ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
-            candidates.append((ts, p, data["exportedAt"], len(data["users"])))
-if not candidates:
+        ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+        sources.append((ts, p, data))
+
+if not sources:
     sys.exit("No valid deletion ledger found")
-candidates.sort()
-for _, p, exported, count in candidates[-5:]:
-    print(f"{exported}  entries={count}  {p}", file=sys.stderr)
-print(candidates[-1][1])
-')
-echo "Newest ledger: $LATEST_LEDGER"
+
+sources.sort(key=lambda item: item[0])
+users_by_uid = {}
+reqs_by_id = {}
+for _, p, data in sources:
+    for u in data["users"]:
+        users_by_uid[u["uid"]] = u["requested"]
+    for r in data.get("inviteRequests", []):
+        reqs_by_id[r["id"]] = r["deleted"]
+    print(f"{data['exportedAt']}  users={len(data['users'])}  inviteRequests={len(data.get('inviteRequests', []))}  {p}", file=sys.stderr)
+
+union = {
+    "version": 1,
+    "exportedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+    "users": [{"uid": uid, "requested": req} for uid, req in sorted(users_by_uid.items())],
+    "inviteRequests": [{"id": rid, "deleted": deleted} for rid, deleted in sorted(reqs_by_id.items())],
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(union, fh)
+print(out_path)
+PY
+sudo chown root:bojin /var/tmp/bojin-restore-stage/deletions.json
+sudo chmod 0640 /var/tmp/bojin-restore-stage/deletions.json
 ```
+
+2. **When the outgoing `DATA_DIR` is unavailable (e.g., catastrophic disk loss):** Build the union ledger from the newest available `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` exports, run `restore --deletions`, and **before reopening public traffic**, manually reconcile any account deletions and standalone invite-request deletions (`scripts/invite-requests-admin.js delete <id>` or `delete --contact <email-or-phone>`) requested via email or processed since the last exported ledger.
 
 ### Throwaway / staging instance verification (`systemd-run` override safety)
 
@@ -203,6 +235,7 @@ import json, pathlib, sqlite3, stat, sys
 data_dir = pathlib.Path(sys.argv[1])
 ledger = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 deleted_uids = [u["uid"] for u in ledger.get("users", [])]
+deleted_req_ids = [r["id"] for r in ledger.get("inviteRequests", [])]
 
 def ro_db(path):
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -226,8 +259,13 @@ try:
         for tbl in ("docs", "blobs"):
             if has_table(app, tbl):
                 assert app.execute(f"SELECT COUNT(*) FROM {tbl} WHERE uid=?", (uid,)).fetchone()[0] == 0
+    for req_id in deleted_req_ids:
+        if has_table(app, "invite_requests"):
+            assert app.execute("SELECT COUNT(*) FROM invite_requests WHERE id=?", (req_id,)).fetchone()[0] == 0
+        assert has_table(app, "invite_request_deletions"), "invite_request_deletions table missing after replay"
+        assert app.execute("SELECT COUNT(*) FROM invite_request_deletions WHERE id=?", (req_id,)).fetchone()[0] == 1
     counts = {t: app.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-              for t in ("docs", "blobs", "ai_usage", "deletion_jobs") if has_table(app, t)}
+              for t in ("docs", "blobs", "ai_usage", "deletion_jobs", "invite_requests", "invite_request_deletions") if has_table(app, t)}
     print("bojin.db integrity=ok counts=", counts, "blob_bytes=", total_blob_bytes)
 finally:
     app.close()
@@ -480,7 +518,7 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 Prospective testers can submit an invite request directly on `https://leanritual.app` (`申请内测` / `Request an invite`, or direct link `/#apply` / `/?apply=1`, `POST /api/invite-requests`), avoiding `mailto:` failures inside WeChat's in-app browser and iPhone Safari. Intake requires the `X-Bojin: 1` header, enforces a `<= 8192` byte body cap and a short absolute body-read deadline (`INVITE_REQUEST_BODY_TIMEOUT_MS=5000`, returning `408` and closing slow-drip uploads), silently drops honeypot submissions, applies salted HMAC-hashed per-IP (`INVITE_REQUEST_IP_HOURLY_LIMIT=5`, `INVITE_REQUEST_IP_DAILY_LIMIT=10`; relies on the loopback/Caddy `TRUST_PROXY=1` deployment so client-supplied `X-Forwarded-For` headers cannot spoof `clientIP`) and global daily (`INVITE_REQUEST_GLOBAL_DAILY_LIMIT=200`) limits, and treats duplicate submissions for an existing `pending` normalized contact as a strict no-op (preserving all stored fields untouched and firing no duplicate alert). Records (including any operator `status_note` added via `mark`) live in `bojin.db` (`invite_requests` table) so existing backup snapshots include them automatically and `scripts/daily-summary.js` reports non-PII counts (`new` in window + `pending` total).
 
 - **Owner notifications (metadata-only, asynchronous):** If `ALERT_URL` is configured, `server.js` dispatches a metadata-only plain-text HTTPS POST (`[invite-request] #id (phone|email, zh|en)`) asynchronously after committing so webhook latency cannot reveal pending contact membership. The alert payload contains zero user-controlled text (no name, phone number, email address, goal, note, or status note). Server logs also omit all PII.
-- **Retention, deletion & backup-restore replay:** `server.js` automatically prunes expired hashed IP rate-limit buckets older than 2 UTC days and invite requests older than `INVITE_REQUEST_RETENTION_DAYS` (default `90` days from `updated`) at startup and hourly. Operator deletions (`delete <id>` / `delete --contact <email-or-phone>`) and retention pruning record random request-ID tombstones (`req_*` + timestamp only, zero PII) in `invite_request_deletions`, which `scripts/data-backup.js ledger` exports in `deletions.json` and `restore --deletions` replays so restoring an older snapshot cannot resurrect deleted invite requests.
+- **Retention, deletion & backup-restore replay:** In the live database, `server.js` automatically prunes expired hashed IP rate-limit buckets older than 2 UTC days and invite requests older than `INVITE_REQUEST_RETENTION_DAYS` (default and hard maximum `90` days from `updated`; values above `90` are clamped to `90`) at startup and hourly. Server backup snapshots retain copies under their own separate backup rotation schedule. Operator deletions (`delete <id>` / `delete --contact <email-or-phone>`) and retention pruning record random request-ID tombstones (`req_*` + timestamp only, zero PII) in `invite_request_deletions`, which `scripts/data-backup.js ledger` exports in `deletions.json` and `restore --deletions` replays. During a production restore, always export a fresh ledger from the stopped outgoing `DATA_DIR` (when readable) and merge it with backup ledgers — or reconcile deletions since the last export if the outgoing disk is lost — as documented under **Finding the true newest deletion ledger** above.
 - **Reviewing, updating, deleting & pruning invite requests on the host** (respects the shared `data-access` lease):
 
 ```sh

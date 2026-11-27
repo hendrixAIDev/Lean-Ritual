@@ -8,6 +8,7 @@ const { normalizePhone } = require("../lib/phone");
 const {
   ALLOWED_STATUSES,
   DEFAULT_RETENTION_DAYS,
+  MAX_RETENTION_DAYS,
   inviteRequestOptions,
   sanitizeStatusNote,
   pruneInviteRequestData
@@ -104,8 +105,8 @@ function parseArgs(argv, env = process.env) {
       if (command !== "prune") throw new Error(USAGE);
       const raw = arg === "--days" ? argv[++i] : arg.slice("--days=".length);
       const n = Number(raw);
-      if (!Number.isSafeInteger(n) || n < 1 || n > 3650) {
-        throw new Error("--days must be an integer between 1 and 3650");
+      if (!Number.isSafeInteger(n) || n < 1 || n > MAX_RETENTION_DAYS) {
+        throw new Error(`--days must be an integer between 1 and ${MAX_RETENTION_DAYS}`);
       }
       days = n;
     } else {
