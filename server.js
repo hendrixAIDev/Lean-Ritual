@@ -84,6 +84,9 @@ const feedback = createFeedback(db, CFG.dataDir, {
   releaseRevision,
   ...feedbackOptions()
 });
+const { createInviteRequests, inviteRequestOptions, readInviteRequestBody, MAX_BODY_BYTES: INVITE_REQUEST_MAX_BODY } = require("./lib/invite-requests");
+const inviteRequestCfg = inviteRequestOptions();
+const inviteRequests = createInviteRequests(db, inviteRequestCfg);
 const normName = s => String(s || "").trim().toLowerCase();
 const clientIP = req => (CFG.trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress || "?";
 
@@ -226,6 +229,29 @@ async function handle(req, res){
     return send(res, 200, { ok: true, ...(releaseRevision ? { revision: releaseRevision } : {}) });
   }
   if (p === "/api/config" && m === "GET") return send(res, 200, { allowSignup: true, invite: true, ai: aiProxy.enabled });
+  if (p === "/api/invite-requests") {
+    if (m !== "POST") throw httpErr(405, "method");
+    const raw = await readInviteRequestBody(req, res, {
+      maxBytes: INVITE_REQUEST_MAX_BODY,
+      timeoutMs: inviteRequestCfg.bodyTimeoutMs
+    });
+    let b;
+    try { b = JSON.parse(raw.toString("utf8") || "{}"); } catch { throw httpErr(400, "bad_json"); }
+    const result = await inviteRequests.submit(b, {
+      ip: clientIP(req),
+      headerLang: typeof req.headers["x-ritual-lang"] === "string" ? req.headers["x-ritual-lang"] : null
+    });
+    if (result.honeypot) {
+      console.log("invite-request", JSON.stringify({ status: "dropped" }));
+    } else {
+      console.log("invite-request", JSON.stringify({
+        id: result.id,
+        contactKind: result.contactKind,
+        status: result.deduplicated ? "duplicate" : "created"
+      }));
+    }
+    return send(res, 200, { ok: true });
+  }
 
   if (["/api/register", "/api/login", "/api/password", "/api/logout"].includes(p)) {
     throw httpErr(410, "auth_endpoint_retired", "请使用新的账号页面");
@@ -444,7 +470,15 @@ async function cli(args){
   retryDeletes();
   const flushAiAlerts = () => { if (aiProxy.enabled) aiProxy.flushAlerts().catch(() => {}); };
   flushAiAlerts();
-  setInterval(() => { retryDeletes(); flushAiAlerts(); }, 60000).unref();
+  let lastInvitePrune = 0;
+  const pruneInviteRequests = () => {
+    const nowMs = Date.now();
+    if (nowMs - lastInvitePrune < 3600000) return;
+    lastInvitePrune = nowMs;
+    try { inviteRequests.pruneExpired(); } catch { console.error("Invite request retention prune failed; will retry"); }
+  };
+  pruneInviteRequests();
+  setInterval(() => { retryDeletes(); flushAiAlerts(); pruneInviteRequests(); }, 60000).unref();
   const server = http.createServer((req, res) => {
     handle(req, res).catch(e => {
       const status = e.status || 500; if (status >= 500) console.error("request failed", e.code || "server_error");

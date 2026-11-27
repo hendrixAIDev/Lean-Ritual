@@ -74,34 +74,141 @@ sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin-re
 
 ### Finding the true newest deletion ledger
 
-The latest deletion ledger is mandatory, even if `users` is empty (`[]`). Never assume the ledger paired with the selected snapshot — or even the newest file in `/var/backups/bojin/` alone — is the newest ledger on the host:
+The latest deletion ledger is mandatory, even if `users` and `inviteRequests` are empty (`[]`). Never assume the ledger paired with the selected snapshot — or even the newest file in `/var/backups/bojin/` and `/var/backups/bojin-deploy/` alone — is the newest ledger on the host:
 
 - Daily scheduled backups write `/var/backups/bojin/deletions-<UTC>.json`.
 - Pre-deploy backups write `/var/backups/bojin-deploy/<UTC>-<id>/deletions.json`.
+- Any account deletion, `invite-requests-admin.js delete`, or hourly retention prune that ran **after** the last backup export exists only in the live `/var/lib/bojin/bojin.db` (`deletion_jobs` and `invite_request_deletions`).
 
-If a deploy ran after the last daily backup and a user deleted their account in between, restoring with `/var/backups/bojin/deletions-*.json` uses a stale ledger and **can resurrect deleted accounts** (along with their records, photos, and credentials). If the newest ledger was lost, do not reopen restored accounts until deletion requests have been reconciled. Because `/var/backups/bojin` and `/var/backups/bojin-deploy` are `0710 root:bojin` with `0700`/`0600` `root:root` entries, unquoted globs in `admin`'s shell fail before `sudo`; discover the newest ledger by `exportedAt` inside `sudo python3`:
+If a deploy, account deletion, or standalone invite-request deletion/prune ran after the last backup export, restoring with only `/var/backups/bojin/deletions-*.json` uses a stale ledger and **can resurrect deleted accounts or deleted invite requests**.
+
+1. **Production restore when outgoing `/var/lib/bojin` is readable (required):** After acquiring `bojin-maintenance-lock` and stopping `bojin.service` and all writers, **first export a fresh deletion ledger from the outgoing `DATA_DIR`** into a fresh private `bojin`-owned (`0700`) scratch directory (because `$STAGE` is `root:bojin` `0750` and `data-backup.js ledger` opens a new file with `wx`), stage that export under root control as `$STAGE/deletions-live.json`, remove the scratch directory, and build a **union ledger** that **requires** `$STAGE/deletions-live.json` to exist and parse cleanly (failing closed if missing) alongside every valid daily and pre-deploy export:
 
 ```sh
-LATEST_LEDGER=$(sudo python3 -c '
+STAGE=/var/tmp/bojin-restore-stage
+sudo install -d -o root -g bojin -m 0750 -- "$STAGE"
+
+# 1a. Export a fresh ledger from the stopped outgoing DATA_DIR into a private bojin-owned scratch dir
+LIVE_SCRATCH=$(sudo mktemp -d /var/tmp/bojin-live-ledger.XXXXXX)
+sudo chown bojin:bojin -- "$LIVE_SCRATCH"
+sudo chmod 0700 -- "$LIVE_SCRATCH"
+sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin \
+  /usr/bin/node /opt/bojin/scripts/data-backup.js ledger "$LIVE_SCRATCH/deletions-live.json"
+sudo install -o root -g bojin -m 0640 -- "$LIVE_SCRATCH/deletions-live.json" "$STAGE/deletions-live.json"
+sudo rm -rf -- "$LIVE_SCRATCH"
+
+# 1b. Merge the REQUIRED live export with all valid daily + pre-deploy ledgers into one union ledger
+sudo python3 - "$STAGE/deletions-live.json" "$STAGE/deletions.json" <<'PY'
 import datetime, glob, json, os, sys
-candidates = []
+
+live_path, out_path = sys.argv[1], sys.argv[2]
+allow_missing_live = os.environ.get("ALLOW_MISSING_LIVE_LEDGER") == "1"
+
+def load_valid_ledger(p):
+    if not p or os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
+        return None
+    with open(p, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if data.get("version") != 1 or not isinstance(data.get("users"), list) or not isinstance(data.get("exportedAt"), str):
+        return None
+    reqs = data.get("inviteRequests", [])
+    if not isinstance(reqs, list):
+        return None
+    ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+    return (ts, p, data)
+
+sources = []
+if not allow_missing_live:
+    live_entry = load_valid_ledger(live_path)
+    if live_entry is None:
+        sys.exit(f"Missing or invalid required live deletion ledger: {live_path}")
+    sources.append(live_entry)
+
+for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
+    for p in glob.glob(pattern):
+        entry = load_valid_ledger(p)
+        if entry is not None:
+            sources.append(entry)
+
+if not sources:
+    sys.exit("No valid deletion ledger found")
+
+sources.sort(key=lambda item: item[0])
+users_by_uid = {}
+reqs_by_id = {}
+for _, p, data in sources:
+    for u in data["users"]:
+        users_by_uid[u["uid"]] = u["requested"]
+    for r in data.get("inviteRequests", []):
+        reqs_by_id[r["id"]] = r["deleted"]
+    print(f"{data['exportedAt']}  users={len(data['users'])}  inviteRequests={len(data.get('inviteRequests', []))}  {p}", file=sys.stderr)
+
+union = {
+    "version": 1,
+    "exportedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+    "users": [{"uid": uid, "requested": req} for uid, req in sorted(users_by_uid.items())],
+    "inviteRequests": [{"id": rid, "deleted": deleted} for rid, deleted in sorted(reqs_by_id.items())],
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(union, fh)
+print(out_path)
+PY
+sudo chown root:bojin -- "$STAGE/deletions.json"
+sudo chmod 0640 -- "$STAGE/deletions.json"
+```
+
+2. **When the outgoing `DATA_DIR` is unavailable (e.g., catastrophic disk loss):** Use the explicit backup-only merge branch below (`ALLOW_MISSING_LIVE_LEDGER=1`) to build the union ledger from all valid `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` exports, run `restore --deletions`, and **before reopening public traffic**, manually reconcile any account deletions and standalone invite-request deletions (`scripts/invite-requests-admin.js delete <id>` or `delete --contact <email-or-phone>`) requested via email or processed since the last exported ledger:
+
+```sh
+STAGE=/var/tmp/bojin-restore-stage
+sudo install -d -o root -g bojin -m 0750 -- "$STAGE"
+
+# Explicit backup-only union ledger (ONLY when outgoing /var/lib/bojin is unreadable/lost)
+sudo env ALLOW_MISSING_LIVE_LEDGER=1 python3 - "" "$STAGE/deletions.json" <<'PY'
+import datetime, glob, json, os, sys
+
+if os.environ.get("ALLOW_MISSING_LIVE_LEDGER") != "1":
+    sys.exit("Refusing backup-only ledger without ALLOW_MISSING_LIVE_LEDGER=1")
+out_path = sys.argv[2]
+sources = []
 for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
     for p in glob.glob(pattern):
         if os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
             continue
         with open(p, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        if data.get("version") == 1 and isinstance(data.get("users"), list) and isinstance(data.get("exportedAt"), str):
-            ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
-            candidates.append((ts, p, data["exportedAt"], len(data["users"])))
-if not candidates:
-    sys.exit("No valid deletion ledger found")
-candidates.sort()
-for _, p, exported, count in candidates[-5:]:
-    print(f"{exported}  entries={count}  {p}", file=sys.stderr)
-print(candidates[-1][1])
-')
-echo "Newest ledger: $LATEST_LEDGER"
+        if data.get("version") != 1 or not isinstance(data.get("users"), list) or not isinstance(data.get("exportedAt"), str):
+            continue
+        if not isinstance(data.get("inviteRequests", []), list):
+            continue
+        ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+        sources.append((ts, p, data))
+
+if not sources:
+    sys.exit("No valid backup deletion ledger found")
+
+sources.sort(key=lambda item: item[0])
+users_by_uid = {}
+reqs_by_id = {}
+for _, p, data in sources:
+    for u in data["users"]:
+        users_by_uid[u["uid"]] = u["requested"]
+    for r in data.get("inviteRequests", []):
+        reqs_by_id[r["id"]] = r["deleted"]
+    print(f"{data['exportedAt']}  users={len(data['users'])}  inviteRequests={len(data.get('inviteRequests', []))}  {p}", file=sys.stderr)
+
+union = {
+    "version": 1,
+    "exportedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+    "users": [{"uid": uid, "requested": req} for uid, req in sorted(users_by_uid.items())],
+    "inviteRequests": [{"id": rid, "deleted": deleted} for rid, deleted in sorted(reqs_by_id.items())],
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(union, fh)
+print(out_path)
+PY
+sudo chown root:bojin -- "$STAGE/deletions.json"
+sudo chmod 0640 -- "$STAGE/deletions.json"
 ```
 
 ### Throwaway / staging instance verification (`systemd-run` override safety)
@@ -203,6 +310,7 @@ import json, pathlib, sqlite3, stat, sys
 data_dir = pathlib.Path(sys.argv[1])
 ledger = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 deleted_uids = [u["uid"] for u in ledger.get("users", [])]
+deleted_req_ids = [r["id"] for r in ledger.get("inviteRequests", [])]
 
 def ro_db(path):
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -226,8 +334,13 @@ try:
         for tbl in ("docs", "blobs"):
             if has_table(app, tbl):
                 assert app.execute(f"SELECT COUNT(*) FROM {tbl} WHERE uid=?", (uid,)).fetchone()[0] == 0
+    for req_id in deleted_req_ids:
+        if has_table(app, "invite_requests"):
+            assert app.execute("SELECT COUNT(*) FROM invite_requests WHERE id=?", (req_id,)).fetchone()[0] == 0
+        assert has_table(app, "invite_request_deletions"), "invite_request_deletions table missing after replay"
+        assert app.execute("SELECT COUNT(*) FROM invite_request_deletions WHERE id=?", (req_id,)).fetchone()[0] == 1
     counts = {t: app.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-              for t in ("docs", "blobs", "ai_usage", "deletion_jobs") if has_table(app, t)}
+              for t in ("docs", "blobs", "ai_usage", "deletion_jobs", "invite_requests", "invite_request_deletions") if has_table(app, t)}
     print("bojin.db integrity=ok counts=", counts, "blob_bytes=", total_blob_bytes)
 finally:
     app.close()
@@ -475,6 +588,34 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedback-admin.js show <feedback-id>
 ```
 
+### Landing-page invite requests & admin CLI
+
+Prospective testers can submit an invite request directly on `https://leanritual.app` (`申请内测` / `Request an invite`, or direct link `/#apply` / `/?apply=1`, `POST /api/invite-requests`), avoiding `mailto:` failures inside WeChat's in-app browser and iPhone Safari. Intake requires the `X-Bojin: 1` header, enforces a `<= 8192` byte body cap and a short absolute body-read deadline (`INVITE_REQUEST_BODY_TIMEOUT_MS=5000`, returning `408` and closing slow-drip uploads), silently drops honeypot submissions, applies salted HMAC-hashed per-IP (`INVITE_REQUEST_IP_HOURLY_LIMIT=5`, `INVITE_REQUEST_IP_DAILY_LIMIT=10`; relies on the loopback/Caddy `TRUST_PROXY=1` deployment so client-supplied `X-Forwarded-For` headers cannot spoof `clientIP`) and global daily (`INVITE_REQUEST_GLOBAL_DAILY_LIMIT=200`) limits, and treats duplicate submissions for an existing `pending` normalized contact as a strict no-op (preserving all stored fields untouched and firing no duplicate alert). Records (including any operator `status_note` added via `mark`) live in `bojin.db` (`invite_requests` table) so existing backup snapshots include them automatically and `scripts/daily-summary.js` reports non-PII counts (`new` in window + `pending` total).
+
+- **Owner notifications (metadata-only, asynchronous):** If `ALERT_URL` is configured, `server.js` dispatches a metadata-only plain-text HTTPS POST (`[invite-request] #id (phone|email, zh|en)`) asynchronously after committing so webhook latency cannot reveal pending contact membership. The alert payload contains zero user-controlled text (no name, phone number, email address, goal, note, or status note). Server logs also omit all PII.
+- **Retention, deletion & backup-restore replay:** In the live database, `server.js` automatically prunes expired hashed IP rate-limit buckets older than 2 UTC days and invite requests older than `INVITE_REQUEST_RETENTION_DAYS` (default and hard maximum `90` days from `updated`; values above `90` are clamped to `90`) at startup and hourly. Server backup snapshots retain copies under their own separate backup rotation schedule. Operator deletions (`delete <id>` / `delete --contact <email-or-phone>`) and retention pruning record random request-ID tombstones (`req_*` + timestamp only, zero PII) in `invite_request_deletions`, which `scripts/data-backup.js ledger` exports in `deletions.json` and `restore --deletions` replays. During a production restore, always export a fresh ledger from the stopped outgoing `DATA_DIR` (when readable) and merge it with backup ledgers — or reconcile deletions since the last export if the outgoing disk is lost — as documented under **Finding the true newest deletion ledger** above.
+- **Reviewing, updating, deleting & pruning invite requests on the host** (respects the shared `data-access` lease):
+
+```sh
+# List pending invite requests (optional: --status pending|invited|dismissed|all, --limit N, --json)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js list --status pending --limit 20
+
+# Inspect one invite request in full
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js show <request-id>
+
+# Mark a request after issuing an invite (or dismissing it), with an optional operator status note
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js mark <request-id> --status invited --note "sent via WeChat"
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js mark <request-id> --status dismissed --note "duplicate"
+
+# Permanently delete an invite request (by ID or normalized email/phone) and record a deletion-ledger tombstone
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete <request-id>
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete --contact tester@example.com
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete --contact 13800138000
+
+# Run retention & rate-limit bucket cleanup on demand (default 90 days)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js prune --days 90
+```
+
 ### AI monthly USD budget caps & admin overrides
 
 In addition to daily request count limits (`AI_DAILY_LIMIT=60`, `AI_GLOBAL_DAILY_LIMIT=300`), `lib/ai.js` enforces UTC calendar-month estimated USD caps using the shared pricing table in `lib/ai-pricing.js`. Before every single provider dispatch (initial attempt, JSON-mode retry, Gemini transient retries, and OpenRouter fallback), the outbound payload is serialized first, an atomic conservative upper-bound reservation is persisted in SQLite for that dispatch's UTC month, and the UTC month and effective pricing rate are re-verified immediately before the network send (releasing and re-admitting if either changed). Reservations survive crashes/restarts (finalizing conservatively on expiry instead of refunding) and are replaced only by authoritative usage or confirmed non-billable HTTP rejections (`400/401/403/404/422/429` without usage).
@@ -508,7 +649,7 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node --env-file=/etc/bojin/en
 
 `scripts/daily-summary.js` prints a read-only activity summary covering both the **last 24 hours** and **trial to date** (all records by default, or filtered with `--since <YYYY-MM-DD|ISO>` / `TRIAL_START`):
 
-- **Metrics included:** new sign-ups and verified sign-up cohorts (`auth.sqlite`), active users (deduplicated across sessions, docs, photos, AI usage, and feedback), check-ins / workouts / meals logged (`bojin.db`), AI calls split by provider (`gemini` vs `openrouter`, distinguishing `provider_fallback=true` fallbacks and attributing pre-fallback retries back to Gemini) with observed models, prompt/completion/reasoning token totals, and estimated USD cost (labeled as final-attempt journal tokens at flat provider rates; unknown providers are left unpriced), feedback counts by type (`bug`, `idea`, `other`) plus metadata for the 3 newest entries, client error counts (`client-error` journal entries), filesystem disk usage and photo bytes, and the last completed backup/snapshot time.
+- **Metrics included:** new sign-ups and verified sign-up cohorts (`auth.sqlite`), active users (deduplicated across sessions, docs, photos, AI usage, and feedback), check-ins / workouts / meals logged (`bojin.db`), AI calls split by provider (`gemini` vs `openrouter`, distinguishing `provider_fallback=true` fallbacks and attributing pre-fallback retries back to Gemini) with observed models, prompt/completion/reasoning token totals, and estimated USD cost (labeled as final-attempt journal tokens at flat provider rates; unknown providers are left unpriced), feedback counts by type (`bug`, `idea`, `other`) plus metadata for the 3 newest entries, invite-request counts (`new` in window by channel + `pending` total from `invite_requests`, gracefully falling back to zeros on older snapshots), client error counts (`client-error` journal entries), filesystem disk usage and photo bytes, and the last completed backup/snapshot time.
 - **Snapshot-only DB reads (zero live coordination):** `scripts/daily-summary.js` **never opens live SQLite databases in `DATA_DIR`** (`bojin.db` / `auth.sqlite`) and takes **no** `lib/data-access.js` lease, so it cannot block backups, delay WAL checkpoints, or mutate live `-shm`/`-wal` files. `DATA_DIR` is inspected with stat-only filesystem/directory size checks. Database counts are read strictly from a completed published backup snapshot: the script rejects any path inside `DATA_DIR` or any snapshot containing WAL sidecars, requires `manifest.json` version 1 with explicit `bojin.db` (and `auth.sqlite`, when present) size and SHA-256 entries, copies the snapshot DBs to a private `0700` temp directory, and verifies exact byte size, SHA-256 checksum, SQLite `PRAGMA quick_check = ok`, and expected core tables on the private copies before querying. During automatic discovery, an incomplete/corrupt newest snapshot is skipped in favor of the previous complete snapshot (noting the fallback); if only invalid snapshots exist or an explicit `--snapshot` fails verification, the script exits non-zero with an error instead of silently reporting zeros. When backup directories are root-only (`0710`) or empty, the script reports that no readable snapshot was found instead of falling back to live `DATA_DIR`.
 - **Freshness (`data as of`):** database metrics reflect the snapshot's creation timestamp (`data as of`, up to ~24 hours behind live writes under the daily 04:00 UTC backup schedule), with database "last 24h" counts measured over the 24 hours ending at `data as of`. Journal-based AI and client error counts stay live as of run time, fetching from the earlier of `--since` and `now - 24h` so short trial windows never truncate the 24h rolling window.
 - **Host permissions & staging a read-only snapshot:** on the production host, `/var/backups/bojin` is `0710 root:bojin` with `0700 root:root` snapshots. Running `daily-summary.js` directly as `bojin` without `--snapshot` reports live journal AI/error counts, live disk/photo disk bytes, and systemd backup status (`systemctl show` on `bojin-backup.service` requiring a completed, non-running `Result=success` with `ExecMainStatus=0`; `bojin-backup.timer`'s `LastTriggerUSec` is shown separately and never treated as a completed backup), and notes that no readable snapshot was found. To include database counts while keeping Node unprivileged as `bojin`, stage a temporary read-only `root:bojin` (`0750`/`0640`) copy of the newest snapshot (same non-disruptive pattern as the restore drill) and pass `--snapshot <staged-copy>`. If `bojin` cannot read the system journal directly, pipe `journalctl -u bojin.service -o short-iso --no-pager` via `--journal-file -`.
