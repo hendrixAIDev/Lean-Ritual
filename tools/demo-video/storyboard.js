@@ -59,12 +59,6 @@ const STORYBOARDS = {
       spoken: '薄机日课，邀请制内测中。',
       iflytekSpoken: '薄[=bo2]肌日课，邀请制内测中。'
     },
-    poster: {
-      eyebrow: '薄肌日课 · LEAN RITUAL',
-      headline: '一个 App，助你更瘦、更强、更好',
-      subline: '专属计划 · 拍照估餐 · AI 教练 · 数据可以带走',
-      badge: '邀请制内测 · leanritual.app'
-    },
     scenes: [
       {
         id: 'setup',
@@ -278,12 +272,6 @@ const STORYBOARDS = {
       footnote: 'Works right in your browser · Add to Home Screen',
       duration: 4.0,
       narration: 'Lean Ritual. Now in invite-only beta.'
-    },
-    poster: {
-      eyebrow: 'LEAN RITUAL',
-      headline: 'One app to get leaner, stronger, better',
-      subline: 'Your plan · Photo calorie AI · AI coach · Export your data',
-      badge: 'Invite-only beta · leanritual.app'
     },
     scenes: [
       {

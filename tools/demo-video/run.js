@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { resolvePlaywright } = require('./playwright-loader');
 const { STORYBOARDS, formatScriptMarkdown } = require('./storyboard');
-const { generateSharedAssets, generateLangAssets, renderPoster } = require('./assets');
+const { generateSharedAssets, generateLangAssets } = require('./assets');
 const { seedDemoAccount } = require('./seed');
 const { recordAllScenes } = require('./record');
 const { synthesizeAllVoices, composeLanguageVideo, probeMedia } = require('./compose');
@@ -271,40 +271,6 @@ async function main() {
           lunchPhotoPath: shared.lunchPhoto
         });
 
-        const posterScene = recorded.find(r => r.posterShotPath) || recorded[0];
-        if (opts.formats.includes('9x16') && posterScene?.posterShotPath) {
-          const posterPath = path.join(opts.outDir, `poster-${lang}.jpg`);
-          await renderPoster(assetBrowser, {
-            poster: sb.poster,
-            screenshotPath: posterScene.posterShotPath,
-            outPath: posterPath,
-            wide: false
-          });
-          summary.push({
-            file: path.basename(posterPath),
-            duration: '-',
-            resolution: '1080x1920',
-            codecs: 'jpeg',
-            sizeMB: `${(fs.statSync(posterPath).size / 1048576).toFixed(2)} MB`
-          });
-        }
-        if (opts.formats.includes('16x9') && posterScene?.posterShotPath) {
-          const posterWidePath = path.join(opts.outDir, `poster-${lang}-16x9.jpg`);
-          await renderPoster(assetBrowser, {
-            poster: sb.poster,
-            screenshotPath: posterScene.posterShotPath,
-            outPath: posterWidePath,
-            wide: true
-          });
-          summary.push({
-            file: path.basename(posterWidePath),
-            duration: '-',
-            resolution: '1920x1080',
-            codecs: 'jpeg',
-            sizeMB: `${(fs.statSync(posterWidePath).size / 1048576).toFixed(2)} MB`
-          });
-        }
-
         console.log(`=== [${lang}] Composing final MP4s (${opts.formats.join(', ')}) + 3D transitions + ducked upbeat BGM/SFX ===`);
         const composed = await composeLanguageVideo({
           sb,
@@ -337,6 +303,13 @@ async function main() {
             resolution: `${out.info.video.width}x${out.info.video.height}@${Math.round(out.info.video.fps)}fps`,
             codecs: `${out.info.video.codec}/${out.info.audio.codec}`,
             sizeMB: `${(out.info.sizeBytes / 1048576).toFixed(2)} MB`
+          });
+          summary.push({
+            file: path.basename(out.posterPath),
+            duration: '-',
+            resolution: `${out.info.video.width}x${out.info.video.height}`,
+            codecs: 'jpeg',
+            sizeMB: `${(fs.statSync(out.posterPath).size / 1048576).toFixed(2)} MB`
           });
           summary.push({
             file: path.basename(out.sheetPath),

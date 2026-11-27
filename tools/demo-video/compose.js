@@ -33,6 +33,7 @@ const TRANSITION_DUR = 0.48;
 const BRIDGE_DUR = 0.57; // 17 frames @ 30fps for 3D perspective_swing transition bridge
 const FPS = 30;
 const MAX_BYTES = 25 * 1024 * 1024;
+const TITLE_COVER_TIME_SEC = 2.0; // Settled opening title-card frame after all fade-ins (~1.78s) complete
 
 function runBin(bin, args) {
   try {
@@ -52,8 +53,10 @@ function probeMedia(filePath) {
     filePath
   ]);
   const info = JSON.parse(out);
-  const v = (info.streams || []).find(s => s.codec_type === 'video');
-  const a = (info.streams || []).find(s => s.codec_type === 'audio');
+  const streams = info.streams || [];
+  const v = streams.find(s => s.codec_type === 'video' && !s.disposition?.attached_pic);
+  const a = streams.find(s => s.codec_type === 'audio');
+  const cover = streams.find(s => s.codec_type === 'video' && Boolean(s.disposition?.attached_pic));
   const parseRate = r => {
     if (!r) return 0;
     const [n, d] = String(r).split('/').map(Number);
@@ -63,7 +66,8 @@ function probeMedia(filePath) {
     duration: Number(info.format?.duration || 0),
     sizeBytes: Number(info.format?.size || fs.statSync(filePath).size),
     video: v ? { codec: v.codec_name, width: v.width, height: v.height, fps: parseRate(v.avg_frame_rate || v.r_frame_rate) } : null,
-    audio: a ? { codec: a.codec_name, sampleRate: Number(a.sample_rate || 0), channels: a.channels } : null
+    audio: a ? { codec: a.codec_name, sampleRate: Number(a.sample_rate || 0), channels: a.channels } : null,
+    cover: cover ? { codec: cover.codec_name, width: cover.width, height: cover.height } : null
   };
 }
 
@@ -574,6 +578,51 @@ function muxVideoAndAudio({ videoOnlyMp4, audioWav, totalDur, outMp4 }) {
   ]);
 }
 
+function extractTitleCover({ titleSegMp4, outJpg, atSec = TITLE_COVER_TIME_SEC }) {
+  const info = probeMedia(titleSegMp4);
+  const ts = Math.max(0, Math.min(atSec, Math.max(0, info.duration - 0.1)));
+  fs.mkdirSync(path.dirname(outJpg), { recursive: true });
+  runBin(FFMPEG, [
+    '-y',
+    '-ss', ts.toFixed(3),
+    '-i', titleSegMp4,
+    '-map', '0:V:0',
+    '-frames:v', '1',
+    '-q:v', '2',
+    outJpg
+  ]);
+  return outJpg;
+}
+
+function embedCoverArt({ inMp4, coverJpg, outMp4 }) {
+  const inPlace = path.resolve(inMp4) === path.resolve(outMp4);
+  const target = inPlace
+    ? path.join(path.dirname(outMp4), `.${path.basename(outMp4)}.cover.tmp.mp4`)
+    : outMp4;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    runBin(FFMPEG, [
+      '-y',
+      '-i', inMp4,
+      '-i', coverJpg,
+      '-map', '0:V:0',
+      '-map', '0:a:0?',
+      '-map', '1:v:0',
+      '-c', 'copy',
+      '-disposition:v:1', 'attached_pic',
+      '-movflags', '+faststart',
+      target
+    ]);
+    if (inPlace) {
+      fs.renameSync(target, outMp4);
+    }
+  } catch (err) {
+    if (inPlace) fs.rmSync(target, { force: true });
+    throw err;
+  }
+  return outMp4;
+}
+
 function extractCheckFrames(mp4Path, framesDir, prefix) {
   fs.mkdirSync(framesDir, { recursive: true });
   const info = probeMedia(mp4Path);
@@ -586,6 +635,7 @@ function extractCheckFrames(mp4Path, framesDir, prefix) {
       '-y',
       '-ss', ts.toFixed(3),
       '-i', mp4Path,
+      '-map', '0:V:0',
       '-frames:v', '1',
       '-q:v', '3',
       outJpg
@@ -604,6 +654,7 @@ function generateContactSheet({ mp4Path, outJpg, thumbW = 360 }) {
     '-y',
     '-ss', '0.9',
     '-i', mp4Path,
+    '-map', '0:V:0',
     '-vf', `fps=1/${interval.toFixed(4)},scale=${thumbW}:-2:flags=lanczos,tile=4x4:padding=10:margin=14:color=#0B1613`,
     '-frames:v', '1',
     '-q:v', '3',
@@ -612,13 +663,19 @@ function generateContactSheet({ mp4Path, outJpg, thumbW = 360 }) {
   return outJpg;
 }
 
-function verifyMp4(mp4Path, expectedW, expectedH) {
+function verifyMp4(mp4Path, expectedW, expectedH, { expectCover = true } = {}) {
   const info = probeMedia(mp4Path);
   assert.equal(info.video?.codec, 'h264', `${mp4Path}: expected h264 video`);
   assert.equal(info.video?.width, expectedW, `${mp4Path}: expected width ${expectedW}`);
   assert.equal(info.video?.height, expectedH, `${mp4Path}: expected height ${expectedH}`);
   assert.ok(Math.abs(info.video.fps - FPS) < 0.5, `${mp4Path}: expected ${FPS}fps, got ${info.video.fps}`);
   assert.equal(info.audio?.codec, 'aac', `${mp4Path}: expected aac audio`);
+  if (expectCover) {
+    assert.ok(info.cover, `${mp4Path}: expected embedded attached_pic cover`);
+    assert.equal(info.cover.codec, 'mjpeg', `${mp4Path}: expected mjpeg cover`);
+    assert.equal(info.cover.width, expectedW, `${mp4Path}: expected cover width ${expectedW}`);
+    assert.equal(info.cover.height, expectedH, `${mp4Path}: expected cover height ${expectedH}`);
+  }
   assert.ok(info.duration >= 65 && info.duration <= 135, `${mp4Path}: duration ${info.duration.toFixed(1)}s out of 65-135s range`);
   assert.ok(info.sizeBytes <= MAX_BYTES, `${mp4Path}: size ${(info.sizeBytes / 1048576).toFixed(2)} MB exceeds 25 MB`);
   return info;
@@ -918,19 +975,26 @@ async function composeLanguageVideo({
       bridges.set(i, br);
     }
 
+    const titleSeg = segments.find(s => s.id === 'title');
+    assert.ok(titleSeg, `Missing title segment for ${sb.lang} ${fmt}`);
+    const posterPath = path.join(outDir, isWide ? `poster-${sb.lang}-16x9.jpg` : `poster-${sb.lang}.jpg`);
+    extractTitleCover({ titleSegMp4: titleSeg.mp4, outJpg: posterPath });
+
     const videoOnlyMp4 = path.join(compDir, `video-only-${sb.lang}-${fmt}.mp4`);
     const finalDur = assembleFinalVideo({ segments, bridges, width: w, outVideoOnly: videoOnlyMp4, segDir });
 
     const baseName = isWide ? `lean-ritual-intro-${sb.lang}-16x9` : `lean-ritual-intro-${sb.lang}`;
+    const rawMuxMp4 = path.join(compDir, `muxed-${sb.lang}-${fmt}.mp4`);
     const finalMp4 = path.join(outDir, `${baseName}.mp4`);
-    muxVideoAndAudio({ videoOnlyMp4, audioWav: masterAudioWav, totalDur: finalDur, outMp4: finalMp4 });
+    muxVideoAndAudio({ videoOnlyMp4, audioWav: masterAudioWav, totalDur: finalDur, outMp4: rawMuxMp4 });
+    embedCoverArt({ inMp4: rawMuxMp4, coverJpg: posterPath, outMp4: finalMp4 });
 
     const info = verifyMp4(finalMp4, w, h);
     const frames = extractCheckFrames(finalMp4, framesDir, baseName);
     const sheetPath = path.join(outDir, isWide ? `sheet-${sb.lang}-16x9.jpg` : `sheet-${sb.lang}.jpg`);
     generateContactSheet({ mp4Path: finalMp4, outJpg: sheetPath, thumbW: isWide ? 480 : 320 });
 
-    outputs.push({ format: fmt, path: finalMp4, info, frames, sheetPath });
+    outputs.push({ format: fmt, path: finalMp4, posterPath, info, frames, sheetPath });
   }
 
   return {
@@ -941,8 +1005,12 @@ async function composeLanguageVideo({
 }
 
 module.exports = {
+  TITLE_COVER_TIME_SEC,
   synthesizeAllVoices,
   planLanguageTimeline,
   composeLanguageVideo,
+  extractTitleCover,
+  embedCoverArt,
+  verifyMp4,
   probeMedia
 };
