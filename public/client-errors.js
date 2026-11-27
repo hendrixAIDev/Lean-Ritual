@@ -8,6 +8,7 @@
   const ENDPOINT = "/api/client-error";
   const MAX_PER_SESSION = 10;
   const SESSION_KEY = "bj-err-count";
+  const SESSION_FILTERED_KEY = "bj-err-filtered-count";
   const ALLOWED_PAGES = new Set([
     "today", "food", "log", "fb", "me", "setup", "boot", "consent",
     "login", "app", "privacy", "terms", "guide", "unknown"
@@ -18,7 +19,43 @@
     "EvalError", "URIError", "AggregateError", "DOMException",
     "UnhandledRejection", "SaveError", "AIError"
   ]);
-  const SOURCE_RE = /^(?:(?:index|login)\.html|(?:client-errors|shim|heic2any-worker|heic2any\.min|tesseract\.min|worker\.min)\.js)(?::\d{1,7}(?::\d{1,7})?)?(?![\s\S])/;
+  const ALLOWED_FILTER_REASONS = Object.freeze([
+    "script_error",
+    "non_origin",
+    "resize_observer"
+  ]);
+  const FILTER_REASON_SET = new Set(ALLOWED_FILTER_REASONS);
+  const ALLOWED_SOURCE_FILES = Object.freeze([
+    "index.html",
+    "login.html",
+    "privacy.html",
+    "terms.html",
+    "guide.html",
+    "landing.html",
+    "client-errors.js",
+    "shim.js",
+    "login.js",
+    "phone-rules.js",
+    "privacy.js",
+    "terms.js",
+    "guide.js",
+    "boot.js",
+    "nocturne.js",
+    "heic2any-worker.js",
+    "heic2any.min.js",
+    "tesseract.min.js",
+    "worker.min.js",
+    "tesseract-core-lstm.wasm.js",
+    "tesseract-core-simd-lstm.wasm.js",
+    "tesseract-core-relaxedsimd-lstm.wasm.js"
+  ]);
+  const SOURCE_RE = new RegExp(
+    "^(?:" + ALLOWED_SOURCE_FILES.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")(?::\\d{1,7}(?::\\d{1,7})?)?(?![\\s\\S])"
+  );
+  const EXTENSION_URL_RE = /^(?:chrome-extension|moz-extension|safari-extension|safari-web-extension|extension|webkit-masked-url|chrome|edge|resource|userscript|about):/i;
+  const RESIZE_OBSERVER_RE = /^ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)\.?$/i;
+  const SCRIPT_ERROR_RE = /^script error\.?$/i;
+  const MAX_STACK_SCAN = 65536;
   const UA_RE = /^(?:Other|WeChat|Edge|Firefox|Chrome|Safari|WebKit)\/(?:Other|Linux|(?:iOS|HarmonyOS|Android|macOS|Win)\d{1,3})(?![\s\S])/;
   const MESSAGES = [
     [/^Cannot read properties of (?:null|undefined)/, "Cannot read properties of null or undefined"],
@@ -66,18 +103,103 @@
     return safe;
   }
 
-  function formatSource(filename, lineno, colno, stack) {
-    let base = extractBasename(filename);
+  function stripStackMessageHeader(stack, errMessage) {
+    if (typeof stack !== "string" || !stack) return "";
+    if (typeof errMessage !== "string" || !errMessage) return stack;
+    const colonIdx = stack.indexOf(": ");
+    if (colonIdx > 0 && colonIdx <= 64 && stack.slice(colonIdx + 2, colonIdx + 2 + errMessage.length) === errMessage) {
+      const after = colonIdx + 2 + errMessage.length;
+      if (after === stack.length) return "";
+      if (stack[after] === "\n") return stack.slice(after + 1);
+      if (stack[after] === "\r") return stack.slice(stack[after + 1] === "\n" ? after + 2 : after + 1);
+    }
+    if (stack.startsWith(errMessage)) {
+      const after = errMessage.length;
+      if (after === stack.length) return "";
+      if (stack[after] === "\n") return stack.slice(after + 1);
+      if (stack[after] === "\r") return stack.slice(stack[after + 1] === "\n" ? after + 2 : after + 1);
+    }
+    return stack;
+  }
+
+  function parseStackFrameLocation(line) {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    // V8/Chromium/Node frame: "at fn (loc)" or "at loc"
+    if (/^at\s+/.test(trimmed)) {
+      const rest = trimmed.replace(/^at\s+/, "").trim();
+      if (!rest) return null;
+      if (rest.endsWith(")")) {
+        const openIdx = rest.lastIndexOf("(");
+        if (openIdx >= 0) {
+          const inner = rest.slice(openIdx + 1, -1).trim();
+          const hasFnPrefix = openIdx > 0 && rest.slice(0, openIdx).trim().length > 0;
+          if (inner === "native" || inner === "[native code]" || (hasFnPrefix && inner === "<anonymous>")) {
+            return { native: true, location: "" };
+          }
+          if (/[\s)]/.test(inner)) return { native: false, location: "" };
+          return { native: false, location: inner };
+        }
+      }
+      if (rest === "native" || rest === "[native code]") return { native: true, location: "" };
+      return { native: false, location: rest };
+    }
+    // JavaScriptCore/Safari and SpiderMonkey/Firefox frame: "fn@loc" or "@loc" (no ":" before "@")
+    const atMatch = trimmed.match(/^[^@:\r\n]{0,120}@(.*)$/);
+    if (atMatch) {
+      const loc = atMatch[1].trim();
+      if (loc === "[native code]" || loc === "native") return { native: true, location: "" };
+      return { native: false, location: loc };
+    }
+    return null;
+  }
+
+  function formatSource(filename, lineno, colno, stack, errMessage, pageOrigin) {
+    const origin = typeof pageOrigin === "string" ? pageOrigin : "";
+    let base = "";
     let line = Number.isFinite(+lineno) && +lineno > 0 ? Math.min(9999999, Math.trunc(+lineno)) : 0;
     let col = Number.isFinite(+colno) && +colno > 0 ? Math.min(9999999, Math.trunc(+colno)) : 0;
 
+    if (filename && (!origin || classifyUrlOrigin(filename, origin) !== "external")) {
+      const candidate = extractBasename(filename);
+      if (candidate && normalizeSource(candidate) !== "unknown") {
+        base = candidate;
+      }
+    }
+
     if (!base && typeof stack === "string" && stack) {
-      const head = stack.slice(0, 1024);
-      const m = head.match(/(?:https?:\/\/[^\s)@]+?|\/[A-Za-z0-9_./-]*):(\d+)(?::(\d+))?(?=[\s)]|$)/);
-      if (m) {
-        base = extractBasename(m[0].replace(/:\d+(?::\d+)?$/, ""));
-        line = Math.min(9999999, Math.trunc(+m[1]) || 0);
-        col = Math.min(9999999, Math.trunc(+m[2]) || 0);
+      const frameText = stripStackMessageHeader(stack, errMessage);
+      if (frameText && frameText.length <= MAX_STACK_SCAN) {
+        const lines = frameText.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          const frame = parseStackFrameLocation(lines[i]);
+          if (!frame || frame.native || !frame.location) continue;
+          const m = frame.location.match(/^(https?:\/\/[^\s)@]+?|\/[A-Za-z0-9_./-]*):(\d+)(?::(\d+))?$/);
+          if (!m) continue;
+          if (origin && classifyUrlOrigin(m[1], origin) === "external") continue;
+          const candidate = extractBasename(m[1]);
+          if (candidate && normalizeSource(candidate) !== "unknown") {
+            base = candidate;
+            line = Math.min(9999999, Math.trunc(+m[2]) || 0);
+            col = Math.min(9999999, Math.trunc(+m[3]) || 0);
+            break;
+          }
+        }
+      }
+      if (!base) {
+        const head = frameText.slice(0, 1024);
+        const m = head.match(/(?:https?:\/\/[^\s)@]+?|\/[A-Za-z0-9_./-]*):(\d+)(?::(\d+))?(?=[\s)]|$)/);
+        if (m) {
+          const url = m[0].replace(/:\d+(?::\d+)?$/, "");
+          if (!origin || classifyUrlOrigin(url, origin) !== "external") {
+            const candidate = extractBasename(url);
+            if (candidate && normalizeSource(candidate) !== "unknown") {
+              base = candidate;
+              line = Math.min(9999999, Math.trunc(+m[1]) || 0);
+              col = Math.min(9999999, Math.trunc(+m[2]) || 0);
+            }
+          }
+        }
       }
     }
     if (!base) return "unknown";
@@ -135,6 +257,111 @@
     return ERROR_NAMES.has(raw) ? raw : "Error";
   }
 
+  function normalizeFilterReason(raw) {
+    return typeof raw === "string" && FILTER_REASON_SET.has(raw) ? raw : null;
+  }
+
+  function getPageOrigin(loc) {
+    if (!loc) return "";
+    if (typeof loc.origin === "string" && /^https?:\/\/[^/\s]+$/i.test(loc.origin)) {
+      return loc.origin.toLowerCase();
+    }
+    if (typeof loc.protocol === "string" && /^https?:$/i.test(loc.protocol) && typeof loc.host === "string" && loc.host) {
+      return (loc.protocol + "//" + loc.host).toLowerCase();
+    }
+    return "";
+  }
+
+  function classifyUrlOrigin(rawUrl, pageOrigin) {
+    if (typeof rawUrl !== "string") return "unknown";
+    const s = rawUrl.trim();
+    if (!s || /\s/.test(s)) return "unknown";
+    if (EXTENSION_URL_RE.test(s)) return "external";
+    if (/^blob:/i.test(s)) {
+      const inner = s.slice(5);
+      if (EXTENSION_URL_RE.test(inner)) return "external";
+      const bm = inner.match(/^(https?:\/\/[^/\s)@?#]+)/i);
+      if (bm) {
+        if (!pageOrigin) return "same";
+        return bm[1].toLowerCase() === pageOrigin ? "same" : "external";
+      }
+      return "unknown";
+    }
+    if (s.startsWith("//")) {
+      if (!pageOrigin) return "unknown";
+      const hm = s.match(/^\/\/([^/\s)@?#]+)/);
+      if (!hm) return "unknown";
+      const pageHost = pageOrigin.replace(/^https?:\/\//i, "");
+      return hm[1].toLowerCase() === pageHost ? "same" : "external";
+    }
+    if (s.startsWith("/")) return "same";
+    const m = s.match(/^(https?:\/\/[^/\s)@?#]+)/i);
+    if (m) {
+      if (!pageOrigin) return "same";
+      return m[1].toLowerCase() === pageOrigin ? "same" : "external";
+    }
+    if (/^file:/i.test(s)) return pageOrigin ? "external" : "unknown";
+    return "unknown";
+  }
+
+  function classifyStackOrigin(stack, pageOrigin, errMessage) {
+    if (typeof stack !== "string" || !stack) return "unknown";
+    const frameText = stripStackMessageHeader(stack, errMessage);
+    if (!frameText || frameText.length > MAX_STACK_SCAN) return "unknown";
+    const lines = frameText.split(/\r?\n/);
+    let hasExternal = false;
+    let hasSame = false;
+    let hasUnknown = false;
+    for (let i = 0; i < lines.length; i++) {
+      const frame = parseStackFrameLocation(lines[i]);
+      if (!frame || frame.native) continue;
+      if (!frame.location) {
+        hasUnknown = true;
+        continue;
+      }
+      const url = frame.location.replace(/:\d+(?::\d+)?$/, "");
+      const kind = classifyUrlOrigin(url, pageOrigin);
+      if (kind === "same") hasSame = true;
+      else if (kind === "external") hasExternal = true;
+      else hasUnknown = true;
+    }
+    if (hasSame) return "same";
+    if (hasExternal && !hasUnknown) return "external";
+    return "unknown";
+  }
+
+  function classifyWindowError(ev, pageOrigin) {
+    if (!ev) return null;
+    const err = ev.error;
+    const rawMsg = (err && typeof err.message === "string" && err.message)
+      || (typeof ev.message === "string" ? ev.message : "");
+    const trimmedMsg = rawMsg.trim();
+    const rawFile = typeof ev.filename === "string" ? ev.filename.trim() : "";
+    const lineno = Number.isFinite(+ev.lineno) ? +ev.lineno : 0;
+    const colno = Number.isFinite(+ev.colno) ? +ev.colno : 0;
+
+    // Browser ResizeObserver loop notifications fire with no Error object and zero line/col.
+    // Never filter a real thrown Error or same-origin exception with nonzero coordinates.
+    if (RESIZE_OBSERVER_RE.test(trimmedMsg) && !err && lineno === 0 && colno === 0) {
+      return "resize_observer";
+    }
+    if (SCRIPT_ERROR_RE.test(trimmedMsg) && !rawFile && lineno === 0 && colno === 0 && !err) {
+      return "script_error";
+    }
+    const fileKind = rawFile ? classifyUrlOrigin(rawFile, pageOrigin) : "unknown";
+    const stackText = err && typeof err.stack === "string" ? err.stack : "";
+    const stackKind = stackText
+      ? classifyStackOrigin(stackText, pageOrigin, typeof err.message === "string" ? err.message : "")
+      : "unknown";
+
+    // Same-origin evidence in either the event filename or the Error stack always wins.
+    if (fileKind === "same" || stackKind === "same") return null;
+    // Filter as non_origin only when every available provenance signal is strictly external.
+    if (stackKind === "external") return "non_origin";
+    if (fileKind === "external" && !stackText) return "non_origin";
+    return null;
+  }
+
   function createReporter(env = {}) {
     const fetchFn = env.fetch || (typeof fetch === "function" ? fetch.bind(globalThis) : null);
     let storage = env.sessionStorage;
@@ -154,7 +381,9 @@
     const maxPerSession = Number.isInteger(env.maxPerSession) && env.maxPerSession > 0 ? env.maxPerSession : MAX_PER_SESSION;
 
     const seen = new Set();
+    const filteredSeen = new Set();
     let memCount = 0;
+    let filteredMemCount = 0;
     let reporting = false;
     let revision = typeof env.revision === "string" && /^[0-9a-f]{7,40}$/i.test(env.revision)
       ? env.revision.slice(0, 12).toLowerCase()
@@ -162,13 +391,17 @@
     let getPageFn = typeof env.getPage === "function" ? env.getPage : null;
     let getLangFn = typeof env.getLang === "function" ? env.getLang : null;
 
-    function readSessionCount() {
+    function readCounter(key, memVal) {
       let stored = 0;
       try {
-        const v = storage && typeof storage.getItem === "function" ? Number(storage.getItem(SESSION_KEY)) : 0;
+        const v = storage && typeof storage.getItem === "function" ? Number(storage.getItem(key)) : 0;
         if (Number.isFinite(v) && v > 0) stored = Math.trunc(v);
       } catch {}
-      return Math.max(memCount, stored);
+      return Math.max(memVal, stored);
+    }
+
+    function readSessionCount() {
+      return readCounter(SESSION_KEY, memCount);
     }
 
     function writeSessionCount(next) {
@@ -178,12 +411,49 @@
       } catch {}
     }
 
+    function readFilteredSessionCount() {
+      return readCounter(SESSION_FILTERED_KEY, filteredMemCount);
+    }
+
+    function writeFilteredSessionCount(next) {
+      filteredMemCount = next;
+      try {
+        if (storage && typeof storage.setItem === "function") storage.setItem(SESSION_FILTERED_KEY, String(next));
+      } catch {}
+    }
+
     function configure(opts = {}) {
       if (typeof opts.getPage === "function") getPageFn = opts.getPage;
       if (typeof opts.getLang === "function") getLangFn = opts.getLang;
       if (typeof opts.revision === "string" && /^[0-9a-f]{7,40}$/i.test(opts.revision)) {
         revision = opts.revision.slice(0, 12).toLowerCase();
       }
+    }
+
+    function sendPayload(payload) {
+      const body = JSON.stringify(payload);
+      Promise.resolve(fetchFn(ENDPOINT, {
+        method: "POST",
+        keepalive: true,
+        credentials: "same-origin",
+        referrerPolicy: "no-referrer",
+        headers: { "Content-Type": "application/json", "X-Bojin": "1" },
+        body
+      })).catch(() => {});
+    }
+
+    function buildContextFields() {
+      let rawPage = null;
+      try { rawPage = getPageFn ? getPageFn() : null; } catch {}
+      let rawLang = null;
+      try { rawLang = getLangFn ? getLangFn() : null; } catch {}
+      return {
+        revision,
+        page: normalizePage(rawPage, loc && loc.pathname),
+        lang: normalizeLang(rawLang, doc && doc.documentElement && doc.documentElement.lang),
+        ua: parseUA(nav && nav.userAgent),
+        ts: nowFn()
+      };
     }
 
     function report(input) {
@@ -203,34 +473,37 @@
         const current = readSessionCount();
         if (current >= maxPerSession) return false;
 
-        let rawPage = null;
-        try { rawPage = getPageFn ? getPageFn() : null; } catch {}
-        let rawLang = null;
-        try { rawLang = getLangFn ? getLangFn() : null; } catch {}
-
-        const payload = {
-          name,
-          message,
-          source,
-          revision,
-          page: normalizePage(rawPage, loc && loc.pathname),
-          lang: normalizeLang(rawLang, doc && doc.documentElement && doc.documentElement.lang),
-          ua: parseUA(nav && nav.userAgent),
-          ts: nowFn()
-        };
+        const payload = Object.assign({ name, message, source }, buildContextFields());
 
         seen.add(key);
         writeSessionCount(current + 1);
+        sendPayload(payload);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        reporting = false;
+      }
+    }
 
-        const body = JSON.stringify(payload);
-        Promise.resolve(fetchFn(ENDPOINT, {
-          method: "POST",
-          keepalive: true,
-          credentials: "same-origin",
-          referrerPolicy: "no-referrer",
-          headers: { "Content-Type": "application/json", "X-Bojin": "1" },
-          body
-        })).catch(() => {});
+    function reportFiltered(rawReason) {
+      if (reporting) return false;
+      reporting = true;
+      try {
+        if (!fetchFn) return false;
+        const reason = normalizeFilterReason(rawReason);
+        if (!reason) return false;
+        const key = "filtered|" + reason;
+        if (filteredSeen.has(key)) return false;
+
+        const current = readFilteredSessionCount();
+        if (current >= maxPerSession) return false;
+
+        const payload = Object.assign({ filtered: reason }, buildContextFields());
+
+        filteredSeen.add(key);
+        writeFilteredSessionCount(current + 1);
+        sendPayload(payload);
         return true;
       } catch {
         return false;
@@ -244,10 +517,16 @@
         if (!ev) return;
         const err = ev.error;
         if (!err && !ev.message) return;
+        const pageOrigin = getPageOrigin(loc);
+        const filterReason = classifyWindowError(ev, pageOrigin);
+        if (filterReason) {
+          reportFiltered(filterReason);
+          return;
+        }
         const name = (err && typeof err.name === "string" && err.name) || "Error";
         const message = (err && typeof err.message === "string" && err.message) || (typeof ev.message === "string" ? ev.message : "");
         if (!message && !err) return;
-        const source = formatSource(ev.filename, ev.lineno, ev.colno, err && err.stack);
+        const source = formatSource(ev.filename, ev.lineno, ev.colno, err && err.stack, err && typeof err.message === "string" ? err.message : "", pageOrigin);
         report({ name, message, source });
       } catch {}
     }
@@ -259,11 +538,16 @@
           const code = typeof reason.code === "string" ? reason.code : "";
           const errName = typeof reason.name === "string" ? reason.name : "";
           if (code === "cancelled" || code === "session_expired" || errName === "AbortError") return;
+          const stack = typeof reason.stack === "string" ? reason.stack : "";
+          const rawErrMsg = typeof reason.message === "string" ? reason.message : "";
+          const pageOrigin = getPageOrigin(loc);
+          if (stack && classifyStackOrigin(stack, pageOrigin, rawErrMsg) === "external") {
+            reportFiltered("non_origin");
+            return;
+          }
           const name = errName || code || "UnhandledRejection";
-          const message = typeof reason.message === "string" && reason.message
-            ? reason.message
-            : (code || "Unhandled rejection");
-          const source = formatSource("", 0, 0, typeof reason.stack === "string" ? reason.stack : "");
+          const message = rawErrMsg || code || "Unhandled rejection";
+          const source = formatSource("", 0, 0, stack, rawErrMsg, pageOrigin);
           report({ name, message, source });
           return;
         }
@@ -293,15 +577,29 @@
     return {
       configure,
       report,
+      reportFiltered,
       handleWindowError,
       handleRejection,
       loadRevision,
-      getRevision: () => revision
+      getRevision: () => revision,
+      getFilteredCount: readFilteredSessionCount
     };
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { scrubMessage, normalizeName, normalizeSource, normalizeUA, parseUA };
+    module.exports = {
+      ALLOWED_SOURCE_FILES,
+      ALLOWED_FILTER_REASONS,
+      scrubMessage,
+      normalizeName,
+      normalizeSource,
+      normalizeUA,
+      normalizeFilterReason,
+      parseUA,
+      classifyUrlOrigin,
+      classifyStackOrigin,
+      classifyWindowError
+    };
   }
   if (typeof window !== "undefined") {
     const defaultReporter = createReporter();
@@ -313,11 +611,14 @@
     window.ritualErrorReporter = {
       configure: defaultReporter.configure,
       report: defaultReporter.report,
+      reportFiltered: defaultReporter.reportFiltered,
       getRevision: defaultReporter.getRevision,
+      getFilteredCount: defaultReporter.getFilteredCount,
       scrubMessage,
       formatSource,
       parseUA,
       normalizePage,
+      classifyWindowError,
       createReporter
     };
   }

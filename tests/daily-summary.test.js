@@ -1171,3 +1171,53 @@ test("collectDailySummary counts phone vs email signups without leaking phone nu
   assert.ok(!combined.includes("13800138001"));
   assert.ok(!combined.includes("13900139002"));
 });
+
+test("daily summary tallies client-error-filtered noise separately from real client errors", (t) => {
+  const fx = createFixture(t);
+  const filteredLines = [
+    JSON.stringify({
+      __REALTIME_TIMESTAMP: String(fx.nowMsHoursAgo(2) * 1000),
+      MESSAGE: `client-error-filtered auth=user page=today lang=zh rev=1e51b8e456ad ua=Chrome/Android16 reason=script_error ts=${fx.nowHoursAgo(2)}`
+    }),
+    `${fx.nowHoursAgo(4).replace(".000Z", "+0000")} leanritual node[4242]: client-error-filtered auth=user page=me lang=zh rev=1e51b8e456ad ua=Chrome/Android16 reason=non_origin ts=${fx.nowHoursAgo(4)}`,
+    `client-error-filtered auth=user page=login lang=zh rev=1e51b8e456ad ua=Chrome/Android16 reason=resize_observer ts=${fx.nowHoursAgo(5)}`,
+    JSON.stringify({
+      __REALTIME_TIMESTAMP: String(fx.nowMsHoursAgo(40) * 1000),
+      MESSAGE: `client-error-filtered auth=user page=today lang=zh rev=1e51b8e456ad ua=Safari/macOS10 reason=script_error ts=${fx.nowHoursAgo(40)}`
+    })
+  ];
+  fs.appendFileSync(fx.journalFile, filteredLines.join("\n") + "\n", "utf8");
+
+  const summary = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    journalFile: fx.journalFile,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot,
+    noSystemd: true,
+    env: {}
+  });
+
+  // Real client error counts are unchanged (2 in last 24h, 3 trial-to-date)
+  assert.equal(summary.clientErrors.last24h.count, 2);
+  assert.deepEqual(summary.clientErrors.last24h.byName, { TypeError: 1, SaveError: 1 });
+  assert.equal(summary.clientErrors.trialToDate.count, 3);
+
+  // Filtered noise is tracked in its own tally and breakdown
+  assert.equal(summary.clientErrors.last24h.filtered, 3);
+  assert.deepEqual(summary.clientErrors.last24h.filteredByReason, {
+    script_error: 1,
+    non_origin: 1,
+    resize_observer: 1
+  });
+  assert.equal(summary.clientErrors.trialToDate.filtered, 4);
+  assert.deepEqual(summary.clientErrors.trialToDate.filteredByReason, {
+    script_error: 2,
+    non_origin: 1,
+    resize_observer: 1
+  });
+
+  const text = formatSummaryText(summary);
+  assert.match(text, /近24h: 2 \(SaveError: 1, TypeError: 1\), 已过滤噪音 3 \(non_origin: 1, resize_observer: 1, script_error: 1\)/);
+  assert.match(text, /累计:\s+3 \(TypeError: 2, SaveError: 1\), 已过滤噪音 4 \(script_error: 2, non_origin: 1, resize_observer: 1\)/);
+});
