@@ -748,6 +748,30 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       assert.equal(await page.locator('.chooser').count(), 0, 'Escape dismisses chooser');
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), 'adopt-open', 'Escape restores focus to adopt-open trigger');
 
+      // Undo conflict confirmation dialog on page 2 of Applied Adjustments: focus management, 44x44 targets, axe-core (light/dark, zh/en), Escape focus restore
+      await page.locator('#pg-adjust-next').click();
+      const conflictUndoTrigger = page.locator('[data-act="undo-adjust"][data-v="adj-a11y-1"]');
+      await conflictUndoTrigger.waitFor({ state: 'visible' });
+      await conflictUndoTrigger.focus();
+      await page.keyboard.press('Enter');
+      await page.locator('#undo-conflict-dialog').waitFor({ state: 'visible' });
+      assert.equal(await page.evaluate(() => !!document.activeElement?.closest('#undo-conflict-dialog')), true, 'opening undo conflict dialog moves focus into dialog');
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const conflictSizes = await page.evaluate(() => ['dismiss-conflict', 'undo-force'].map(act => {
+          const r = document.querySelector(`#undo-conflict-dialog [data-act="${act}"]`).getBoundingClientRect();
+          return { act, w: Math.round(r.width), h: Math.round(r.height) };
+        }));
+        for (const s of conflictSizes) {
+          assert.ok(s.w >= 44 && s.h >= 44, `conflict dialog ${s.act} >= 44x44: ${JSON.stringify(s)}`);
+        }
+      }
+      await assertAxeClean(context, page, `${cfg.name}/undo-conflict`);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('#undo-conflict-dialog').count(), 0, 'Escape dismisses undo conflict dialog');
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), 'undo-adjust', 'Escape restores focus to triggering undo-adjust button');
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset?.v), 'adj-a11y-1', 'Escape restores focus to exact triggering undo-adjust entry');
+      await page.locator('#pg-adjust-prev').click();
+
       // Me (with profile history pagination visible) + tester feedback form + delete-account disclosure + setup edit mode
       await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
       await page.locator('nav[data-pager="profileHistory"]').waitFor({ state: 'visible' });
