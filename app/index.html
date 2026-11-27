@@ -163,6 +163,13 @@ fieldset.ufb-group legend{font-size:13px;color:var(--muted);padding:0}
 .ins .chip{white-space:normal;text-align:left;justify-content:flex-start}
 .chooser{background:var(--sunk);border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;margin-top:4px}
 .chooser .prev{font-size:14px;font-weight:600}
+.conflict-dialog{background:var(--surface);border:2px solid var(--warn);border-radius:8px;padding:12px;gap:8px;margin-top:6px;color:var(--ink)}
+.conflict-title{font-size:14px;font-weight:700;color:var(--warn)}
+.conflict-diff{margin:0;padding:8px 10px;background:var(--sunk);border-radius:6px;display:flex;flex-direction:column;gap:4px}
+.conflict-diff>div{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}
+.conflict-diff dt{color:var(--muted);font-weight:500}
+.conflict-diff dd{margin:0;font-weight:600;color:var(--ink)}
+.conflict-extra{padding-top:4px;border-top:1px solid var(--line);gap:10px}
 .tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:flex;justify-content:center;padding-inline:env(safe-area-inset-left,0px) env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px);z-index:10}
 .tabs .in{display:grid;grid-template-columns:repeat(5,1fr);width:100%;max-width:560px}
 .tabs button{background:none;border:none;color:var(--muted);min-height:44px;min-width:44px;padding:8px 0 10px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px}
@@ -205,7 +212,7 @@ const HOSTED = true;
 const GUIDE_URL = "/guide.html";
 const CONSENT_DOC_VERSION = "2026-11-25";
 const ORDER = ["push","pull","legs"];
-function E(name, sets, lo, hi, rest, inc, subs, home){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null}; }
+function E(name, sets, lo, hi, rest, inc, subs, home, beginner){ return {name, sets, lo, hi, rest, inc, subs:subs||{}, home:home||null, beginner:beginner||null}; }
 const PROGRAM = {
   push:{label:"推", title:"Day 1 · 推", ex:[
     E("上斜杠铃卧推",3,4,6,"3 分钟",2.5,{shoulder:"上斜哑铃卧推（中立握）",wrist:"上斜哑铃卧推",elbow:"上斜哑铃卧推"},{name:"下斜俯卧撑（脚垫高）",lo:6,hi:12,inc:0,subs:{shoulder:"上斜俯卧撑（手撑高处）",wrist:"上斜俯卧撑（手撑高处）"}}),
@@ -216,7 +223,7 @@ const PROGRAM = {
   ]},
   pull:{label:"拉", title:"Day 2 · 拉", ex:[
     E("硬拉",3,4,6,"3 分钟",5,{lowback:{name:"杠铃臀推",lo:8,hi:10},hip:"六角杠铃硬拉（无痛幅度）"},{name:"单腿罗马尼亚硬拉（背包负重）",lo:8,hi:12,inc:0,subs:{lowback:{name:"臀桥（可背包负重）",lo:10,hi:15},hip:{name:"臀桥（可背包负重）",lo:10,hi:15}}}),
-    E("引体向上（能做 6 个后负重）",3,4,6,"3 分钟",2.5,{shoulder:"高位下拉（中立握）",elbow:"高位下拉（中立握）"},{name:"引体向上",lo:4,hi:10,inc:0}),
+    E("引体向上（能做 6 个后负重）",3,4,6,"3 分钟",2.5,{shoulder:"高位下拉（中立握）",elbow:"高位下拉（中立握）"},{name:"引体向上",lo:4,hi:10,inc:0,beginner:{name:"弹力带下拉（门扣或高处固定）",sets:3,lo:10,hi:15,rest:"1–2 分钟",inc:0}},{name:"高位下拉",sets:3,lo:8,hi:12,rest:"2–3 分钟",inc:2.5}),
     E("杠铃划船",3,4,6,"3 分钟",2.5,{lowback:"胸托哑铃划船"},{name:"反向划船（桌下或低杠）",lo:6,hi:12,inc:0}),
     E("面拉",3,12,15,"1–2 分钟",1,{},{name:"弹力带面拉",lo:15,hi:20,inc:0}),
     E("二头弯举",3,8,12,"1–2 分钟",1,{elbow:"锤式弯举（轻重量）",wrist:"锤式弯举"},{name:"背包弯举",lo:10,hi:15,inc:0})
@@ -274,7 +281,8 @@ const CUES = {
   "罗马尼亚硬拉":["膝盖微屈固定，髋部向后推，杠铃贴腿下滑","背部保持平直，下到大腿后侧明显拉伸即停（通常在膝下）","用臀部把髋向前推回站直；腰椎有伤禁止做"],
   "俯卧腿弯举":["趴在器械上，膝盖对准转轴","勾起时髋部不要离开垫子","下放控制 2–3 秒"],
   "引体向上":["正手略宽于肩，先把肩胛骨下沉","胸口向单杠拉，下巴过杠","下放到手臂接近伸直，不要甩腿借力"],
-  "高位下拉":["中立握把，大腿固定在挡垫下","肩胛先下沉，再把把手拉到上胸","身体略后倾 10–15°，不要大幅后仰"],
+  "高位下拉":["正手略宽于肩或用中立握把，大腿固定在挡垫下","肩胛先下沉，再把把手拉到上胸","身体略后倾 10–15°，不要大幅后仰"],
+  "弹力带下拉":["把弹力带用门扣或绕高处固定，跪姿或坐姿拉直弹力带","先下沉肩胛骨，再把双手拉向锁骨与上胸两侧","底端停 1 秒感受背部发力，慢慢放回不要让弹力带甩回"],
   "杠铃划船":["屈髋让上身前倾约 45°，背部平直","杠铃拉向肚脐，肘部贴身体向后","腰椎有伤换胸托哑铃划船"],
   "胸托哑铃划船":["胸口贴在上斜凳上，腰部完全不受力","把哑铃拉向髋部方向","顶端夹紧肩胛，慢慢放下"],
   "反向划船":["躺在结实的桌子或低杠下，双手握住边缘","身体绷直，把胸口拉向桌边","脚放得越远越难"],
@@ -336,6 +344,8 @@ const EX_EN = {
   "引体向上":"Pull-Up",
   "高位下拉（中立握）":"Lat Pulldown (Neutral Grip)",
   "高位下拉":"Lat Pulldown",
+  "弹力带下拉（门扣或高处固定）":"Band Lat Pulldown (Door Anchor or High Point)",
+  "弹力带下拉":"Band Lat Pulldown",
   "杠铃划船":"Barbell Row",
   "胸托哑铃划船":"Chest-Supported Dumbbell Row",
   "反向划船（桌下或低杠）":"Inverted Row (Table or Low Bar)",
@@ -410,7 +420,8 @@ const CUES_EN = {
   "罗马尼亚硬拉":["Keep a soft fixed knee bend, push hips back sliding bar down thighs","Maintain flat back and stop at strong hamstring stretch (usually below knee)","Drive hips forward with glutes to stand; avoid if lumbar spine is injured"],
   "俯卧腿弯举":["Lie face down aligning knees with machine pivot","Keep hips pressed into pad as you curl up","Lower under 2–3s control"],
   "引体向上":["Overhand grip slightly wider than shoulders; depress scapulae first","Pull chest toward bar until chin clears","Lower to near full hang without kipping"],
-  "高位下拉":["Use neutral-grip attachment with thighs secured under pad","Depress shoulders first, then pull handle to upper chest","Lean back only 10–15° without swinging"],
+  "高位下拉":["Use an overhand grip slightly wider than shoulders or a neutral-grip handle, thighs secured under pad","Depress shoulders first, then pull handle to upper chest","Lean back only 10–15° without swinging"],
+  "弹力带下拉":["Anchor band with a door anchor or high point; kneel or sit with light starting tension","Depress shoulder blades first, then pull hands down toward upper chest","Pause 1s at the bottom to squeeze your lats, then return slowly under control"],
   "杠铃划船":["Hinge torso to ~45° with a flat neutral back","Row bar toward navel keeping elbows close to body","Swap to chest-supported dumbbell row if lower back is injured"],
   "胸托哑铃划船":["Rest chest on incline bench to unload lower back completely","Row dumbbells back toward hips","Squeeze shoulder blades at top and lower slowly"],
   "反向划船":["Lie under a sturdy table or low bar gripping edge","Keep body rigid and pull chest to bar","Walk feet further forward to increase difficulty"],
@@ -565,6 +576,7 @@ const I18N = {
     "setup.steps4000":"5000 以下", "setup.steps6500":"5000–8000", "setup.steps9500":"8000–11000", "setup.steps12000":"11000 以上",
     "setup.sec2":"训练阶段", "setup.exp":"训练经验",
     "setup.expNew":"新手（不到 1 年）", "setup.expMid":"1–3 年", "setup.expAdv":"3 年以上",
+    "setup.expHint":"选「新手」时，拉日引体向上会默认换成高位下拉（在家为弹力带下拉），随时可在动作里一键换回。",
     "setup.goal":"当前目标", "setup.goalAuto":"按体脂自动判断",
     "setup.goalHint":"自动判断：体脂高于 13% 减脂，11% 以下精益增肌，中间维持。没填体脂时按维持算。",
     "setup.trainDays":"每周哪几天练（纲领默认 3 天，至少隔一天）",
@@ -815,7 +827,7 @@ const I18N = {
     "fb.writing":"正在写…", "fb.thinking":"正在思考，通常需要半分钟到一分钟。",
     "fb.appliedList":"已采纳的调整",
     "fb.savingBtn":"正在保存…",
-    "fb.adoptKcal":"采纳：每日 {delta} kcal", "fb.adoptDeload":"采纳：本周开始减载",
+    "fb.adoptKcal":"采纳：每日 {delta} kcal", "fb.adoptDeload":"采纳：本周开始减载", "fb.adoptStage":"采纳：阶段目标改为{stage}",
     "fb.adoptSwapNums":"采纳：{from} 换成 {to} {sets}×{lo}–{hi}",
     "fb.adoptSwap":"采纳：{from} 换成 {to}",
     "fb.adoptEditSwap":"采纳：{from} 换成 {to} 改为 {sets}×{lo}–{hi}",
@@ -825,6 +837,19 @@ const I18N = {
     "fb.decline":"不采纳", "fb.declinedChip":"已不采纳", "fb.rechoose":"重新选择",
     "fb.clearExEdits":"全部恢复默认", "fb.clearSwaps":"恢复原动作",
     "fb.resetKcal":"热量调整归零", "fb.stopDeload":"结束减载", "fb.gotIt":"知道了",
+    "fb.conflictTitle":"确认覆盖当前设置？",
+    "fb.conflictCurrentLabel":"当前设置",
+    "fb.conflictRestoreLabel":"撤销后将恢复为",
+    "fb.conflictKeepBtn":"保留当前设置",
+    "fb.conflictOverwriteBtn":"覆盖恢复",
+    "fb.conflictTodayDoneNote":"今天的训练已保存；若选择覆盖恢复，只会恢复当天替换记录，不会改写已保存的训练日志。",
+    "fb.conflictWorkoutMissing":"今天的已保存训练记录已不存在",
+    "fb.conflictTodayMissingNote":"今天已保存的训练记录已被删除或改动，无法覆盖恢复到原动作。",
+    "fb.conflictKcalZero":"0 kcal（无调整）",
+    "fb.conflictDeloadFrom":"自 {date} 起减载",
+    "fb.conflictDeloadOff":"未开启减载",
+    "fb.conflictDefaultPlan":"默认（{ex}）",
+    "fb.conflictTodaySaved":"今天训练已保存（当天替换：{val}）",
     "fb.conflictDefault":"这项调整之后又被修改过，不能直接恢复到采纳前的值。",
     "fb.conflictToday":"这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。",
     "fb.prevKcalRange":"每日热量目标：{cur} kcal → {next} kcal（{delta} kcal）",
@@ -832,6 +857,8 @@ const I18N = {
     "fb.hintKcal":"采纳后会更新每日热量目标，随时可以撤销。",
     "fb.prevDeload":"从今天开始减载一周（训练重量约 60%，组数减半）",
     "fb.hintDeload":"采纳后从今天起进入减载周，随时可以撤销。",
+    "fb.prevStage":"阶段目标：{cur} → {next}",
+    "fb.hintStage":"采纳后会更新你的阶段目标和每日热量计算，随时可以撤销。",
     "fb.curEx":"{from}（当前：{cur}）",
     "fb.hintSavedDone":"今天这练已保存：选「只改今天」会直接更新已保存记录里的这项动作（填过的组数重量保留）；选「长期调整」从下次训练开始生效。",
     "fb.hintSavedOther":"今天的训练已保存且不含这项动作；想改以后课表请选「长期调整」。",
@@ -842,7 +869,7 @@ const I18N = {
     "toast.alreadyAdopted":"这项建议已采纳", "toast.declined":"已标记为不采纳",
     "toast.missingExToday":"今天已保存的训练里没有「{from}」，如需改以后请选「长期调整」",
     "toast.adoptedTodaySaved":"已只改今天（已更新今天保存的训练记录）", "toast.adoptedToday":"已只改今天",
-    "toast.adoptedKcal":"已采纳：每日热量 {delta} kcal", "toast.adoptedDeload":"已采纳：本周开始减载",
+    "toast.adoptedKcal":"已采纳：每日热量 {delta} kcal", "toast.adoptedDeload":"已采纳：本周开始减载", "toast.adoptedStage":"已采纳：阶段目标改为{stage}",
     "toast.adoptedLongToday":"已长期调整，今天及以后课表已更新", "toast.adoptedLongNext":"已长期调整，从下次训练开始生效",
     "toast.alreadyUndone":"这项调整已撤销", "toast.undone":"已撤销这项调整", "toast.swapRestored":"已恢复原动作",
     "account.title":"账号", "account.changePw":"改密码", "account.logout":"退出登录",
@@ -989,6 +1016,7 @@ const I18N = {
     "setup.steps4000":"Under 5,000", "setup.steps6500":"5,000–8,000", "setup.steps9500":"8,000–11,000", "setup.steps12000":"11,000+",
     "setup.sec2":"Training Plan", "setup.exp":"Training experience",
     "setup.expNew":"Beginner (<1 yr)", "setup.expMid":"1–3 yrs", "setup.expAdv":"3+ yrs",
+    "setup.expHint":"Choosing Beginner swaps Pull-Ups to Lat Pulldown (or Band Lat Pulldown at home) by default — switch back anytime in 1 tap.",
     "setup.goal":"Current goal", "setup.goalAuto":"Auto by body fat",
     "setup.goalHint":"Auto: Cut above 13% body fat, Lean Bulk at 11% or below, Maintain in between (or if left blank).",
     "setup.trainDays":"Training days (default 3 days/wk, non-consecutive)",
@@ -1239,7 +1267,7 @@ const I18N = {
     "fb.writing":"Writing…", "fb.thinking":"Thinking — usually takes 30–60 seconds.",
     "fb.appliedList":"Applied Adjustments",
     "fb.savingBtn":"Saving…",
-    "fb.adoptKcal":"Adopt: {delta} kcal/day", "fb.adoptDeload":"Adopt: start deload week",
+    "fb.adoptKcal":"Adopt: {delta} kcal/day", "fb.adoptDeload":"Adopt: start deload week", "fb.adoptStage":"Adopt: set phase goal to {stage}",
     "fb.adoptSwapNums":"Adopt: {from} → {to} {sets}×{lo}–{hi}",
     "fb.adoptSwap":"Adopt: {from} → {to}",
     "fb.adoptEditSwap":"Adopt: {from} → {to} ({sets}×{lo}–{hi})",
@@ -1249,6 +1277,19 @@ const I18N = {
     "fb.decline":"Decline", "fb.declinedChip":"Declined", "fb.rechoose":"Change",
     "fb.clearExEdits":"Reset all defaults", "fb.clearSwaps":"Restore original exercises",
     "fb.resetKcal":"Reset calorie adjustment", "fb.stopDeload":"End deload", "fb.gotIt":"Got it",
+    "fb.conflictTitle":"Overwrite current setting?",
+    "fb.conflictCurrentLabel":"Current value",
+    "fb.conflictRestoreLabel":"Undo will restore",
+    "fb.conflictKeepBtn":"Keep Current",
+    "fb.conflictOverwriteBtn":"Overwrite & Undo",
+    "fb.conflictTodayDoneNote":"Today's workout is already saved; overwriting only restores the day-swap record without altering your saved workout log.",
+    "fb.conflictWorkoutMissing":"Today's saved workout record is no longer present",
+    "fb.conflictTodayMissingNote":"Today's saved workout was deleted or altered and can no longer be overwritten.",
+    "fb.conflictKcalZero":"0 kcal (no adjustment)",
+    "fb.conflictDeloadFrom":"Deloading from {date}",
+    "fb.conflictDeloadOff":"Not deloading",
+    "fb.conflictDefaultPlan":"Default ({ex})",
+    "fb.conflictTodaySaved":"Today's workout saved (day swap: {val})",
     "fb.conflictDefault":"Modified after adoption — can't automatically restore the previous value.",
     "fb.conflictToday":"Today's workout was edited or saved afterward — can't restore the previous value.",
     "fb.prevKcalRange":"Daily calorie target: {cur} kcal → {next} kcal ({delta} kcal)",
@@ -1256,6 +1297,8 @@ const I18N = {
     "fb.hintKcal":"Updates your daily calorie target; you can undo anytime.",
     "fb.prevDeload":"Start a 1-week deload today (~60% weight, half sets)",
     "fb.hintDeload":"Enters deload week starting today; you can undo anytime.",
+    "fb.prevStage":"Phase goal: {cur} → {next}",
+    "fb.hintStage":"Updates your phase goal and daily calorie target; you can undo anytime.",
     "fb.curEx":"{from} (now: {cur})",
     "fb.hintSavedDone":"Today's workout is already saved: \"Today only\" updates this exercise in today's log (keeping logged sets); \"Long-term\" applies from your next session.",
     "fb.hintSavedOther":"Today's saved workout doesn't include this exercise; choose \"Long-term\" to update future sessions.",
@@ -1266,7 +1309,7 @@ const I18N = {
     "toast.alreadyAdopted":"Already adopted", "toast.declined":"Marked as declined",
     "toast.missingExToday":'Today\'s saved workout doesn\'t include "{from}" — choose "Long-term" for future sessions',
     "toast.adoptedTodaySaved":"Updated today only (saved workout updated)", "toast.adoptedToday":"Updated for today only",
-    "toast.adoptedKcal":"Adopted: {delta} kcal/day", "toast.adoptedDeload":"Adopted: deload week started",
+    "toast.adoptedKcal":"Adopted: {delta} kcal/day", "toast.adoptedDeload":"Adopted: deload week started", "toast.adoptedStage":"Adopted: phase goal set to {stage}",
     "toast.adoptedLongToday":"Saved long-term change (today & future sessions updated)", "toast.adoptedLongNext":"Saved long-term change (takes effect next session)",
     "toast.alreadyUndone":"Already undone", "toast.undone":"Adjustment undone", "toast.swapRestored":"Original exercise restored",
     "account.title":"Account", "account.changePw":"Change password", "account.logout":"Sign out",
@@ -1589,6 +1632,7 @@ function fmtWhy(w){
   if (!s || getLang() !== "en") return s;
   const map = {
     "居家器械":"Home equipment",
+    "新手默认":"Beginner default",
     "根据反馈调整":"Adjusted from feedback",
     "你设定的长期调整":"Your long-term change",
     "加练":"Extra work",
@@ -1604,6 +1648,7 @@ function fmtAdjustLog(a){
   if (getLang() !== "en") return raw;
   if (a?.kind === "kcal" && a.delta != null) return `Daily calories ${a.delta > 0 ? "+" : ""}${a.delta} kcal`;
   if (a?.kind === "deload") return "Started deload week";
+  if (a?.kind === "stage" && (a.stage || a.to)) return `Phase goal set to ${stageLabel(a.stage || a.to)}`;
   if ((a?.kind === "swap" || a?.kind === "edit") && a.from) {
     const f = exName(a.from), to = exName(a.to || a.from);
     if (a.scope === "today") return `${a.prev?.mode === "savedWorkout" ? "Today only (saved workout)" : "Today only"}: "${f}" → ${to} ${a.sets}×${a.lo}–${a.hi}`;
@@ -1986,16 +2031,18 @@ function nextKey(date){
 function resolveEx(ex){ return resolveExForProfile(ex, S.profile); }
 function resolveExForProfile(ex, p){
   let o = {name:ex.name, sets:ex.sets, lo:ex.lo, hi:ex.hi, rest:ex.rest, inc:ex.inc, orig:ex.name, why:null};
-  const home = p.equipment === "home" && ex.home;
-  if (home) { const {subs, ...h} = ex.home; Object.assign(o, h, {why:"居家器械"}); }
+  const home = p?.equipment === "home" && ex.home;
+  if (home) { const {subs, beginner, ...h} = ex.home; Object.assign(o, h, {why:"居家器械"}); }
+  const beg = p?.exp === "new" ? (home ? ex.home.beginner : ex.beginner) : null;
+  if (beg) { const {subs:bSubs, ...b} = beg; Object.assign(o, b, {why:"新手默认"}); }
   const subs = home ? (ex.home.subs || {}) : ex.subs;
-  for (const k of (p.injuries || [])) {
+  for (const k of (p?.injuries || [])) {
     const s = subs[k];
     if (s) { Object.assign(o, typeof s === "string" ? {name:s} : s, {why: INJ[k] + "有伤，已替换"}); break; }
   }
-  const sw = (p.swaps || {})[ex.name];
+  const sw = (p?.swaps || {})[ex.name];
   if (sw) Object.assign(o, {name:sw, why:"根据反馈调整"});
-  const pe = (p.exEdits || {})[ex.name];
+  const pe = (p?.exEdits || {})[ex.name];
   if (pe) Object.assign(o, pe, {why:"你设定的长期调整"});
   return o;
 }
@@ -2024,8 +2071,15 @@ function planFor(date){
 function exMeta(name){
   for (const k of ORDER) for (const ex of PROGRAM[k].ex) {
     const hb = ex.home ? {...ex, ...ex.home} : null;
-    const cands = [[ex, ex], [ex, ex.home], ...Object.values(ex.subs).map(c => [ex, c]), ...Object.values(ex.home?.subs || {}).map(c => [hb, c])].filter(x => x[1]);
-    for (const [base, c] of cands) { const n = typeof c === "string" ? c : c.name; if (n === name) return {...base, ...(typeof c === "string" ? {} : c), name, subs:undefined, home:undefined}; }
+    const cands = [
+      [ex, ex],
+      [ex, ex.home],
+      [ex, ex.beginner],
+      [hb || ex, ex.home?.beginner],
+      ...Object.values(ex.subs).map(c => [ex, c]),
+      ...Object.values(ex.home?.subs || {}).map(c => [hb, c])
+    ].filter(x => x[1]);
+    for (const [base, c] of cands) { const n = typeof c === "string" ? c : c.name; if (n === name) return {...base, ...(typeof c === "string" ? {} : c), name, subs:undefined, home:undefined, beginner:undefined}; }
   }
   return null;
 }
@@ -2221,6 +2275,7 @@ function viewSetup(){
   <section class="card"><div class="row"><span class="sec-n num">2</span><h2>${esc(t("setup.sec2"))}</h2></div>
     <span class="lbl" id="lbl-exp">${esc(t("setup.exp"))}</span>
     <div class="checks" role="radiogroup" aria-labelledby="lbl-exp">${rd("exp","new",p.exp,t("setup.expNew"))}${rd("exp","mid",p.exp,t("setup.expMid"))}${rd("exp","adv",p.exp,t("setup.expAdv"))}</div>
+    <p class="small muted">${esc(t("setup.expHint"))}</p>
     <span class="lbl" id="lbl-stage">${esc(t("setup.goal"))}</span>
     <div class="checks" role="radiogroup" aria-labelledby="lbl-stage">${rd("stage","auto",p.stage,t("setup.goalAuto"))}${rd("stage","cut",p.stage,stageLabel("cut"))}${rd("stage","maintain",p.stage,stageLabel("maintain"))}${rd("stage","bulk",p.stage,stageLabel("bulk"))}</div>
     <p class="small muted">${esc(t("setup.goalHint"))}</p>
@@ -2432,7 +2487,7 @@ function exCard(e, i, d, date, plan){
 function altsFor(orig){
   const out = [];
   for (const k of ORDER) for (const ex of PROGRAM[k].ex) if (ex.name === orig) {
-    [ex, ex.home, ...Object.values(ex.subs), ...Object.values(ex.home?.subs || {})].filter(Boolean).forEach(c => out.push(typeof c === "string" ? c : c.name));
+    [ex, ex.home, ex.beginner, ex.home?.beginner, ...Object.values(ex.subs), ...Object.values(ex.home?.subs || {})].filter(Boolean).forEach(c => out.push(typeof c === "string" ? c : c.name));
   }
   return [...new Set(out)];
 }
@@ -2445,8 +2500,8 @@ function allExNames(){
 function editor(e){
   const ed = S.ed, dayKey = planFor(S.date).key;
   return `<div class="tip stack" role="group" aria-label="${esc(t("ed.title", {orig:exName(e.orig)}))}" style="gap:10px">
-    <div class="row between"><b>${esc(t("ed.title", {orig:exName(e.orig)}))}</b><button class="link" data-act="ed-cancel">${esc(t("common.collapse"))}</button></div>
-    <div><span class="small muted">${esc(t("ed.alts"))}</span><div class="row" style="margin-top:4px">${altsFor(e.orig).map(n => `<button class="chip ${canonExName(ed.name)===n?"on":""}" aria-pressed="${canonExName(ed.name)===n}" data-act="ed-pick" data-v="${esc(n)}">${esc(exName(n))}</button>`).join("")}</div></div>
+    <div class="row between"><b>${esc(t("ed.title", {orig:exName(e.orig)}))}</b><button type="button" class="link" data-act="ed-cancel">${esc(t("common.collapse"))}</button></div>
+    <div><span class="small muted">${esc(t("ed.alts"))}</span><div class="row" style="margin-top:4px">${altsFor(e.orig).map(n => `<button type="button" class="chip ${canonExName(ed.name)===n?"on":""}" aria-pressed="${canonExName(ed.name)===n}" data-act="ed-pick" data-v="${esc(n)}">${esc(exName(n))}</button>`).join("")}</div></div>
     <label>${esc(t("ed.newEx"))}<input id="ed-name" data-ed="name" list="ex-all" autocomplete="off" value="${esc(ed.name)}"></label>
     <datalist id="ex-all">${allExNames().map(n => `<option value="${esc(exName(n))}"></option>`).join("")}</datalist>
     <div class="grid3">
@@ -2456,16 +2511,16 @@ function editor(e){
     </div>
     ${S.sample ? `<div class="stack" style="gap:6px">
       <label>${esc(t("ed.whyLabel"))}<input id="ed-why" data-ed="why" value="${esc(ed.why)}" placeholder="${esc(t("ed.whyPh"))}"></label>
-      <div><button class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${esc(ed.aiBusy ? t("ed.aiBusy") : t("ed.aiAsk"))}</button></div>
-      ${(ed.ai||[]).map((a,k) => `<button class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${canonExName(ed.name)===canonExName(a.name)?"border-color:var(--accent)":""}"><b class="small">${esc(exName(a.name))} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
+      <div><button type="button" class="chip on" data-act="ed-ai" ${ed.aiBusy?"disabled":""}>${esc(ed.aiBusy ? t("ed.aiBusy") : t("ed.aiAsk"))}</button></div>
+      ${(ed.ai||[]).map((a,k) => `<button type="button" class="card" data-act="ed-ai-pick" data-v="${k}" style="text-align:left;cursor:pointer;padding:10px;gap:2px;${canonExName(ed.name)===canonExName(a.name)?"border-color:var(--accent)":""}"><b class="small">${esc(exName(a.name))} · ${a.sets}×${a.lo}–${a.hi}</b><span class="small muted">${esc(a.why)}</span></button>`).join("")}
       ${ed.aiErr ? `<p class="small" role="alert" style="color:var(--bad)">${esc(ed.aiErr)}</p>` : ""}
       ${aiBudgetNotice()}
       <p class="small muted ai-disclaimer">${esc(t("ai.disclaimer"))}</p>
     </div>` : ""}
     <div><span class="small muted">${esc(t("ed.scopeLabel"))}</span><div class="row" style="margin-top:4px">
-      <button class="chip ${ed.scope==="once"?"on":""}" aria-pressed="${ed.scope==="once"}" data-act="ed-scope" data-v="once">${esc(ed.rec ? t("ed.scopeRecOnce") : t("ed.scopeToday"))}</button>
-      <button class="chip ${ed.scope==="always"?"on":""}" aria-pressed="${ed.scope==="always"}" data-act="ed-scope" data-v="always">${esc(t("ed.scopeAlways", {day:PROGRAM[dayKey]?progLabel(dayKey):""}))}</button></div></div>
-    <div class="grid2"><button class="btn primary" data-act="ed-save">${esc(t("common.save"))}</button>${ed.rec ? "" : `<button class="btn" data-act="ed-reset">${esc(t("ed.reset"))}</button>`}</div>
+      <button type="button" class="chip ${ed.scope==="once"?"on":""}" aria-pressed="${ed.scope==="once"}" data-act="ed-scope" data-v="once">${esc(ed.rec ? t("ed.scopeRecOnce") : t("ed.scopeToday"))}</button>
+      <button type="button" class="chip ${ed.scope==="always"?"on":""}" aria-pressed="${ed.scope==="always"}" data-act="ed-scope" data-v="always">${esc(t("ed.scopeAlways", {day:PROGRAM[dayKey]?progLabel(dayKey):""}))}</button></div></div>
+    <div class="grid2"><button type="button" class="btn primary" data-act="ed-save">${esc(t("common.save"))}</button>${ed.rec ? "" : `<button type="button" class="btn" data-act="ed-reset">${esc(t("ed.reset"))}</button>`}</div>
     <p class="small muted">${esc(ed.rec ? t("ed.recHint") : t("ed.planHint"))}</p>
   </div>`;
 }
@@ -3270,7 +3325,10 @@ function viewFeedback(){
   const logItems = adjPg.items.map(a => {
     const dt = esc((a?.date || "").slice(5)), tx = esc(fmtAdjustLog(a));
     if (a?.id && a.reverted) return `<li class="muted"><span style="text-decoration:line-through">${dt} ${tx}</span> <span>${esc(t("fb.reverted"))}</span></li>`;
-    if (a?.id && a.prev && a.after) return `<li>${dt} ${tx} <button type="button" class="link" data-act="undo-adjust" data-v="${esc(a.id)}">${esc(t("common.undo"))}</button>${S.undoConflict?.id === a.id ? conflictNotice(S.undoConflict) : ""}</li>`;
+    if (canUndoEntry(a)) {
+      const showConflict = S.undoConflict?.id === a.id && (!S.undoConflict.src || S.undoConflict.src === "list");
+      return `<li>${dt} ${tx} <button type="button" class="link" data-act="undo-adjust" data-v="${esc(a.id)}" data-src="list">${esc(t("common.undo"))}</button>${showConflict ? conflictNotice(S.undoConflict) : ""}</li>`;
+    }
     return `<li>${dt} ${tx}</li>`;
   }).join("");
   return `<div class="stack"><div class="hero"><span class="eyebrow">${esc(t("fb.eyebrow"))}</span><h1>${esc(t("fb.title"))}</h1><p class="muted small">${esc(t("fb.sub"))}</p></div>
@@ -3298,6 +3356,7 @@ function actionBtn(rawA, src, fid, idx){
   const fEx = a.from ? _ex(a.from) : "", tEx = a.to ? _ex(a.to) : "";
   const label = a.kind === "kcal" ? _tr("fb.adoptKcal", {delta:(a.delta>0?"+":"")+a.delta})
     : a.kind === "deload" ? _tr("fb.adoptDeload")
+    : a.kind === "stage" ? _tr("fb.adoptStage", {stage:stageLabel(a.stage)})
     : a.kind === "swap" ? (a.hasNums ? _tr("fb.adoptSwapNums", {from:fEx, to:tEx, sets:a.sets, lo:a.lo, hi:a.hi}) : _tr("fb.adoptSwap", {from:fEx, to:tEx}))
     : a.kind === "edit" ? (a.to && a.to !== a.from ? _tr("fb.adoptEditSwap", {from:fEx, to:tEx, sets:a.sets, lo:a.lo, hi:a.hi}) : _tr("fb.adoptEdit", {from:fEx, sets:a.sets, lo:a.lo, hi:a.hi}))
     : null;
@@ -3307,29 +3366,37 @@ function actionBtn(rawA, src, fid, idx){
     let undoEntry = null;
     for (let k = log.length - 1; k >= 0; k--) {
       const e = log[k];
-      if (e?.id && !e.reverted && e.feedbackId === fid && e.idx === idx) { undoEntry = e; break; }
+      if (canUndoEntry(e) && e.feedbackId === fid && e.idx === idx) { undoEntry = e; break; }
     }
-    if (undoEntry) return `<div><button class="chip" data-act="undo-adjust" data-v="${esc(undoEntry.id)}">${esc(_tr("fb.appliedUndo"))}</button>${S.undoConflict?.id === undoEntry.id ? conflictNotice(S.undoConflict) : ""}</div>`;
+    if (undoEntry) {
+      const showConflict = S.undoConflict?.id === undoEntry.id && S.undoConflict.src === "card";
+      return `<div><button type="button" class="chip" data-act="undo-adjust" data-v="${esc(undoEntry.id)}" data-src="card">${esc(_tr("fb.appliedUndo"))}</button>${showConflict ? conflictNotice(S.undoConflict) : ""}</div>`;
+    }
     return `<div><button class="chip" disabled>${esc(_tr("fb.applied"))}</button></div>`;
   }
-  const cleanA = {kind:a.kind, ...(a.kind==="kcal"?{delta:a.delta}:{}), ...(a.from?{from:a.from}:{}), ...(a.to?{to:a.to}:{}), ...(a.hasNums?{sets:a.sets,lo:a.lo,hi:a.hi}:{})};
+  const cleanA = {kind:a.kind, ...(a.kind==="kcal"?{delta:a.delta}:{}), ...(a.kind==="stage"?{stage:a.stage}:{}), ...(a.from?{from:a.from}:{}), ...(a.to?{to:a.to}:{}), ...(a.hasNums?{sets:a.sets,lo:a.lo,hi:a.hi}:{})};
   const payloadObj = {a:cleanA, fid:fid||null, idx:idx??null, key};
   const pv = esc(JSON.stringify(payloadObj));
   if (S.adopt === key) {
     const {preview, hint} = adoptPreview(a);
     const isEx = a.kind === "swap" || a.kind === "edit";
     return `<div class="chooser" role="group" aria-label="${esc(_tr("fb.chooserAria"))}"><div class="prev">${esc(preview)}</div>${hint ? `<p class="small muted">${esc(hint)}</p>` : ""}<div class="row">${isEx
-      ? `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"today"}))}'>${esc(_tr("fb.scopeToday"))}</button><button class="btn small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.scopeLong"))}</button>`
-      : `<button class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.confirmAdopt"))}</button>`}<button class="btn small" data-act="adopt-decline" data-v='${pv}'>${esc(_tr("fb.decline"))}</button><button class="link small" data-act="adopt-cancel">${esc(_tr("common.cancel"))}</button></div></div>`;
+      ? `<button type="button" class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"today"}))}'>${esc(_tr("fb.scopeToday"))}</button><button type="button" class="btn small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.scopeLong"))}</button>`
+      : `<button type="button" class="btn primary small" data-act="adopt-confirm" data-v='${esc(JSON.stringify({...payloadObj, scope:"long"}))}'>${esc(_tr("fb.confirmAdopt"))}</button>`}<button type="button" class="btn small" data-act="adopt-decline" data-v='${pv}'>${esc(_tr("fb.decline"))}</button><button type="button" class="link small" data-act="adopt-cancel">${esc(_tr("common.cancel"))}</button></div></div>`;
   }
-  if (declined) return `<div><span class="chip muted">${esc(_tr("fb.declinedChip"))}</span> <button class="link small" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(_tr("fb.rechoose"))}</button></div>`;
-  return `<div><button class="chip on" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(label)}</button></div>`;
+  if (declined) return `<div><span class="chip muted">${esc(_tr("fb.declinedChip"))}</span> <button type="button" class="link small" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(_tr("fb.rechoose"))}</button></div>`;
+  return `<div><button type="button" class="chip on" data-act="adopt-open" data-key="${esc(key)}" data-v='${pv}'>${esc(label)}</button></div>`;
 }
+const VALID_STAGES = new Set(["auto", "cut", "maintain", "bulk"]);
 function normAction(raw){
   if (!raw || typeof raw !== "object") return null;
   const a = {...raw, delta:num(raw.delta), sets:num(raw.sets), lo:num(raw.lo), hi:num(raw.hi)};
   if (a.kind === "kcal") return a.delta === "" ? null : a;
   if (a.kind === "deload") return a;
+  if (a.kind === "stage") {
+    const st = String(raw.stage ?? raw.to ?? "").trim();
+    return VALID_STAGES.has(st) ? {...a, stage:st, to:st} : null;
+  }
   if (a.kind === "edit") {
     if (!a.from || [a.sets, a.lo, a.hi].includes("")) return null;
     const s = Math.round(a.sets), lo = Math.round(a.lo), hi = Math.round(a.hi);
@@ -3353,17 +3420,73 @@ function normAction(raw){
   return null;
 }
 const _tr = (k, v) => typeof t === "function" ? t(k, v) : (v ? Object.values(v).join(" ") : k), _ex = n => typeof exName === "function" ? exName(n) : n;
+function describeUndoConflict(entry, c){
+  const p = S.profile || {}, prev = entryPrev(entry) || {};
+  const fmtKcal = v => { const n = num(v) || 0; return n === 0 ? _tr("fb.conflictKcalZero") : `${n > 0 ? "+" : ""}${n} kcal`; };
+  const fmtDeload = v => v ? _tr("fb.conflictDeloadFrom", {date:v}) : _tr("fb.conflictDeloadOff");
+  const fmtStage = v => stageLabel(v || "auto");
+  const fmtSpec = (orig, sw, ed) => {
+    if (ed?.name) return `${_ex(ed.name)} ${ed.sets}×${ed.lo}–${ed.hi}`;
+    if (sw) return _ex(sw);
+    return _tr("fb.conflictDefaultPlan", {ex:_ex(orig)});
+  };
+  const fmtSaved = (pl, ex, orig) => {
+    const nm = _ex(pl?.name || ex?.name || orig);
+    if (pl?.sets != null && pl?.lo != null && pl?.hi != null) return `${nm} ${pl.sets}×${pl.lo}–${pl.hi}`;
+    if (ex?.sets?.length) return `${nm} ${ex.sets.length}${_tr("ex.setsSuffix")}`;
+    return nm;
+  };
+  if (c.dayConflict && entry) {
+    const day = S.days?.[c.dayDate || entry.dayDate || entry.date] || {};
+    if (prev.mode === "dayEdit") {
+      const curRaw = fmtSpec(entry.from, null, (day.exEdits || {})[entry.from] ?? null);
+      const cur = day.workout?.done ? _tr("fb.conflictTodaySaved", {val:curRaw}) : curRaw;
+      const restore = fmtSpec(entry.from, null, prev.dayEdit ?? null);
+      return {cur, restore};
+    }
+    if (prev.mode === "savedWorkout") {
+      const w = day.workout, i = prev.exIdx;
+      const cur = w?.done && i != null && w.exercises?.[i] ? fmtSaved(w.plan?.[i], w.exercises[i], entry.from) : _tr("fb.conflictWorkoutMissing");
+      const restore = fmtSaved(prev.planItem, prev.exercise, entry.from);
+      return {cur, restore};
+    }
+  }
+  if (!entry) return null;
+  if (entry.kind === "kcal") return {cur:fmtKcal(p.kcalAdjust), restore:fmtKcal(prev.kcalAdjust)};
+  if (entry.kind === "deload") return {cur:fmtDeload(p.deloadFrom ?? null), restore:fmtDeload(prev.deloadFrom ?? null)};
+  if (entry.kind === "stage") return {cur:fmtStage(p.stage), restore:fmtStage(prev.stage)};
+  if (entry.kind === "swap" || entry.kind === "edit") {
+    const curSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, entry.from) ? p.swaps[entry.from] : null;
+    const curEdit = (p.exEdits || {})[entry.from] ?? null;
+    return {cur:fmtSpec(entry.from, curSwap, curEdit), restore:fmtSpec(entry.from, prev.swap ?? null, prev.exEdit ?? null)};
+  }
+  return null;
+}
 function conflictNotice(c){
   if (!c) return "";
+  const entry = (S.profile?.adjustLog || []).find(x => x?.id === c.id) || null;
+  const diff = describeUndoConflict(entry, c);
+  const canOverwrite = !c.missingSaved && !!entry && canUndoEntry(entry);
   const links = [];
   if (c.kind === "swap" || c.kind === "edit") {
-    links.push(`<button class="link" data-act="clear-exedits">${esc(_tr("fb.clearExEdits"))}</button>`);
-    links.push(`<button class="link" data-act="clear-swaps">${esc(_tr("fb.clearSwaps"))}</button>`);
-  } else if (c.kind === "kcal") links.push(`<button class="link" data-act="reset-kcal">${esc(_tr("fb.resetKcal"))}</button>`);
-  else if (c.kind === "deload") links.push(`<button class="link" data-act="stop-deload">${esc(_tr("fb.stopDeload"))}</button>`);
-  links.push(`<button class="link muted" data-act="dismiss-conflict">${esc(_tr("fb.gotIt"))}</button>`);
-  const msg = c.dayConflict ? _tr("fb.conflictToday") : (c.msg || _tr("fb.conflictDefault"));
-  return `<div class="tip warn small stack" style="gap:4px;margin-top:4px"><span>${esc(msg)}</span><div class="row" style="gap:10px">${links.join("")}</div></div>`;
+    links.push(`<button type="button" class="link small" data-act="clear-exedits">${esc(_tr("fb.clearExEdits"))}</button>`);
+    links.push(`<button type="button" class="link small" data-act="clear-swaps">${esc(_tr("fb.clearSwaps"))}</button>`);
+  } else if (c.kind === "kcal") links.push(`<button type="button" class="link small" data-act="reset-kcal">${esc(_tr("fb.resetKcal"))}</button>`);
+  else if (c.kind === "deload") links.push(`<button type="button" class="link small" data-act="stop-deload">${esc(_tr("fb.stopDeload"))}</button>`);
+  const msg = c.dayConflict ? _tr("fb.conflictToday") : _tr("fb.conflictDefault");
+  const extraNote = c.missingSaved ? _tr("fb.conflictTodayMissingNote")
+    : (c.dayConflict && c.workoutDone && entryPrev(entry)?.mode === "dayEdit" ? _tr("fb.conflictTodayDoneNote") : "");
+  return `<div class="conflict-dialog stack" id="undo-conflict-dialog" role="alertdialog" aria-labelledby="undo-conflict-title" aria-describedby="undo-conflict-desc">
+    <b id="undo-conflict-title" class="conflict-title">${esc(_tr("fb.conflictTitle"))}</b>
+    <p id="undo-conflict-desc" class="small">${esc(msg)}</p>
+    ${diff ? `<dl class="conflict-diff small"><div><dt>${esc(_tr("fb.conflictCurrentLabel"))}</dt><dd>${esc(diff.cur)}</dd></div><div><dt>${esc(_tr("fb.conflictRestoreLabel"))}</dt><dd>${esc(diff.restore)}</dd></div></dl>` : ""}
+    ${extraNote ? `<p class="small muted">${esc(extraNote)}</p>` : ""}
+    <div class="row">
+      <button type="button" class="btn small" data-act="dismiss-conflict">${esc(_tr("fb.conflictKeepBtn"))}</button>
+      ${canOverwrite ? `<button type="button" class="btn danger small" data-act="undo-force" data-v="${esc(c.id)}">${esc(_tr("fb.conflictOverwriteBtn"))}</button>` : ""}
+    </div>
+    ${links.length ? `<div class="row conflict-extra">${links.join("")}</div>` : ""}
+  </div>`;
 }
 function adoptPreview(a){
   if (a.kind === "kcal") {
@@ -3372,6 +3495,10 @@ function adoptPreview(a){
     return {preview, hint:_tr("fb.hintKcal")};
   }
   if (a.kind === "deload") return {preview:_tr("fb.prevDeload"), hint:_tr("fb.hintDeload")};
+  if (a.kind === "stage") {
+    const curSt = stageLabel(S.profile?.stage || "auto"), nextSt = stageLabel(a.stage);
+    return {preview:_tr("fb.prevStage", {cur:curSt, next:nextSt}), hint:_tr("fb.hintStage")};
+  }
   const progEx = typeof PROGRAM !== "undefined" && typeof ORDER !== "undefined" ? ORDER.flatMap(k => PROGRAM[k].ex).find(e => e.name === a.from) : null;
   const cur = progEx && S.profile && typeof resolveEx === "function" ? resolveEx(progEx) : null;
   const leftName = cur && cur.name !== a.from ? _tr("fb.curEx", {from:_ex(a.from), cur:_ex(cur.name)}) : _ex(a.from);
@@ -3675,6 +3802,15 @@ async function applyAction(payload){
           feedbackId: fid, idx, reverted: false,
           text: "开始减载周"
         });
+      } else if (a.kind === "stage") {
+        const prevSt = p.stage || "auto", nextSt = a.stage;
+        p.stage = nextSt;
+        p.adjustLog.push({
+          id: uid(), date: today, scope: "long", kind: "stage", stage: nextSt,
+          prev: {stage: prevSt}, after: {stage: nextSt},
+          feedbackId: fid, idx, reverted: false,
+          text: `阶段目标改为${({auto:"自动", ...STAGE}[nextSt] || nextSt)}`
+        });
       } else if (a.kind === "swap" && !a.hasNums) {
         const toCanon = canonExName(a.to);
         const prevSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, a.from) ? p.swaps[a.from] : null;
@@ -3727,6 +3863,7 @@ async function applyAction(payload){
     if (dayDate) return toast(result.savedW ? t("toast.adoptedTodaySaved") : t("toast.adoptedToday"));
     if (a.kind === "kcal") toast(t("toast.adoptedKcal", {delta:(a.delta>0?"+":"")+a.delta}));
     else if (a.kind === "deload") toast(t("toast.adoptedDeload"));
+    else if (a.kind === "stage") toast(t("toast.adoptedStage", {stage:stageLabel(a.stage)}));
     else {
       const todaySaved = !!S.days[today]?.workout?.done;
       const todayHasEx = !todaySaved && S.profile && (planFor(today).ex || []).some(e => !e.extra && e.orig === a.from && !(S.days[today]?.exEdits || {})[a.from]);
@@ -3735,70 +3872,130 @@ async function applyAction(payload){
   } catch (e) { saveErr(e); }
   finally { pendingAdoptions.delete(key); render(); }
 }
+function entryPrev(e){
+  return e?.prev || e?.before || null;
+}
+function deriveEntryAfter(e){
+  if (!e || typeof e !== "object") return null;
+  if (e.after && typeof e.after === "object") return e.after;
+  const prev = entryPrev(e);
+  if (!e.id || !prev || typeof prev !== "object") return null;
+  if (e.scope === "today") {
+    if (prev.mode === "dayEdit" && e.from && e.to && e.sets != null && e.lo != null && e.hi != null) {
+      return {mode:"dayEdit", dayEdit:{name:canonExName(e.to), sets:+e.sets, lo:+e.lo, hi:+e.hi}, _partialDayEdit:true};
+    }
+    return null;
+  }
+  if (e.kind === "kcal" && e.delta != null) {
+    return {kcalAdjust:(num(prev.kcalAdjust) || 0) + (num(e.delta) || 0)};
+  }
+  if (e.kind === "deload" && e.date) {
+    return {deloadFrom:e.date};
+  }
+  if (e.kind === "stage") {
+    const st = e.stage ?? e.to;
+    return st && VALID_STAGES.has(st) ? {stage:st} : null;
+  }
+  if ((e.kind === "swap" || e.kind === "edit") && e.from) {
+    if (e.sets != null && e.lo != null && e.hi != null) {
+      const name = canonExName(e.to || prev.exEdit?.name || prev.swap || e.from);
+      return {swap:prev.swap ?? null, exEdit:{name, sets:+e.sets, lo:+e.lo, hi:+e.hi}, _partialExEdit:true};
+    }
+    if (e.kind === "swap" && e.to) {
+      const toCanon = canonExName(e.to);
+      return {swap:toCanon, exEdit:prev.exEdit ? {...prev.exEdit, name:toCanon} : null};
+    }
+  }
+  return null;
+}
+function canUndoEntry(e){
+  return !!(e?.id && !e.reverted && entryPrev(e) && deriveEntryAfter(e));
+}
+function sameExSpec(cur, expected, partial){
+  if (!partial) return sameVal(cur, expected);
+  if (!cur || !expected) return cur === expected;
+  return cur.name === expected.name && +cur.sets === +expected.sets && +cur.lo === +expected.lo && +cur.hi === +expected.hi;
+}
 function isLongConflict(p, e){
-  if (!p || !e?.after) return true;
-  if (e.kind === "kcal") return (num(p.kcalAdjust) || 0) !== e.after.kcalAdjust;
-  if (e.kind === "deload") return (p.deloadFrom ?? null) !== e.after.deloadFrom;
+  const after = deriveEntryAfter(e);
+  if (!p || !after) return true;
+  if (e.kind === "kcal") return (num(p.kcalAdjust) || 0) !== after.kcalAdjust;
+  if (e.kind === "deload") return (p.deloadFrom ?? null) !== after.deloadFrom;
+  if (e.kind === "stage") return (p.stage || "auto") !== (after.stage || "auto");
   if (e.kind === "swap" || e.kind === "edit") {
     const curSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, e.from) ? p.swaps[e.from] : null;
     const curEdit = (p.exEdits || {})[e.from] ?? null;
-    return curSwap !== (e.after.swap ?? null) || !sameVal(curEdit, e.after.exEdit ?? null);
+    return curSwap !== (after.swap ?? null) || !sameExSpec(curEdit, after.exEdit ?? null, !!after._partialExEdit);
   }
   return true;
 }
 function restoreLongPrev(p, e){
-  if (e.kind === "kcal") p.kcalAdjust = e.prev.kcalAdjust ?? 0;
-  else if (e.kind === "deload") p.deloadFrom = e.prev.deloadFrom ?? null;
+  const prev = entryPrev(e);
+  if (!prev) return;
+  if (e.kind === "kcal") p.kcalAdjust = prev.kcalAdjust ?? 0;
+  else if (e.kind === "deload") p.deloadFrom = prev.deloadFrom ?? null;
+  else if (e.kind === "stage") p.stage = prev.stage ?? "auto";
   else if (e.kind === "swap" || e.kind === "edit") {
     p.swaps = {...(p.swaps || {})};
-    if (e.prev.swap == null) delete p.swaps[e.from]; else p.swaps[e.from] = e.prev.swap;
+    if (prev.swap == null) delete p.swaps[e.from]; else p.swaps[e.from] = prev.swap;
     p.exEdits = {...(p.exEdits || {})};
-    if (e.prev.exEdit == null) delete p.exEdits[e.from]; else p.exEdits[e.from] = clone(e.prev.exEdit);
+    if (prev.exEdit == null) delete p.exEdits[e.from]; else p.exEdits[e.from] = clone(prev.exEdit);
   }
 }
 function isTodayConflict(day, e){
-  if (!day || !e?.after) return true;
-  if (e.after.mode === "dayEdit") {
+  const after = deriveEntryAfter(e);
+  if (!day || !after) return true;
+  if (after.mode === "dayEdit") {
     if (day.workout?.done) return true;
-    return !sameVal((day.exEdits || {})[e.from] ?? null, e.after.dayEdit ?? null);
+    return !sameExSpec((day.exEdits || {})[e.from] ?? null, after.dayEdit ?? null, !!after._partialDayEdit);
   }
-  if (e.after.mode === "savedWorkout") {
-    const w = day.workout, i = e.after.exIdx;
+  if (after.mode === "savedWorkout") {
+    const w = day.workout, i = after.exIdx;
     if (!w?.done || i == null) return true;
-    return !sameVal(w.plan?.[i] ?? null, e.after.planItem ?? null) || !sameVal(w.exercises?.[i] ?? null, e.after.exercise ?? null);
+    return !sameVal(w.plan?.[i] ?? null, after.planItem ?? null) || !sameVal(w.exercises?.[i] ?? null, after.exercise ?? null);
   }
   return true;
 }
 function restoreTodayPrev(day, e){
-  if (e.prev.mode === "dayEdit") {
+  const prev = entryPrev(e);
+  if (!prev) return null;
+  if (prev.mode === "dayEdit") {
     day.exEdits = {...(day.exEdits || {})};
-    if (e.prev.dayEdit == null) delete day.exEdits[e.from];
-    else day.exEdits[e.from] = clone(e.prev.dayEdit);
+    if (prev.dayEdit == null) delete day.exEdits[e.from];
+    else day.exEdits[e.from] = clone(prev.dayEdit);
     if (!Object.keys(day.exEdits).length) delete day.exEdits;
     return null;
   }
-  if (e.prev.mode === "savedWorkout") {
-    const w = day.workout, i = e.prev.exIdx;
-    w.exercises[i] = clone(e.prev.exercise);
-    if (e.prev.hadPlan) w.plan[i] = clone(e.prev.planItem);
-    else {
+  if (prev.mode === "savedWorkout") {
+    const w = day.workout, i = prev.exIdx;
+    if (!w?.done || i == null || !w.exercises?.[i]) return null;
+    w.exercises[i] = clone(prev.exercise);
+    if (prev.hadPlan) {
+      if (Array.isArray(w.plan)) w.plan[i] = clone(prev.planItem);
+    } else {
       const generated = savedPlan({...w, plan:null});
-      w.plan[i] = generated[i];
+      if (!Array.isArray(w.plan)) w.plan = generated.map(x => clone(x));
+      else w.plan[i] = generated[i];
       if (sameVal(w.plan, generated)) delete w.plan;
     }
     return clone(w);
   }
   return null;
 }
-async function undoAdjust(entryId){
+async function undoAdjust(entryId, { force = false, src = null } = {}){
   const entry = (S.profile?.adjustLog || []).find(x => x?.id === entryId);
-  if (!entry || !entry.prev || !entry.after) return;
+  if (!canUndoEntry(entry)) return;
   const dayDate = entry.scope === "today" ? (entry.dayDate || entry.date) : null;
   try {
     const result = await mutateAdjustment(dayDate, entry.feedbackId, entry.idx, (p, day, feedback) => {
       const current = p.adjustLog?.find(x => x?.id === entryId);
       if (!current || current.reverted) return {already:true};
-      if (day ? isTodayConflict(day, current) : isLongConflict(p, current)) return {conflict:true};
+      const prev = entryPrev(current);
+      const missingSaved = !!(day && prev?.mode === "savedWorkout" && !(day.workout?.done && prev.exIdx != null && day.workout.exercises?.[prev.exIdx]));
+      if (!force && (day ? isTodayConflict(day, current) : isLongConflict(p, current))) {
+        return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved, liveProfile:clone(p), liveDay:day ? clone(day) : null};
+      }
+      if (missingSaved) return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved:true, liveProfile:clone(p), liveDay:day ? clone(day) : null};
       let savedW;
       if (day) savedW = restoreTodayPrev(day, current);
       else restoreLongPrev(p, current);
@@ -3807,13 +4004,20 @@ async function undoAdjust(entryId){
       return {written:true, savedW};
     });
     if (result.already) {
+      S.undoConflict = null;
       render();
       return toast(t("toast.alreadyUndone"));
     }
     if (result.conflict) {
+      if (result.liveProfile) S.profile = migrateProfile(result.liveProfile);
+      if (dayDate && result.liveDay) S.days[dayDate] = migrateDay(result.liveDay);
+      const onAdjPage = paginate(pageItems("adjust"), "adjust").items.some(x => x?.id === entryId);
+      const targetSrc = src === "list" || src === "card" ? src : (onAdjPage ? "list" : "card");
       const msg = dayDate ? t("fb.conflictToday") : t("fb.conflictDefault");
-      S.undoConflict = {id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null, dayConflict:!!dayDate, msg};
+      S.undoConflict = {id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null, dayDate, dayConflict:!!dayDate, workoutDone:!!result.workoutDone, missingSaved:!!result.missingSaved, src:targetSrc};
       render();
+      focusEl($("#undo-conflict-dialog [data-act=\"dismiss-conflict\"]") || $("#undo-conflict-dialog button"));
+      announce(msg);
       return toast(msg, 4000);
     }
     if (dayDate) {
@@ -3825,6 +4029,7 @@ async function undoAdjust(entryId){
     }
     S.undoConflict = null;
     render();
+    announce(t("toast.undone"));
     toast(t("toast.undone"));
   } catch (e) { saveErr(e); }
 }
@@ -3833,7 +4038,7 @@ async function revertSingleExEdit(orig){
   const log = S.profile?.adjustLog || [];
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e?.id && !e.reverted && e.scope === "long" && e.from === orig && e.after?.exEdit != null && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
+    if (canUndoEntry(e) && e.scope === "long" && e.from === orig && deriveEntryAfter(e)?.exEdit != null && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
   }
   const td = todayStr();
   S.undoConflict = null;
@@ -3846,7 +4051,7 @@ async function revertSingleSwap(orig){
   const log = S.profile?.adjustLog || [];
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e?.id && !e.reverted && e.scope === "long" && e.kind === "swap" && e.from === orig && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
+    if (canUndoEntry(e) && e.scope === "long" && e.kind === "swap" && e.from === orig && !isLongConflict(S.profile, e)) return undoAdjust(e.id);
   }
   const td = todayStr();
   S.undoConflict = null;
@@ -4059,9 +4264,16 @@ function focusAdoptTrigger(k){
   const list = typeof document !== "undefined" && typeof document.querySelectorAll === "function" ? document.querySelectorAll('[data-act="adopt-open"]') : [];
   for (const el of list) if (el.dataset?.key === k) { focusEl(el); return; }
 }
+function focusUndoTrigger(c){
+  if (!c?.id || typeof document === "undefined" || typeof document.querySelectorAll !== "function") return;
+  const list = [...document.querySelectorAll('[data-act="undo-adjust"]')];
+  const exact = c.src ? list.find(el => el.dataset?.v === c.id && el.dataset?.src === c.src) : null;
+  focusEl(exact || list.find(el => el.dataset?.v === c.id));
+}
 document.addEventListener("keydown", ev => {
   if (ev.key !== "Escape") return;
-  if (S.adopt) { const k = S.adopt; S.adopt = null; render(); focusAdoptTrigger(k); ev.preventDefault(); }
+  if (S.undoConflict) { const c = S.undoConflict; S.undoConflict = null; render(); focusUndoTrigger(c); ev.preventDefault(); }
+  else if (S.adopt) { const k = S.adopt; S.adopt = null; render(); focusAdoptTrigger(k); ev.preventDefault(); }
   else if (S.ed) { const i = S.ed.i; S.ed = null; render(); focusEl($(`[data-act="ed-open"][data-v="${i}"]`)); ev.preventDefault(); }
   else if (S.label) { S.label = null; render(); ev.preventDefault(); }
   else if (S.pwEdit && !S.pwEdit.busy) { S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); ev.preventDefault(); }
@@ -4286,8 +4498,9 @@ document.addEventListener("click", async ev => {
     case "adopt-cancel": { const k = S.adopt; S.adopt = null; render(); focusAdoptTrigger(k); break; }
     case "adopt-confirm": await applyAction(JSON.parse(v)); break;
     case "adopt-decline": await declineAction(JSON.parse(v)); break;
-    case "undo-adjust": await undoAdjust(v); break;
-    case "dismiss-conflict": S.undoConflict = null; render(); break;
+    case "undo-adjust": await undoAdjust(v, {src: b.dataset?.src || null}); break;
+    case "undo-force": await undoAdjust(v, {force: true}); break;
+    case "dismiss-conflict": { const c = S.undoConflict; S.undoConflict = null; render(); focusUndoTrigger(c); break; }
     case "apply": await applyAction(JSON.parse(v)); break;
     case "start-deload": { S.undoConflict = null; const td = todayStr(); updateProfile(p => { p.deloadFrom = td; }).then(()=>toast(t("toast.deloadStarted"))).catch(()=>{}); break; }
     case "stop-deload": S.undoConflict = null; updateProfile(p => { p.deloadFrom = null; }).catch(()=>{}); break;
@@ -4315,7 +4528,7 @@ document.addEventListener("click", async ev => {
     }
     case "ed-open": openEditor(+v); render(); focusEl($("#ed-name")); break;
     case "ed-cancel": { const i = S.ed?.i; S.ed = null; render(); if (i != null) focusEl($(`[data-act="ed-open"][data-v="${i}"]`)); break; }
-    case "ed-pick": { const m = exMeta(v); Object.assign(S.ed, {name:exName(v)}, m ? {lo:m.lo, hi:m.hi} : {}); render(); break; }
+    case "ed-pick": { const m = exMeta(v); Object.assign(S.ed, {name:exName(v)}, m ? {sets:m.sets ?? S.ed.sets, lo:m.lo, hi:m.hi} : {}); render(); break; }
     case "ed-ai": aiSuggest(); break;
     case "ed-ai-pick": { const a = S.ed.ai[+v]; Object.assign(S.ed, {name:exName(a.name), sets:a.sets, lo:a.lo, hi:a.hi}); render(); break; }
     case "ed-scope": S.ed.scope = v; render(); break;
