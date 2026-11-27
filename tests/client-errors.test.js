@@ -623,7 +623,49 @@ test("headless Chromium: client error reporting on login and app pages with zero
   assert.deepEqual(cspViolations, [], `expected zero CSP violations, got: ${cspViolations.join("; ")}`);
 });
 
+function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual.app") {
+  const origin = new URL(siteOrigin).origin;
+  const cleaned = html.replace(/<!--[\s\S]*?-->/g, "");
+  const out = [];
+  for (const tagMatch of cleaned.matchAll(/<script\b([^>]*)>/gi)) {
+    const attrs = tagMatch[1];
+    const srcMatch = attrs.match(/(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+    if (!srcMatch) continue;
+    const raw = (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? "").trim();
+    if (!raw) continue;
+    let resolved;
+    try {
+      resolved = new URL(raw, origin + "/");
+    } catch {
+      continue;
+    }
+    if (resolved.origin !== origin) continue;
+    const base = path.posix.basename(resolved.pathname);
+    if (base) out.push(base);
+  }
+  return out;
+}
+
 test("every HTML page and script loaded or shipped under public/ is recognised by client-errors SOURCE_RE", () => {
+  // Verify the HTML script extractor itself catches quoted, unquoted, absolute, and protocol-relative same-origin URLs
+  // while ignoring cross-origin URLs, data-src attributes, and commented-out tags.
+  const sampleHtml = [
+    '<script src="/site/a.js"></script>',
+    '<script src=/site/b.js defer></script>',
+    "<script src='/site/c.js?v=1#h'></script>",
+    '<script src="https://leanritual.app/site/d.js"></script>',
+    '<script src=https://leanritual.app/site/e.js></script>',
+    '<script src="//leanritual.app/site/f.js"></script>',
+    '<script src="site/g.js"></script>',
+    '<script src="https://cdn.example.invalid/third-party.js"></script>',
+    '<script data-src="/site/not-src.js"></script>',
+    '<!-- <script src="/site/commented.js"></script> -->'
+  ].join("\n");
+  assert.deepEqual(
+    extractSameOriginScriptBasenames(sampleHtml, "https://leanritual.app"),
+    ["a.js", "b.js", "c.js", "d.js", "e.js", "f.js", "g.js"]
+  );
+
   const { api } = loadClientModule();
   const publicDir = path.join(ROOT, "public");
 
@@ -647,10 +689,8 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
     const base = path.basename(file);
     pageSources.add(base);
     const html = fs.readFileSync(file, "utf8");
-    for (const m of html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)) {
-      const raw = m[1].replace(/[?#][\s\S]*$/, "");
-      if (/^https?:\/\//i.test(raw)) continue;
-      loadedScriptBasenames.add(path.basename(raw));
+    for (const scriptBase of extractSameOriginScriptBasenames(html, "https://leanritual.app")) {
+      loadedScriptBasenames.add(scriptBase);
     }
   }
 
@@ -693,25 +733,25 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
   await new Promise(r => setImmediate(r));
   const onError = listeners.get("error")[0];
 
-  // 1. Cross-origin muted "Script error." -> filtered as script_error (deduped on repeat)
+  // 1. Cross-origin muted "Script error." -> filtered as script_error with distinct payload shape (no name/message/source)
   onError({ message: "Script error.", filename: "", lineno: 0, colno: 0, error: null });
   onError({ message: "Script error.", filename: "", lineno: 0, colno: 0, error: null });
   assert.equal(sent.length, 1);
+  assert.deepEqual(Object.keys(sent[0]).sort(), ["filtered", "lang", "page", "revision", "ts", "ua"]);
   assert.equal(sent[0].filtered, "script_error");
-  assert.equal(sent[0].source, "unknown");
 
   // 2. Extension & non-origin script URLs -> filtered as non_origin (deduped per reason on same page-load)
   onError({ message: "ext boom", filename: "chrome-extension://abcdef/content.js", lineno: 10, colno: 2, error: new Error("ext boom") });
   assert.equal(sent.length, 2);
+  assert.deepEqual(Object.keys(sent[1]).sort(), ["filtered", "lang", "page", "revision", "ts", "ua"]);
   assert.equal(sent[1].filtered, "non_origin");
-  assert.equal(sent[1].source, "unknown");
 
   // Additional non-origin variants are classified as non_origin too
   assert.equal(api.classifyWindowError({ message: "x", filename: "safari-web-extension://1234/inject.js", lineno: 1, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
   assert.equal(api.classifyWindowError({ message: "x", filename: "webkit-masked-url://hidden/", lineno: 0, colno: 0, error: null }, "https://leanritual.app"), "non_origin");
   assert.equal(api.classifyWindowError({ message: "x", filename: "https://other-host.example/inject.js", lineno: 5, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
 
-  // 3. Benign ResizeObserver loop events -> filtered as resize_observer even with same-origin filename
+  // 3. Benign ResizeObserver browser notifications (no Error object, zero line/col) -> filtered as resize_observer
   onError({ message: "ResizeObserver loop completed with undelivered notifications.", filename: "https://leanritual.app/", lineno: 0, colno: 0, error: null });
   assert.equal(sent.length, 3);
   assert.equal(sent[2].filtered, "resize_observer");
@@ -719,9 +759,19 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
   assert.equal(api.getFilteredCount(), 3);
   assert.equal(storageMap.get("bj-err-filtered-count"), "3");
 
-  // 4. Unhandled rejection purely from an extension/non-origin stack -> filtered, not real error
-  const extRej = new Error("ext async fail");
-  extRej.stack = "Error: ext async fail\n    at fn (moz-extension://xyz/bg.js:12:3)";
+  // Regression: a real thrown same-origin Error with the ResizeObserver message MUST NOT be filtered
+  const roErr = new Error("ResizeObserver loop completed with undelivered notifications.");
+  onError({ message: roErr.message, filename: "https://leanritual.app/site/login.js", lineno: 42, colno: 5, error: roErr });
+  assert.equal(sent.length, 4);
+  assert.equal(sent[3].filtered, undefined);
+  assert.equal(sent[3].source, "login.js:42:5");
+  assert.equal(
+    api.classifyWindowError({ message: roErr.message, filename: "https://leanritual.app/site/login.js", lineno: 0, colno: 0, error: roErr }, "https://leanritual.app"),
+    null,
+    "real Error object must not be classified as ResizeObserver browser notification even at 0:0"
+  );
+
+  // 4. Unhandled rejection stack provenance classification
   const freshSent = [];
   const fresh = api.createReporter({
     fetch: async (_u, o) => { freshSent.push(JSON.parse(o.body)); return { ok: true }; },
@@ -730,28 +780,66 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
     document: { documentElement: { lang: "zh" } },
     sessionStorage: null
   });
+
+  // Pure external stack (including native Promise frame) -> filtered as non_origin
+  const extRej = new Error("ext async fail");
+  extRej.stack = "Error: ext async fail\n    at fn (moz-extension://xyz/bg.js:12:3)\n    at new Promise (<anonymous>)";
   fresh.handleRejection({ reason: extRej });
   assert.equal(freshSent.length, 1);
   assert.equal(freshSent[0].filtered, "non_origin");
+
+  // Safari/WebKit extension stack -> classified as external
+  const safariExtRej = new Error("safari ext fail");
+  safariExtRej.stack = "fn@safari-web-extension://1234/inject.js:12:3\nasyncFunctionResume@[native code]";
+  assert.equal(require(path.join(ROOT, "public/client-errors.js")).classifyStackOrigin(safariExtRej.stack, "https://leanritual.app", safariExtRej.message), "external");
+
+  // Regression: long (>2 KiB) error message bearing a third-party provider URL MUST NOT push same-origin frame past cutoff
+  const longMsg = "Upstream provider failed at https://provider.example/v1/chat " + "x".repeat(3000) + "\n    at fake (chrome-extension://fake/inject.js:1:1)";
+  const longRej = new Error(longMsg);
+  longRej.stack = `Error: ${longMsg}\n    at submit (https://leanritual.app/site/login.js:550:9)`;
+  fresh.handleRejection({ reason: longRej });
+  assert.equal(freshSent.length, 2);
+  assert.equal(freshSent[1].filtered, undefined);
+  assert.equal(freshSent[1].source, "login.js:550:9");
 
   // Mixed stack (app + extension) MUST NOT be filtered
   const mixedRej = new TypeError("Cannot read properties of undefined (reading 'x')");
   mixedRej.stack = "TypeError: ...\n    at appFn (https://leanritual.app/site/login.js:44:9)\n    at extWrap (chrome-extension://xyz/hook.js:1:1)";
   fresh.handleRejection({ reason: mixedRej });
-  assert.equal(freshSent.length, 2);
-  assert.equal(freshSent[1].filtered, undefined);
-  assert.equal(freshSent[1].source, "login.js:44:9");
+  assert.equal(freshSent.length, 3);
+  assert.equal(freshSent[2].filtered, undefined);
+  assert.equal(freshSent[2].source, "login.js:44:9");
+
+  // Incomplete/ambiguous provenance (external frame + anonymous eval frame, or message-only URL with no frames, or >64 KiB stack) keeps ordinary report
+  const ambigRej = new Error("ambiguous");
+  ambigRej.stack = "Error: ambiguous\n    at extFn (chrome-extension://xyz/hook.js:1:1)\n    at <anonymous>:1:1";
+  fresh.handleRejection({ reason: ambigRej });
+  assert.equal(freshSent.length, 4);
+  assert.equal(freshSent[3].filtered, undefined);
+
+  const msgOnlyUrlRej = new RangeError("Failed contacting https://provider.example/endpoint");
+  msgOnlyUrlRej.stack = "RangeError: Failed contacting https://provider.example/endpoint";
+  fresh.handleRejection({ reason: msgOnlyUrlRej });
+  assert.equal(freshSent.length, 5);
+  assert.equal(freshSent[4].filtered, undefined);
+  assert.equal(freshSent[4].name, "RangeError");
+
+  const hugeStackRej = new TypeError("huge");
+  hugeStackRej.stack = "TypeError: huge\n" + "    at f (chrome-extension://xyz/a.js:1:1)\n".repeat(2000);
+  fresh.handleRejection({ reason: hugeStackRej });
+  assert.equal(freshSent.length, 6);
+  assert.equal(freshSent[5].filtered, undefined);
 
   // 5. Real same-origin errors (including login.js and phone-rules.js, and same-origin message "Script error.") are NOT filtered
   onError({ message: "Script error.", filename: "https://leanritual.app/site/login.js", lineno: 88, colno: 4, error: new Error("Script error.") });
   onError({ message: "bad phone", filename: "https://leanritual.app/site/phone-rules.js", lineno: 365, colno: 5, error: new TypeError("bad phone") });
-  assert.equal(sent.length, 5);
-  assert.equal(sent[3].filtered, undefined);
-  assert.equal(sent[3].source, "login.js:88:4");
+  assert.equal(sent.length, 6);
   assert.equal(sent[4].filtered, undefined);
-  assert.equal(sent[4].source, "phone-rules.js:365:5");
+  assert.equal(sent[4].source, "login.js:88:4");
+  assert.equal(sent[5].filtered, undefined);
+  assert.equal(sent[5].source, "phone-rules.js:365:5");
 
-  // 6. Filtered counter does not consume real error session budget (all 10 real errors can still be sent)
+  // 6. Filtered counter does not consume real error session budget (all maxPerSession real errors can still be sent)
   const capSent = [];
   const capStorage = new Map();
   const capped = api.createReporter({
@@ -772,15 +860,15 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
   assert.equal(capSent.filter(p => !p.filtered).length, 2);
 });
 
-test("server lib/client-errors logs filtered noise separately under client-error-filtered with independent rate limits", async () => {
+test("server lib/client-errors logs filtered noise separately, rejects mixed payloads, and preserves aggregate rate limits", async () => {
   const logs = [];
   const handler = serverErrors.createClientErrors({
     expectedOrigin: "https://leanritual.app",
     releaseRevision: "1e51b8e456adad3d3578300507aeac723056f6ae",
-    userLimit: 2,
-    ipLimit: 2,
-    anonIpLimit: 1,
-    globalLimit: 2,
+    userLimit: 4,
+    ipLimit: 4,
+    anonIpLimit: 5,
+    globalLimit: 6,
     windowMs: 60_000,
     log: line => logs.push(line)
   });
@@ -806,29 +894,26 @@ test("server lib/client-errors logs filtered noise separately under client-error
     return status;
   };
 
-  // Invalid filtered reasons are rejected with 400
-  await assert.rejects(
-    () => invoke({ body: { page: "today", filtered: "arbitrary_secret_reason" } }),
-    err => err.status === 400
-  );
-  await assert.rejects(
-    () => invoke({ body: { page: "today", filtered: "script_error\n" } }),
-    err => err.status === 400
-  );
-  await assert.rejects(
-    () => invoke({ body: { page: "today", filtered: 123 } }),
-    err => err.status === 400
-  );
+  // Invalid filtered reasons and mixed ordinary + filtered payloads are rejected with 400
+  for (const badBody of [
+    { page: "today", filtered: "arbitrary_secret_reason" },
+    { page: "today", filtered: "script_error\n" },
+    { page: "today", filtered: 123 },
+    { page: "today", filtered: "script_error", name: "TypeError" },
+    { page: "today", filtered: "script_error", message: "Cannot read properties of null" },
+    { page: "today", filtered: "script_error", source: "login.js:1:1" }
+  ]) {
+    await assert.rejects(() => invoke({ body: badBody }), err => err.status === 400);
+  }
 
-  // Valid filtered noise logs as client-error-filtered with no secrets/source/msg and respects its own limit (2)
+  // User u1 (userLimit=4): filtered noise caps at floor(4/2)=2, reserving at least 2 slots for ordinary reports
   assert.equal(await invoke({
     body: {
       page: "today",
       lang: "zh",
       ua: "Chrome/Android16",
       filtered: "script_error",
-      source: "index.html:1:1",
-      message: "SECRET_SHOULD_NOT_APPEAR",
+      extraSecret: "SECRET_SHOULD_NOT_APPEAR",
       ts: "2026-11-27T01:55:40.335Z"
     }
   }), 204);
@@ -837,7 +922,7 @@ test("server lib/client-errors logs filtered noise separately under client-error
   }), 204);
   assert.equal(await invoke({
     body: { page: "login", lang: "zh", ua: "Chrome/Android16", filtered: "resize_observer", ts: "2026-11-27T01:55:40.402Z" }
-  }), 204); // dropped silently by filtered cap of 2
+  }), 204); // dropped silently by filtered share cap (2 of 4)
 
   const filteredLogs = logs.filter(l => l.startsWith("client-error-filtered "));
   assert.equal(filteredLogs.length, 2);
@@ -848,11 +933,43 @@ test("server lib/client-errors logs filtered noise separately under client-error
   );
   assert.ok(!filteredLogs[0].includes("SECRET_SHOULD_NOT_APPEAR"));
 
-  // Exhausting filtered rate limit must NOT starve real app error reports
-  assert.equal(await invoke({
-    body: { page: "login", lang: "zh", ua: "Chrome/Android16", name: "TypeError", message: "Cannot read properties of null", source: "login.js:42:9" }
-  }), 204);
-  const realLogs = logs.filter(l => l.startsWith("client-error "));
-  assert.equal(realLogs.length, 1);
-  assert.match(realLogs[0], /source=login\.js:42:9 name=TypeError/);
+  // Ordinary reports still get the 2 reserved slots, then hit the shared aggregate cap of 4 (never 8!)
+  for (let i = 1; i <= 3; i++) {
+    assert.equal(await invoke({
+      body: { page: "login", lang: "zh", ua: "Chrome/Android16", name: "TypeError", message: "Cannot read properties of null", source: `login.js:${40 + i}:9` }
+    }), 204);
+  }
+  const u1RealLogs = logs.filter(l => l.startsWith("client-error "));
+  assert.equal(u1RealLogs.length, 2, "ordinary reports must get reserved capacity and respect shared aggregate cap of 4");
+  assert.match(u1RealLogs[0], /source=login\.js:41:9 name=TypeError/);
+  assert.equal(logs.length, 4, "total combined logs for u1 must never exceed userLimit=4");
+
+  // Anonymous login IP with anonIpLimit=5, globalLimit=6 (2 global slots left):
+  // verify aggregate globalLimit=6 is never exceeded across streams
+  const anonLogs = [];
+  const anonHandler = serverErrors.createClientErrors({
+    expectedOrigin: "https://leanritual.app",
+    releaseRevision: "1e51b8e456adad3d3578300507aeac723056f6ae",
+    userLimit: 20,
+    ipLimit: 40,
+    anonIpLimit: 5,
+    globalLimit: 300,
+    windowMs: 60_000,
+    log: line => anonLogs.push(line)
+  });
+  const invokeAnon = async body => {
+    const raw = Buffer.from(JSON.stringify(body));
+    let status = null;
+    await anonHandler.handle(
+      { method: "POST", headers: { "x-bojin": "1", origin: "https://leanritual.app", "sec-fetch-site": "same-origin", "content-type": "application/json" } },
+      { writeHead(s) { status = s; }, end() {} },
+      { getUser: async () => null, ip: "203.0.113.99", readBody: async () => raw }
+    );
+    return status;
+  };
+  for (let i = 0; i < 4; i++) assert.equal(await invokeAnon({ page: "login", filtered: "script_error" }), 204);
+  assert.equal(anonLogs.filter(l => l.startsWith("client-error-filtered ")).length, 2, "anon filtered share caps at floor(5/2)=2");
+  for (let i = 0; i < 5; i++) assert.equal(await invokeAnon({ page: "login", name: "Error", message: `err ${i}`, source: "login.js:1:1" }), 204);
+  assert.equal(anonLogs.filter(l => l.startsWith("client-error ")).length, 3, "anon ordinary gets reserved 3 slots");
+  assert.equal(anonLogs.length, 5, "anon aggregate total never exceeds 5/hr");
 });
