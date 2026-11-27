@@ -630,10 +630,10 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const XLINK_NS = "http://www.w3.org/1999/xlink";
 
 function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual.app") {
-  const fallbackBase = new URL(siteOrigin);
-  const origin = fallbackBase.origin;
-  let baseUrl = fallbackBase.href;
-  let hasBaseHref = false;
+  // server.js serves HTML with CSP `base-uri 'none'`, so browsers reject <base href>
+  // and always resolve relative script URLs strictly against the page origin.
+  const pageUrl = new URL(siteOrigin);
+  const origin = pageUrl.origin;
   const doc = parse5.parse(html, { scriptingEnabled: true });
   const out = [];
 
@@ -641,7 +641,7 @@ function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual
     const trimmed = rawUrl.trim();
     if (!trimmed) return;
     try {
-      const resolved = new URL(trimmed, baseUrl);
+      const resolved = new URL(trimmed, pageUrl);
       if (resolved.origin === origin) {
         const base = path.posix.basename(resolved.pathname);
         if (base) out.push(base);
@@ -651,15 +651,7 @@ function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual
 
   function walk(node) {
     if (!node) return;
-    if (node.namespaceURI === HTML_NS && node.tagName === "base" && !hasBaseHref) {
-      const hrefAttr = node.attrs?.find(a => a.name === "href" && !a.namespace);
-      if (hrefAttr !== undefined) {
-        hasBaseHref = true;
-        try {
-          baseUrl = new URL(hrefAttr.value.trim(), fallbackBase).href;
-        } catch {}
-      }
-    } else if (node.namespaceURI === HTML_NS && node.tagName === "script") {
+    if (node.namespaceURI === HTML_NS && node.tagName === "script") {
       const srcAttr = node.attrs?.find(a => a.name === "src" && !a.namespace);
       if (srcAttr) pushIfSameOrigin(srcAttr.value);
     } else if (node.namespaceURI === SVG_NS && node.tagName === "script") {
@@ -729,23 +721,20 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
     ]
   );
 
-  // Verify <base href> resolution (including HTML character references in base href).
-  assert.deepEqual(
-    extractSameOriginScriptBasenames(
-      '<base href="https://leanritual&#46;app/site/"><script src="via-base.js"></script>',
-      "https://leanritual.app"
-    ),
-    ["via-base.js"]
-  );
-  assert.deepEqual(
-    extractSameOriginScriptBasenames(
-      '<base href="https://cdn.example.invalid/"><script src="cross.js"></script><script src="https://leanritual&#46;app/site/same.js"></script>',
-      "https://leanritual.app"
-    ),
-    ["same.js"]
-  );
-
   const { api } = loadClientModule();
+
+  // Regression from PR #61 review: server.js enforces CSP `base-uri 'none'`, so browsers ignore
+  // <base href> and still resolve root-relative and relative script URLs against the page origin.
+  const crossOriginBaseHtml = '<!doctype html><html><head><base href="https://cdn.example.invalid/"><script src="/site/unlisted-review.js"></script><script src="relative-review.js"></script></head><body></body></html>';
+  assert.deepEqual(
+    extractSameOriginScriptBasenames(crossOriginBaseHtml, "https://leanritual.app"),
+    ["unlisted-review.js", "relative-review.js"]
+  );
+  assert.throws(
+    () => assertSourcesRecognised(extractSameOriginScriptBasenames(crossOriginBaseHtml, "https://leanritual.app"), api),
+    /unlisted-review\.js/,
+    "guard must ignore <base href> (blocked by CSP base-uri 'none') and fail on unlisted same-origin scripts"
+  );
 
   // Regressions from PR #60 review: both scratch mutations must be discovered and fail the allowlist guard.
   const attrBeforeScriptHtml = '<!doctype html><html><body><div data-example="<script>"></div><script src="/site/unlisted-after-attr.js"></script></body></html>';
