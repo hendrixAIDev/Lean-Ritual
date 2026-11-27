@@ -685,10 +685,14 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       await page.locator('nav#tabs').waitFor({ state: 'visible' });
       await page.evaluate(async l => { await setLang(l, { persistProfile: false }); }, cfg.lang);
 
-      // Today (workout + open form cues + primary 44x44 tap target checks on mobile)
+      // Today (workout + open form cues + active/completed rest timer bar + primary 44x44 tap target checks on mobile)
       await page.locator('nav#tabs [data-act="tab"][data-v="today"]').click();
       await page.evaluate(() => { document.querySelector('details.how')?.setAttribute('open', ''); });
       await assertAxeClean(context, page, `${cfg.name}/today`);
+
+      await page.locator('[data-act="rest-start"]').first().click();
+      await page.locator('#rest-timer-bar').waitFor({ state: 'visible' });
+      await assertAxeClean(context, page, `${cfg.name}/today-rest-timer-running`);
 
       if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
         const sizes = await page.evaluate(() => {
@@ -700,16 +704,38 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
           return {
             prevDate: check('[data-act="date"][data-v="-1"]'),
             slotChip: check('[data-act="slot"]'),
-            tabBtn: check('nav#tabs button')
+            tabBtn: check('nav#tabs button'),
+            restStart: check('[data-act="rest-start"]'),
+            rtMinus: check('#rt-minus'),
+            rtPlus: check('#rt-plus'),
+            rtToggle: check('#rt-toggle'),
+            rtDismiss: check('#rt-dismiss')
           };
         });
         assert.ok(sizes.prevDate.w >= 44 && sizes.prevDate.h >= 44, `date arrow >= 44x44: ${JSON.stringify(sizes.prevDate)}`);
         assert.ok(sizes.slotChip.w >= 44 && sizes.slotChip.h >= 44, `chip >= 44x44: ${JSON.stringify(sizes.slotChip)}`);
         assert.ok(sizes.tabBtn.w >= 44 && sizes.tabBtn.h >= 44, `tab >= 44x44: ${JSON.stringify(sizes.tabBtn)}`);
+        assert.ok(sizes.restStart.w >= 44 && sizes.restStart.h >= 44, `rest-start >= 44x44: ${JSON.stringify(sizes.restStart)}`);
+        for (const k of ['rtMinus', 'rtPlus', 'rtToggle', 'rtDismiss']) {
+          assert.ok(sizes[k].w >= 44 && sizes[k].h >= 44, `${k} >= 44x44: ${JSON.stringify(sizes[k])}`);
+        }
       }
+      await page.evaluate(() => {
+        if (S.restTimer) { S.restTimer.endAt = Date.now() - 1000; syncRestTimer(); }
+      });
+      await assertAxeClean(context, page, `${cfg.name}/today-rest-timer-done`);
+      await page.locator('#rt-dismiss').click();
 
-      // Food (manual mode + label calculator)
+      // Food (manual mode + meal shortcuts + label calculator)
       await page.locator('nav#tabs [data-act="tab"][data-v="food"]').click();
+      await page.locator('#meal-shortcuts .shortcut-chip').first().waitFor({ state: 'visible' });
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const scSize = await page.evaluate(() => {
+          const r = document.querySelector('#meal-shortcuts .shortcut-chip').getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) };
+        });
+        assert.ok(scSize.w >= 44 && scSize.h >= 44, `meal shortcut chip >= 44x44: ${JSON.stringify(scSize)}`);
+      }
       await page.locator('[data-act="mmode"][data-v="manual"]').click();
       await page.evaluate(() => { S.label = { id: 'td-m1', base: '100', u: 'kJ', e: '400', p: '10', f: '5', c: '20', amt: '200' }; render(); });
       await assertAxeClean(context, page, `${cfg.name}/food`);
