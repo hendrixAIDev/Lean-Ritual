@@ -172,6 +172,10 @@ fieldset.ufb-group legend{font-size:13px;color:var(--muted);padding:0}
 .day,.wk-row{display:flex;justify-content:space-between;gap:8px;min-height:44px;padding-block:10px;border:0;border-top:1px solid var(--line);align-items:center;width:100%;background:none;color:inherit;text-align:left}
 .day .chip{white-space:normal}
 .day:first-child,.wk-row:first-child{border-top:none}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--line)}
+.pager.standalone{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px}
+.pager-info{font-size:13px;color:var(--muted);text-align:center;flex:1 1 auto;min-width:96px;font-variant-numeric:tabular-nums}
+.pager .btn.small{flex:none;white-space:nowrap}
 .chart{width:100%;height:auto;display:block}
 .ai-out{white-space:pre-wrap;font-size:14px}
 ul.clean{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
@@ -793,6 +797,16 @@ const I18N = {
     "ins.protGoodTitle":"蛋白质达标", "ins.protGoodBody":"完整记录的 {n} 天平均 {avg} g。",
     "fb.eyebrow":"反馈", "fb.title":"按纲领自动检查", "fb.sub":"根据你的打卡、训练和饮食记录，每次打开都会重新算。",
     "fb.reverted":"（已撤销）", "common.undo":"撤销",
+    "pager.prev":"上一页", "pager.next":"下一页",
+    "pager.info":"{page} / {totalPages} · 共 {total} 条",
+    "pager.navAria":"{section}分页",
+    "pager.prevAria":"上一页 · {section}",
+    "pager.nextAria":"下一页 · {section}",
+    "pager.announce":"{section}，第 {page} / {totalPages} 页，共 {total} 条",
+    "pager.section.daily":"每日明细",
+    "pager.section.feedback":"AI 反馈",
+    "pager.section.adjust":"已采纳的调整",
+    "pager.section.profileHistory":"资料变更记录",
     "fb.aiTitle":"让 AI 看看", "fb.stop":"停止",
     "fb.aiIntro":"写下你的感受或问题（比如哪里疼、哪个动作太难、最近很累），AI 会结合最近 14 天的记录和纲领评估，给出可以一键采纳的计划调整。不写也可以，直接分析记录。",
     "fb.myNote":"我的反馈（可选）", "fb.myNotePh":"例如：深蹲到第三组膝盖有点酸；引体一个都拉不起来；这周睡得不好，训练很吃力",
@@ -1207,6 +1221,16 @@ const I18N = {
     "ins.protGoodTitle":"Protein on target", "ins.protGoodBody":"Averaging {avg} g across {n} fully logged days.",
     "fb.eyebrow":"Feedback", "fb.title":"Plan Check-in", "fb.sub":"Re-evaluated automatically from your check-ins, workouts, and meals.",
     "fb.reverted":"(Undone)", "common.undo":"Undo",
+    "pager.prev":"Prev", "pager.next":"Next",
+    "pager.info":"{page} / {totalPages} · {total} total",
+    "pager.navAria":"{section} pagination",
+    "pager.prevAria":"Prev · {section}",
+    "pager.nextAria":"Next · {section}",
+    "pager.announce":"{section}, page {page} of {totalPages}, {total} total",
+    "pager.section.daily":"Daily Breakdown",
+    "pager.section.feedback":"AI Feedback",
+    "pager.section.adjust":"Applied Adjustments",
+    "pager.section.profileHistory":"Profile History",
     "fb.aiTitle":"Ask AI Coach", "fb.stop":"Stop",
     "fb.aiIntro":"Share how training feels (joint discomfort, stalled lifts, fatigue) and AI will review your last 14 days against the program to suggest one-tap adjustments — or leave blank for a general review.",
     "fb.myNote":"My note (optional)", "fb.myNotePh":"e.g. Knees ache by set 3 of squats; can't do a pull-up yet; poor sleep this week",
@@ -1678,7 +1702,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 /* ============ 存储 ============ */
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
-  profile:null, days:{}, feedback:[], tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
+  profile:null, days:{}, feedback:[], pages:{}, tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
   drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
@@ -1802,9 +1826,11 @@ const saveErr = e => { reportFlowErr("SaveError", e); toast(formatSaveErr(e)); }
 const daySeq = {};
 async function updateDay(date, fn, opt = {}){
   const seq = (daySeq[date] = (daySeq[date] || 0) + 1);
+  const isNewDay = !hasOwn(S.days, date);
   try {
     const next = await mutate("days/" + date, cur => { const d = migrateDay(cur || {date, meals:[]}); fn(d); stampTargets(d); return d; });
     if (seq === daySeq[date]) {
+      if (isNewDay) resetPage("daily");
       S.days[date] = migrateDay(next);
       if (!opt.quiet) render();
     }
@@ -1814,9 +1840,15 @@ async function updateDay(date, fn, opt = {}){
 let profileSeq = 0;
 async function updateProfile(fn){
   const seq = ++profileSeq;
+  const prevAdjLen = (S.profile?.adjustLog || []).length;
   try {
     const next = await mutate("app/profile", cur => { const p = migrateProfile(cur || {}); fn(p); return p; });
-    if (seq === profileSeq) { S.profile = migrateProfile(next); render(); }
+    if (seq === profileSeq) {
+      const nextProfile = migrateProfile(next);
+      if ((nextProfile.adjustLog || []).length > prevAdjLen) resetPage("adjust");
+      S.profile = nextProfile;
+      render();
+    }
     return next;
   } catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
 }
@@ -1851,6 +1883,7 @@ async function restoreWorkouts(){
 const dayTargets = date => S.days[date]?.targets || targets();
 
 async function loadAll(){
+  S.pages = {};
   try {
     S.profile = migrateProfile(await S.store.get("app/profile"));
     const pendingLang = urlLangOverride || readPendingLang();
@@ -1880,11 +1913,11 @@ async function loadAll(){
     applyDocLang();
     const days = await S.store.list("days", {order:"date", limit:1000});
     S.days = {}; days.forEach(d => { if (d.data?.date) S.days[d.data.date] = migrateDay(d.data); });
-    const ph = await S.store.list("profileHistory", {order:"savedAt", limit:30}).catch(() => []);
+    const ph = await S.store.list("profileHistory", {order:"savedAt", limit:200}).catch(() => []);
     S.profileHistory = ph.map(d => d.data).sort((a,b) => (b.savedAt||"").localeCompare(a.savedAt||""));
     S.library = (await S.store.get("app/library").catch(() => null)) || {links:{}};
     await restoreWorkouts();
-    const fb = await S.store.list("feedback", {order:"createdAt", limit:20});
+    const fb = await S.store.list("feedback", {order:"createdAt", limit:200});
     S.feedback = fb.map(d => d.data).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
   } catch (e) { console.error(e); S.loadError = true; }
 }
@@ -2061,6 +2094,39 @@ function langSwitch(){
   const cur = getLang();
   return `<div class="row" style="gap:4px" role="group" aria-label="${esc(t("lang.aria"))}"><button type="button" class="chip ${cur==="zh"?"on":""}" aria-pressed="${cur==="zh"}" data-act="lang" data-v="zh">中文</button><button type="button" class="chip ${cur==="en"?"on":""}" aria-pressed="${cur==="en"}" data-act="lang" data-v="en">English</button></div>`;
 }
+const PAGE_SIZE = { daily: 10, adjust: 5, profileHistory: 5, feedback: 3 };
+function resetPage(key){ S.pages = S.pages || {}; S.pages[key] = 1; }
+function pageItems(key){
+  if (key === "daily") return Object.values(S.days || {}).sort((a,b) => b.date.localeCompare(a.date));
+  if (key === "feedback") return S.feedback || [];
+  if (key === "adjust") return [...(S.profile?.adjustLog || [])].reverse();
+  if (key === "profileHistory") return S.profileHistory || [];
+  return [];
+}
+function paginate(list, key){
+  const items = Array.isArray(list) ? list : [];
+  const size = PAGE_SIZE[key] || 10;
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  S.pages = S.pages || {};
+  const raw = S.pages[key] || 1;
+  const page = Math.min(totalPages, Math.max(1, Math.floor(Number(raw) || 1)));
+  if (S.pages[key] !== page) S.pages[key] = page;
+  const start = (page - 1) * size;
+  return { items: items.slice(start, start + size), page, totalPages, total, size, start };
+}
+function renderPager(pg, key, opts = {}){
+  if (!pg || pg.total <= pg.size) return "";
+  const section = t("pager.section." + key);
+  const cls = opts.standalone ? "pager standalone" : "pager";
+  const prevDis = pg.page <= 1 ? " disabled" : "";
+  const nextDis = pg.page >= pg.totalPages ? " disabled" : "";
+  return `<nav class="${cls}" data-pager="${esc(key)}" aria-label="${esc(t("pager.navAria", {section}))}">
+    <button type="button" id="pg-${esc(key)}-prev" class="btn small" data-act="page" data-v="${esc(key)}:${pg.page - 1}" aria-label="${esc(t("pager.prevAria", {section}))}"${prevDis}>${esc(t("pager.prev"))}</button>
+    <span class="pager-info" id="pg-${esc(key)}-info">${esc(t("pager.info", {page:pg.page, totalPages:pg.totalPages, total:pg.total}))}</span>
+    <button type="button" id="pg-${esc(key)}-next" class="btn small" data-act="page" data-v="${esc(key)}:${pg.page + 1}" aria-label="${esc(t("pager.nextAria", {section}))}"${nextDis}>${esc(t("pager.next"))}</button>
+  </nav>`;
+}
 
 function render(){
   applyDocLang();
@@ -2212,7 +2278,7 @@ async function submitSetup(form){
     }
     await updateProfile(apply);
     if (chosenLang) clearPendingLang();
-    if (h) S.profileHistory = [h, ...(S.profileHistory||[])];
+    if (h) { S.profileHistory = [h, ...(S.profileHistory||[])]; resetPage("profileHistory"); }
     S.editing = false; S.tab = "today";
     render(); window.scrollTo(0,0);
     toast(prev.startDate ? t("toast.setupSavedKeep") : t("toast.saved"));
@@ -2991,7 +3057,7 @@ function viewLog(){
   const td = todayStr(), cs = checkins().filter(d => diffDays(td, d.date) < 42);
   const a7 = avgWeight(td), p7 = avgWeight(addDays(td,-7));
   const rate = a7 && p7 ? (a7-p7)/p7*100 : null;
-  const days = Object.values(S.days).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,45);
+  const daysPg = paginate(pageItems("daily"), "daily");
   const w7 = Object.values(S.days).filter(d => diffDays(td, d.date) < 7 && d.workout?.done).length;
   return `<div class="stack"><div class="hero"><span class="eyebrow">${esc(t("log.eyebrow"))}</span><h1>${esc(t("log.title"))}</h1></div>
   <section class="card"><div class="kpis">
@@ -3002,7 +3068,7 @@ function viewLog(){
   </div>${chart(cs)}${(() => { const b = avgBf(td), pb = avgBf(addDays(td,-7)); return b != null ? `<p class="small muted">${esc(t("log.bfAvgNote", {b:b.toFixed(1), prev:pb != null ? t("log.bfPrev", {pb:pb.toFixed(1)}) : ""}))}</p>` : ""; })()}</section>
   ${balanceCard()}
   ${liftCard()}
-  <section class="card"><h2>${esc(t("log.dailyTitle"))}</h2>${days.length ? `<div>${days.map(dayRow).join("")}</div>` : `<p class="muted">${esc(t("log.dailyEmpty"))}</p>`}</section></div>`;
+  <section class="card"><h2>${esc(t("log.dailyTitle"))}</h2>${daysPg.total ? `<div>${daysPg.items.map(dayRow).join("")}</div>${renderPager(daysPg, "daily")}` : `<p class="muted">${esc(t("log.dailyEmpty"))}</p>`}</section></div>`;
 }
 /* ---- 动作进步曲线（只读已有 workout 记录，不写数据） ---- */
 function liftSeries(){
@@ -3198,11 +3264,13 @@ function insights(){
   return out;
 }
 function viewFeedback(){
-  const ins = insights(), p = S.profile, ai = S.ai;
-  const logItems = (p.adjustLog || []).slice(-10).reverse().map(a => {
+  const ins = insights(), ai = S.ai;
+  const fbPg = paginate(pageItems("feedback"), "feedback");
+  const adjPg = paginate(pageItems("adjust"), "adjust");
+  const logItems = adjPg.items.map(a => {
     const dt = esc((a?.date || "").slice(5)), tx = esc(fmtAdjustLog(a));
     if (a?.id && a.reverted) return `<li class="muted"><span style="text-decoration:line-through">${dt} ${tx}</span> <span>${esc(t("fb.reverted"))}</span></li>`;
-    if (a?.id && a.prev && a.after) return `<li>${dt} ${tx} <button class="link" data-act="undo-adjust" data-v="${esc(a.id)}">${esc(t("common.undo"))}</button>${S.undoConflict?.id === a.id ? conflictNotice(S.undoConflict) : ""}</li>`;
+    if (a?.id && a.prev && a.after) return `<li>${dt} ${tx} <button type="button" class="link" data-act="undo-adjust" data-v="${esc(a.id)}">${esc(t("common.undo"))}</button>${S.undoConflict?.id === a.id ? conflictNotice(S.undoConflict) : ""}</li>`;
     return `<li>${dt} ${tx}</li>`;
   }).join("");
   return `<div class="stack"><div class="hero"><span class="eyebrow">${esc(t("fb.eyebrow"))}</span><h1>${esc(t("fb.title"))}</h1><p class="muted small">${esc(t("fb.sub"))}</p></div>
@@ -3214,8 +3282,9 @@ function viewFeedback(){
     ${ai?.running ? `<p class="small muted">${esc(ai.stream ? t("fb.writing") : t("fb.thinking"))}</p>` : ""}
     ${ai?.error ? `<p class="tip bad">${esc(ai.error)}</p>` : ""}
   </section>
-  ${S.feedback.slice(0,5).map(fbCard).join("")}
-  ${(p.adjustLog||[]).length ? `<section class="card"><h3>${esc(t("fb.appliedList"))}</h3><ul class="clean small">${logItems}</ul></section>` : ""}
+  ${fbPg.items.map(fbCard).join("")}
+  ${renderPager(fbPg, "feedback", {standalone:true})}
+  ${adjPg.total ? `<section class="card"><h3>${esc(t("fb.appliedList"))}</h3><ul class="clean small">${logItems}</ul>${renderPager(adjPg, "adjust")}</section>` : ""}
   </div>`;
 }
 function actionBtn(rawA, src, fid, idx){
@@ -3420,7 +3489,7 @@ async function runAI(){
         .filter(a => !["swap","edit"].includes(a.kind) || (a.from && isProgEx(a.from)))
         .filter(a => a.kind !== "swap" || a.to)
         .map(a => a.kind === "edit" && !(a.sets >= 1 && a.sets <= 6 && a.lo >= 1 && a.hi >= a.lo && a.hi <= 30) ? {kind:"note", text:a.text} : a), applied:[], declined:[]};
-    S.feedback.unshift(f); S.ai = null; lsSet("bj-fbtext", ""); render();
+    S.feedback.unshift(f); resetPage("feedback"); S.ai = null; lsSet("bj-fbtext", ""); render();
     await write("feedback/" + f.id, JSON.parse(JSON.stringify(f)));
   } catch (e) { S.ai = {error: e?.code === "cancelled" ? null : sampleErr(e, "analyze")}; render(); }
 }
@@ -3470,8 +3539,13 @@ function mutateAdjustment(date, fid, idx, fn){
     }
     return result;
   }, docs => {
+    const prevAdjLen = (S.profile?.adjustLog || []).length;
     S.profile = migrateProfile(docs[profilePath]);
-    if (docs[dayPath]) S.days[date] = migrateDay(docs[dayPath]);
+    if ((S.profile.adjustLog || []).length > prevAdjLen) resetPage("adjust");
+    if (docs[dayPath]) {
+      if (!hasOwn(S.days, date)) resetPage("daily");
+      S.days[date] = migrateDay(docs[dayPath]);
+    }
     const local = S.feedback.find(f => f.id === fid);
     if (local && docs[feedbackPath]) Object.assign(local, docs[feedbackPath]);
   });
@@ -3943,6 +4017,7 @@ function viewMe(){
   const wSrc = avgWeight(td) ? t("me.wAvg") : t("me.wSetup");
   const bfPart = tg.bf != null ? t("me.bfPart", {src: tg.bfAvg ? t("me.bfScale") : t("me.bfSetup"), bf: tg.bf}) : "";
   const injNoteStr = p.injNote ? (getLang() === "en" ? ` (${esc(p.injNote)})` : `（${esc(p.injNote)}）`) : "";
+  const phPg = paginate(pageItems("profileHistory"), "profileHistory");
   return `<div class="stack"><div class="hero"><div class="row between"><span class="eyebrow">${esc(t("me.eyebrow"))}</span>${langSwitch()}</div><h1>${esc(t("me.heroTitle", {stage: stageLabel(tg.st), kcal: tg.kcal}))}</h1></div>
   <section class="card"><h2>${esc(t("me.targetsTitle"))}</h2>
     <div class="kpis"><div class="kpi"><span class="v">${tg.kcal}</span><span class="k">${esc(t("me.kcalUnit"))}</span></div><div class="kpi"><span class="v">${tg.protein}</span><span class="k">${esc(t("macro.proteinG"))}</span></div><div class="kpi"><span class="v">${tg.carbs}</span><span class="k">${esc(t("macro.carbsG"))}</span></div><div class="kpi"><span class="v">${tg.fat}</span><span class="k">${esc(t("macro.fatG"))}</span></div></div>
@@ -3961,8 +4036,8 @@ function viewMe(){
     <div class="row">${isDeload(td)==="manual" ? `<button class="btn" data-act="stop-deload">${esc(t("fb.stopDeload"))}</button>` : `<button class="btn" data-act="start-deload">${esc(t("me.startDeload"))}</button>`}
     ${p.kcalAdjust ? `<button class="btn" data-act="reset-kcal">${esc(t("fb.resetKcal"))}</button>` : ""}</div>
   </section>
-  ${(S.profileHistory||[]).length ? `<section class="card"><h3>${esc(t("me.historyTitle"))}</h3><p class="small muted">${esc(t("me.historyHint"))}</p>
-    <ul class="clean small">${S.profileHistory.slice(0,10).map(h => `<li><span class="num">${esc((h.savedAt||"").slice(0,10))}</span> ${h.changes?.length ? h.changes.map(c => esc(fmtProfileChange(c))).join(getLang() === "en" ? "; " : "；") : esc(t("me.noChange"))}</li>`).join("")}</ul></section>` : ""}
+  ${phPg.total ? `<section class="card"><h3>${esc(t("me.historyTitle"))}</h3><p class="small muted">${esc(t("me.historyHint"))}</p>
+    <ul class="clean small">${phPg.items.map(h => `<li><span class="num">${esc((h.savedAt||"").slice(0,10))}</span> ${h.changes?.length ? h.changes.map(c => esc(fmtProfileChange(c))).join(getLang() === "en" ? "; " : "；") : esc(t("me.noChange"))}</li>`).join("")}</ul>${renderPager(phPg, "profileHistory")}</section>` : ""}
   ${viewTesterFeedback()}
   ${viewAccount()}
   ${viewAI()}
@@ -4020,6 +4095,26 @@ document.addEventListener("click", async ev => {
     }
     case "reload-data": location.reload(); break;
     case "tab": S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
+    case "page": {
+      if (b.disabled) break;
+      const [key, rawP] = String(v || "").split(":");
+      if (!key || !hasOwn(PAGE_SIZE, key)) break;
+      S.pages = S.pages || {};
+      const prevP = S.pages[key] || 1;
+      const nextP = Math.max(1, Math.floor(Number(rawP) || 1));
+      S.pages[key] = nextP;
+      if (key === "feedback") { S.adopt = null; S.undoConflict = null; }
+      else if (key === "adjust") S.undoConflict = null;
+      const pg = paginate(pageItems(key), key);
+      const dir = pg.page < prevP ? "prev" : "next";
+      render();
+      if (pg.total > pg.size) {
+        const atEnd = dir === "prev" ? pg.page <= 1 : pg.page >= pg.totalPages;
+        focusEl($(`#pg-${key}-${atEnd ? (dir === "prev" ? "next" : "prev") : dir}`));
+      }
+      announce(t("pager.announce", {section:t("pager.section." + key), page:pg.page, totalPages:pg.totalPages, total:pg.total}));
+      break;
+    }
     case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
     case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
     case "edit": S.editing = true; render(); window.scrollTo(0,0); focusEl($("#f-age")); break;
@@ -4379,6 +4474,7 @@ async function logout(btn){
     storageUser = null;
     S.drafts = {};
     S.cfill = {};
+    S.pages = {};
     clearUserLocal(id);
     try { await window.ritual?.logout?.(); } catch {}
     const loc = typeof location !== "undefined" ? location : window?.location;

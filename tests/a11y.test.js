@@ -534,10 +534,10 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
 
     await page.evaluate(async () => {
       const td = todayStr();
-      for (let i = 4; i >= 1; i--) {
+      for (let i = 12; i >= 1; i--) {
         const d = addDays(td, -i);
         await updateDay(d, day => {
-          day.checkin = { weight: 72.2 - i * 0.1, steps: 9000, sleep: 7.5, bf: 15 };
+          day.checkin = { weight: 72.2 - i * 0.05, steps: 9000, sleep: 7.5, bf: 15 };
           day.meals = [
             { id: 'm1-' + i, type: '早餐', text: 'Oats + eggs', time: '08:00', est: { kcal: 500, protein: 35, carbs: 55, fat: 15, by: 'manual' } },
             { id: 'm2-' + i, type: '午餐', text: 'Chicken rice', time: '12:30', est: { kcal: 680, protein: 48, carbs: 72, fat: 18, by: 'manual' } },
@@ -560,9 +560,10 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
           est: { kcal: 640, protein: 44, carbs: 68, fat: 19, by: 'manual' }
         }];
       }, { quiet: true });
+      const nowMs = Date.now();
       const fb = {
         id: 'fb-a11y',
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(nowMs).toISOString(),
         userText: 'Shoulder tight on bench',
         summary: 'Steady progress; consider floor press for comfort.',
         good: ['Consistent protein'],
@@ -574,9 +575,38 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
         applied: [],
         declined: [1]
       };
-      S.feedback = [fb];
-      await write('feedback/' + fb.id, fb);
-      await updateProfile(p => { p.injuries = ['shoulder']; p.swaps = { '站姿杠铃推举': '地雷架单臂推举' }; });
+      const extraFbs = [1, 2, 3].map(n => ({
+        id: 'fb-a11y-old-' + n,
+        createdAt: new Date(nowMs - n * 86400000).toISOString(),
+        userText: '',
+        summary: 'Historical review #' + n,
+        good: ['Consistent sessions'],
+        issues: [],
+        adjustments: [],
+        applied: [],
+        declined: []
+      }));
+      S.feedback = [fb, ...extraFbs];
+      for (const item of S.feedback) await write('feedback/' + item.id, item);
+      const historyItems = Array.from({ length: 6 }, (_, idx) => ({
+        id: 'ph-a11y-' + idx,
+        savedAt: new Date(nowMs - idx * 86400000).toISOString(),
+        changes: ['时段：晚上 → 下午']
+      }));
+      for (const h of historyItems) await write('profileHistory/' + h.id, h);
+      S.profileHistory = historyItems;
+      await updateProfile(p => {
+        p.injuries = ['shoulder'];
+        p.swaps = { '站姿杠铃推举': '地雷架单臂推举' };
+        p.adjustLog = [
+          { id: 'adj-a11y-1', date: addDays(td, -5), scope: 'long', kind: 'kcal', delta: -100, prev: { kcalAdjust: 0 }, after: { kcalAdjust: -100 }, reverted: false, text: '每日热量 -100 kcal' },
+          { date: addDays(td, -4), text: '「深蹲」长期换成 腿屈伸 3×10–15' },
+          { date: addDays(td, -3), text: '「面拉或后飞鸟」长期换成 面拉 3×12–15' },
+          { date: addDays(td, -2), text: '「上斜杠铃卧推」长期换成 上斜俯卧撑 3×6–12' },
+          { date: addDays(td, -1), text: '热量调整归零' },
+          { id: 'adj-a11y-6', date: td, scope: 'long', kind: 'kcal', delta: 100, prev: { kcalAdjust: 0 }, after: { kcalAdjust: 100 }, reverted: false, text: '每日热量 +100 kcal' }
+        ];
+      });
       render();
     });
     await ctx.close();
@@ -685,12 +715,28 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       await assertAxeClean(context, page, `${cfg.name}/food`);
       await page.evaluate(() => { S.label = null; render(); });
 
-      // Log
+      // Log (with daily breakdown pagination visible)
       await page.locator('nav#tabs [data-act="tab"][data-v="log"]').click();
+      await page.locator('nav[data-pager="daily"]').waitFor({ state: 'visible' });
       await assertAxeClean(context, page, `${cfg.name}/log`);
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const pagerSizes = await page.evaluate(() => ['prev', 'next'].map(dir => {
+          const r = document.getElementById(`pg-daily-${dir}`).getBoundingClientRect();
+          return { dir, w: Math.round(r.width), h: Math.round(r.height) };
+        }));
+        for (const s of pagerSizes) {
+          assert.ok(s.w >= 44 && s.h >= 44, `daily pager ${s.dir} >= 44x44: ${JSON.stringify(s)}`);
+        }
+      }
+      await page.locator('#pg-daily-next').click();
+      assert.equal(await page.evaluate(() => document.activeElement?.id), 'pg-daily-prev', 'reaching last page moves focus to prev');
+      await page.locator('#pg-daily-prev').click();
+      assert.equal(await page.evaluate(() => document.activeElement?.id), 'pg-daily-next', 'returning to first page moves focus to next');
 
-      // Feedback + 采纳 chooser keyboard reachability
+      // Feedback (with BOTH AI feedback pagination and applied adjustments pagination visible) + 采纳 chooser keyboard reachability
       await page.locator('nav#tabs [data-act="tab"][data-v="fb"]').click();
+      await page.locator('nav[data-pager="feedback"]').waitFor({ state: 'visible' });
+      await page.locator('nav[data-pager="adjust"]').waitFor({ state: 'visible' });
       await assertAxeClean(context, page, `${cfg.name}/feedback`);
       const adoptTrigger = page.locator('[data-act="adopt-open"]').first();
       await adoptTrigger.focus();
@@ -702,8 +748,9 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       assert.equal(await page.locator('.chooser').count(), 0, 'Escape dismisses chooser');
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), 'adopt-open', 'Escape restores focus to adopt-open trigger');
 
-      // Me + tester feedback form + delete-account disclosure + setup edit mode
+      // Me (with profile history pagination visible) + tester feedback form + delete-account disclosure + setup edit mode
       await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
+      await page.locator('nav[data-pager="profileHistory"]').waitFor({ state: 'visible' });
       await page.evaluate(() => { document.querySelector('details')?.setAttribute('open', ''); });
       await assertAxeClean(context, page, `${cfg.name}/me`);
       await page.locator('[data-act="ufb-open"]').click();
