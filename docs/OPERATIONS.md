@@ -477,10 +477,11 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/feedb
 
 ### Landing-page invite requests & admin CLI
 
-Prospective testers can submit an invite request directly on `https://leanritual.app` (`申请内测` / `Request an invite`, or direct link `/#apply` / `/?apply=1`, `POST /api/invite-requests`), avoiding `mailto:` failures inside WeChat's in-app browser and iPhone Safari. Intake requires the `X-Bojin: 1` header, enforces a `<= 8192` byte body limit, silently drops honeypot submissions, applies salted HMAC-hashed per-IP (`INVITE_REQUEST_IP_HOURLY_LIMIT=5`, `INVITE_REQUEST_IP_DAILY_LIMIT=10`) and global daily (`INVITE_REQUEST_GLOBAL_DAILY_LIMIT=200`) limits, and deduplicates pending requests per normalized phone number or email address in place without creating duplicate rows or duplicate alerts. Records live in `bojin.db` (`invite_requests` table) so existing backup snapshots include them automatically and `scripts/daily-summary.js` reports non-PII counts (`new` in window + `pending` total).
+Prospective testers can submit an invite request directly on `https://leanritual.app` (`申请内测` / `Request an invite`, or direct link `/#apply` / `/?apply=1`, `POST /api/invite-requests`), avoiding `mailto:` failures inside WeChat's in-app browser and iPhone Safari. Intake requires the `X-Bojin: 1` header, enforces a `<= 8192` byte body cap and a short absolute body-read deadline (`INVITE_REQUEST_BODY_TIMEOUT_MS=5000`, returning `408` and closing slow-drip uploads), silently drops honeypot submissions, applies salted HMAC-hashed per-IP (`INVITE_REQUEST_IP_HOURLY_LIMIT=5`, `INVITE_REQUEST_IP_DAILY_LIMIT=10`; relies on the loopback/Caddy `TRUST_PROXY=1` deployment so client-supplied `X-Forwarded-For` headers cannot spoof `clientIP`) and global daily (`INVITE_REQUEST_GLOBAL_DAILY_LIMIT=200`) limits, and treats duplicate submissions for an existing `pending` normalized contact as a strict no-op (preserving all stored fields untouched and firing no duplicate alert). Records (including any operator `status_note` added via `mark`) live in `bojin.db` (`invite_requests` table) so existing backup snapshots include them automatically and `scripts/daily-summary.js` reports non-PII counts (`new` in window + `pending` total).
 
-- **Owner notifications:** If `ALERT_URL` is configured, `server.js` sends a minimal redacted plain-text HTTPS POST (`[invite-request] #id (phone|email): <redacted goal preview, <=80 chars>`) with zero email address, phone number, or applicant name. Server logs also omit all PII.
-- **Reviewing & updating invite requests on the host** (respects the shared `data-access` lease):
+- **Owner notifications (metadata-only, asynchronous):** If `ALERT_URL` is configured, `server.js` dispatches a metadata-only plain-text HTTPS POST (`[invite-request] #id (phone|email, zh|en)`) asynchronously after committing so webhook latency cannot reveal pending contact membership. The alert payload contains zero user-controlled text (no name, phone number, email address, goal, note, or status note). Server logs also omit all PII.
+- **Retention, deletion & backup-restore replay:** `server.js` automatically prunes expired hashed IP rate-limit buckets older than 2 UTC days and invite requests older than `INVITE_REQUEST_RETENTION_DAYS` (default `90` days from `updated`) at startup and hourly. Operator deletions (`delete <id>` / `delete --contact <email-or-phone>`) and retention pruning record random request-ID tombstones (`req_*` + timestamp only, zero PII) in `invite_request_deletions`, which `scripts/data-backup.js ledger` exports in `deletions.json` and `restore --deletions` replays so restoring an older snapshot cannot resurrect deleted invite requests.
+- **Reviewing, updating, deleting & pruning invite requests on the host** (respects the shared `data-access` lease):
 
 ```sh
 # List pending invite requests (optional: --status pending|invited|dismissed|all, --limit N, --json)
@@ -489,9 +490,17 @@ sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invit
 # Inspect one invite request in full
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js show <request-id>
 
-# Mark a request after issuing an invite (or dismissing it)
+# Mark a request after issuing an invite (or dismissing it), with an optional operator status note
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js mark <request-id> --status invited --note "sent via WeChat"
 sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js mark <request-id> --status dismissed --note "duplicate"
+
+# Permanently delete an invite request (by ID or normalized email/phone) and record a deletion-ledger tombstone
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete <request-id>
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete --contact tester@example.com
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js delete --contact 13800138000
+
+# Run retention & rate-limit bucket cleanup on demand (default 90 days)
+sudo -u bojin env DATA_DIR=/var/lib/bojin /usr/bin/node /opt/bojin/scripts/invite-requests-admin.js prune --days 90
 ```
 
 ### AI monthly USD budget caps & admin overrides

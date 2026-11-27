@@ -3,31 +3,65 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
-const { ALLOWED_STATUSES, sanitizeStatusNote } = require("../lib/invite-requests");
+const { normalizeEmail } = require("../lib/invitations");
+const { normalizePhone } = require("../lib/phone");
+const {
+  ALLOWED_STATUSES,
+  DEFAULT_RETENTION_DAYS,
+  inviteRequestOptions,
+  sanitizeStatusNote,
+  pruneInviteRequestData
+} = require("../lib/invite-requests");
 
 const USAGE = [
   "Usage: node scripts/invite-requests-admin.js",
   "  [list [--status pending|invited|dismissed|all] [--limit N] [--json]]",
   "  | show <id> [--json]",
-  "  | mark <id> --status invited|dismissed|pending [--note <short-reason>] [--json]"
+  "  | mark <id> --status invited|dismissed|pending [--note <short-reason>] [--json]",
+  "  | delete (<id> | --contact <email-or-phone>) [--json]",
+  "  | prune [--days N] [--json]"
 ].join(" ");
 
 const LIST_STATUSES = new Set(["pending", "invited", "dismissed", "all"]);
+const COMMANDS = new Set(["list", "show", "mark", "delete", "prune"]);
 
-function parseArgs(argv) {
+function parseContactTarget(raw) {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("--contact requires an email address or phone number");
+  }
+  if (raw.includes("@")) {
+    const email = normalizeEmail(raw);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error("Invalid --contact email address");
+    }
+    return { contactKind: "email", contactValue: email };
+  }
+  const phone = normalizePhone(raw);
+  if (!phone) {
+    throw new Error("Invalid --contact phone number (use E.164 or 11-digit mainland China mobile)");
+  }
+  return { contactKind: "phone", contactValue: phone };
+}
+
+function parseArgs(argv, env = process.env) {
   let command = "list";
   let targetId = null;
+  let contact = null;
   let limit = 20;
+  let days = null;
   let status = null;
   let note = undefined;
   let json = false;
   let i = 0;
 
-  if (argv[0] === "list" || argv[0] === "show" || argv[0] === "mark") {
+  if (argv[0] && COMMANDS.has(argv[0])) {
     command = argv[0];
     i = 1;
     if (command === "show" || command === "mark") {
       if (!argv[1] || argv[1].startsWith("-")) throw new Error(USAGE);
+      targetId = argv[1];
+      i = 2;
+    } else if (command === "delete" && argv[1] && !argv[1].startsWith("-")) {
       targetId = argv[1];
       i = 2;
     }
@@ -46,7 +80,7 @@ function parseArgs(argv) {
       }
       limit = n;
     } else if (arg === "--status" || arg.startsWith("--status=")) {
-      if (command === "show") throw new Error(USAGE);
+      if (command !== "list" && command !== "mark") throw new Error(USAGE);
       const raw = (arg === "--status" ? argv[++i] : arg.slice("--status=".length) || "").trim().toLowerCase();
       const allowed = command === "mark" ? ALLOWED_STATUSES : LIST_STATUSES;
       if (!allowed.has(raw)) {
@@ -62,6 +96,18 @@ function parseArgs(argv) {
       const raw = arg === "--note" ? argv[++i] : arg.slice("--note=".length);
       if (raw === undefined) throw new Error("--note requires a value");
       note = sanitizeStatusNote(raw);
+    } else if (arg === "--contact" || arg.startsWith("--contact=")) {
+      if (command !== "delete") throw new Error(USAGE);
+      const raw = arg === "--contact" ? argv[++i] : arg.slice("--contact=".length);
+      contact = parseContactTarget(raw);
+    } else if (arg === "--days" || arg.startsWith("--days=")) {
+      if (command !== "prune") throw new Error(USAGE);
+      const raw = arg === "--days" ? argv[++i] : arg.slice("--days=".length);
+      const n = Number(raw);
+      if (!Number.isSafeInteger(n) || n < 1 || n > 3650) {
+        throw new Error("--days must be an integer between 1 and 3650");
+      }
+      days = n;
     } else {
       throw new Error(USAGE);
     }
@@ -70,11 +116,19 @@ function parseArgs(argv) {
   if (command === "mark" && !status) {
     throw new Error("mark requires --status invited|dismissed|pending");
   }
+  if (command === "delete") {
+    if ((targetId && contact) || (!targetId && !contact)) {
+      throw new Error("delete requires either <id> or --contact <email-or-phone>");
+    }
+  }
+  if (command === "prune" && days === null) {
+    days = inviteRequestOptions(env).retentionDays || DEFAULT_RETENTION_DAYS;
+  }
   if (command === "list" && !status) {
     status = "all";
   }
 
-  return { command, targetId, limit, status, note, json };
+  return { command, targetId, contact, limit, days, status, note, json };
 }
 
 function hydrateRow(row) {
@@ -154,13 +208,18 @@ function formatShowText(item) {
 const SELECT_COLS = "id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated";
 
 function main() {
-  const opts = parseArgs(process.argv.slice(2));
+  const opts = parseArgs(process.argv.slice(2), process.env);
   const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "..", "data"));
   const dbPath = path.join(dataDir, "bojin.db");
 
   if (!fs.existsSync(dbPath)) {
-    if (opts.command === "show" || opts.command === "mark") {
-      throw new Error(`Invite request not found: ${opts.targetId}`);
+    if (opts.command === "show" || opts.command === "mark" || opts.command === "delete") {
+      throw new Error(`Invite request not found: ${opts.targetId || "(matching contact)"}`);
+    }
+    if (opts.command === "prune") {
+      const out = { ok: true, deletedRequests: 0, deletedRateLimits: 0 };
+      console.log(opts.json ? JSON.stringify(out, null, 2) : "Pruned 0 expired invite requests and 0 rate-limit buckets.");
+      return;
     }
     console.log(opts.json ? "[]" : "No invite requests found.");
     return;
@@ -168,13 +227,25 @@ function main() {
 
   const releaseDataAccess = require("../lib/data-access").shared(dataDir);
   process.once("exit", releaseDataAccess);
-  const db = new DatabaseSync(dbPath, { readOnly: opts.command !== "mark" });
+  const isMutating = opts.command === "mark" || opts.command === "delete" || opts.command === "prune";
+  const db = new DatabaseSync(dbPath, { readOnly: !isMutating });
   try {
     db.exec("PRAGMA busy_timeout = 5000");
+    if (opts.command === "prune") {
+      const result = pruneInviteRequestData(db, { retentionDays: opts.days });
+      const out = { ok: true, ...result };
+      console.log(
+        opts.json
+          ? JSON.stringify(out, null, 2)
+          : `Pruned ${result.deletedRequests} expired invite request(s) and ${result.deletedRateLimits} expired rate-limit bucket(s) (cutoff ${result.cutoffIso}).`
+      );
+      return;
+    }
+
     const hasTable = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'invite_requests'").get();
     if (!hasTable) {
-      if (opts.command === "show" || opts.command === "mark") {
-        throw new Error(`Invite request not found: ${opts.targetId}`);
+      if (opts.command === "show" || opts.command === "mark" || opts.command === "delete") {
+        throw new Error(`Invite request not found: ${opts.targetId || "(matching contact)"}`);
       }
       console.log(opts.json ? "[]" : "No invite requests found.");
       return;
@@ -185,6 +256,45 @@ function main() {
       if (!row) throw new Error(`Invite request not found: ${opts.targetId}`);
       const item = hydrateRow(row);
       console.log(opts.json ? JSON.stringify(item, null, 2) : formatShowText(item));
+      return;
+    }
+
+    if (opts.command === "delete") {
+      const deletedAt = new Date().toISOString();
+      let deletedIds = [];
+      let inTx = false;
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        inTx = true;
+        const rows = opts.targetId
+          ? db.prepare("SELECT id FROM invite_requests WHERE id = ?").all(opts.targetId)
+          : db.prepare("SELECT id FROM invite_requests WHERE contact_kind = ? AND contact_value = ? ORDER BY created DESC, id DESC")
+              .all(opts.contact.contactKind, opts.contact.contactValue);
+        if (!rows.length) {
+          throw new Error(`Invite request not found: ${opts.targetId || "(matching contact)"}`);
+        }
+        db.exec("CREATE TABLE IF NOT EXISTS invite_request_deletions (id TEXT PRIMARY KEY, deleted TEXT NOT NULL)");
+        const delStmt = db.prepare("DELETE FROM invite_requests WHERE id = ?");
+        const tombStmt = db.prepare("INSERT OR REPLACE INTO invite_request_deletions (id, deleted) VALUES (?, ?)");
+        for (const r of rows) {
+          delStmt.run(r.id);
+          tombStmt.run(r.id, deletedAt);
+          deletedIds.push(r.id);
+        }
+        db.exec("COMMIT");
+        inTx = false;
+      } catch (err) {
+        if (inTx) {
+          try { db.exec("ROLLBACK"); } catch {}
+        }
+        throw err;
+      }
+      const out = { ok: true, count: deletedIds.length, deletedIds, deletedAt };
+      console.log(
+        opts.json
+          ? JSON.stringify(out, null, 2)
+          : `Deleted ${deletedIds.length} invite request(s) and recorded deletion ledger tombstone(s): ${deletedIds.join(", ")}`
+      );
       return;
     }
 
