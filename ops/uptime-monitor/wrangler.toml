@@ -1,0 +1,26 @@
+name = "lean-ritual-uptime"
+main = "worker.js"
+compatibility_date = "2026-01-15"
+workers_dev = false
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+[vars]
+TARGET_URL = "https://leanritual.app/api/health"
+REMINDER_MINUTES = "360"
+RETRY_DELAY_MS = "3000"
+PROBE_TIMEOUT_MS = "8000"
+
+# Recommended: bind a Cloudflare KV namespace for state deduplication
+# (1 [DOWN] alert on UP->DOWN, reminder every REMINDER_MINUTES while down,
+# and 1 [RECOVERED] alert on DOWN->UP). Without STATE_KV the worker still
+# sends failure alerts, but cannot deduplicate repeat failures or send
+# recovery notices.
+#
+# Run from ops/uptime-monitor/:
+#   wrangler kv namespace create STATE_KV
+# Then uncomment and paste the returned namespace id below:
+# [[kv_namespaces]]
+# binding = "STATE_KV"
+# id = "<your-kv-namespace-id>"
