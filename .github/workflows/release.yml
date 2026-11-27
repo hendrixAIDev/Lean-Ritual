@@ -48,7 +48,9 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           RELEASE_SHA: ${{ github.sha }}
-        run: python3 ops/package-release.py "$RUNNER_TEMP/lean-ritual.tar.gz" "$RELEASE_SHA"
+        run: |
+          npm prune --omit=dev --no-audit --no-fund
+          python3 ops/package-release.py "$RUNNER_TEMP/lean-ritual.tar.gz" "$RELEASE_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:

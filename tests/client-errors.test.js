@@ -10,6 +10,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { DatabaseSync } = require("node:sqlite");
+const parse5 = require("parse5");
 
 const ROOT = path.resolve(__dirname, "..");
 const clientScript = fs.readFileSync(path.join(ROOT, "public/client-errors.js"), "utf8");
@@ -624,102 +625,65 @@ test("headless Chromium: client error reporting on login and app pages with zero
   assert.deepEqual(cspViolations, [], `expected zero CSP violations, got: ${cspViolations.join("; ")}`);
 });
 
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+
 function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual.app") {
-  const origin = new URL(siteOrigin).origin;
+  // server.js serves HTML with CSP `base-uri 'none'`, so browsers reject <base href>
+  // and always resolve relative script URLs strictly against the page origin.
+  const pageUrl = new URL(siteOrigin);
+  const origin = pageUrl.origin;
+  const doc = parse5.parse(html, { scriptingEnabled: true });
   const out = [];
-  const len = html.length;
-  let i = 0;
 
-  while (i < len) {
-    if (html.startsWith("<!--", i)) {
-      const end = html.indexOf("-->", i + 4);
-      i = end === -1 ? len : end + 3;
-      continue;
-    }
-    if (html[i] !== "<") {
-      i++;
-      continue;
-    }
-    if (
-      i + 7 < len
-      && html.slice(i + 1, i + 7).toLowerCase() === "script"
-      && /[\s/>]/.test(html[i + 7])
-    ) {
-      let j = i + 7;
-      let firstSrc = null;
-      while (j < len) {
-        while (j < len && /\s/.test(html[j])) j++;
-        if (j >= len) break;
-        if (html[j] === ">") {
-          j++;
-          break;
-        }
-        if (html[j] === "/") {
-          j++;
-          continue;
-        }
-        const nameStart = j;
-        while (j < len && !/[\s=/>]/.test(html[j])) j++;
-        if (j === nameStart) {
-          j++;
-          continue;
-        }
-        const attrName = html.slice(nameStart, j).toLowerCase();
-        while (j < len && /\s/.test(html[j])) j++;
-        let attrValue = null;
-        if (j < len && html[j] === "=") {
-          j++;
-          while (j < len && /\s/.test(html[j])) j++;
-          if (j < len && (html[j] === '"' || html[j] === "'")) {
-            const quote = html[j++];
-            const valStart = j;
-            const valEnd = html.indexOf(quote, j);
-            if (valEnd === -1) {
-              attrValue = html.slice(valStart);
-              j = len;
-            } else {
-              attrValue = html.slice(valStart, valEnd);
-              j = valEnd + 1;
-            }
-          } else {
-            const valStart = j;
-            while (j < len && !/[\s>]/.test(html[j])) j++;
-            attrValue = html.slice(valStart, j);
-          }
-        }
-        if (attrName === "src" && attrValue !== null && firstSrc === null) {
-          firstSrc = attrValue.trim();
-        }
+  function pushIfSameOrigin(rawUrl) {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return;
+    try {
+      const resolved = new URL(trimmed, pageUrl);
+      if (resolved.origin === origin) {
+        const base = path.posix.basename(resolved.pathname);
+        if (base) out.push(base);
       }
-
-      if (firstSrc) {
-        try {
-          const resolved = new URL(firstSrc, origin + "/");
-          if (resolved.origin === origin) {
-            const base = path.posix.basename(resolved.pathname);
-            if (base) out.push(base);
-          }
-        } catch {}
-      }
-
-      // Advance past raw script contents until the closing </script> tag so
-      // script-like strings inside inline JS are never misparsed as HTML tags.
-      const closeRe = /<\/script[\s/>]/gi;
-      closeRe.lastIndex = j;
-      const closeMatch = closeRe.exec(html);
-      if (!closeMatch) break;
-      const closeGt = html.indexOf(">", closeMatch.index + 8);
-      i = closeGt === -1 ? len : closeGt + 1;
-      continue;
-    }
-    i++;
+    } catch {}
   }
+
+  function walk(node) {
+    if (!node) return;
+    if (node.namespaceURI === HTML_NS && node.tagName === "script") {
+      const srcAttr = node.attrs?.find(a => a.name === "src" && !a.namespace);
+      if (srcAttr) pushIfSameOrigin(srcAttr.value);
+    } else if (node.namespaceURI === SVG_NS && node.tagName === "script") {
+      const hrefAttr = node.attrs?.find(a => a.name === "href" && !a.namespace)
+        || node.attrs?.find(a => a.name === "href" && a.namespace === XLINK_NS);
+      if (hrefAttr) pushIfSameOrigin(hrefAttr.value);
+    }
+    if (Array.isArray(node.childNodes)) {
+      for (const child of node.childNodes) walk(child);
+    }
+  }
+
+  walk(doc);
   return out;
 }
 
+function assertSourcesRecognised(names, api) {
+  for (const name of names) {
+    const formatted = api.formatSource(`https://leanritual.app/site/${name}?v=123`, 42, 7, "");
+    assert.equal(formatted, `${name}:42:7`, `client-errors.js SOURCE_RE does not recognise ${name}`);
+    const validated = serverErrors.validateReport(
+      { name: "Error", message: "boom", source: `${name}:42:7`, page: "today" },
+      { isAuthenticated: true }
+    );
+    assert.equal(validated.source, `${name}:42:7`, `lib/client-errors.js did not accept source ${name}`);
+  }
+}
+
 test("every HTML page and script loaded or shipped under public/ is recognised by client-errors SOURCE_RE", () => {
-  // Verify the HTML script extractor itself catches quoted, unquoted, absolute, and protocol-relative same-origin URLs
-  // while ignoring cross-origin URLs, data-src attributes, and commented-out tags.
+  // Verify the HTML5 script extractor catches quoted, unquoted, absolute, protocol-relative,
+  // character-reference-encoded, and post-attribute-literal same-origin URLs while ignoring
+  // cross-origin URLs, data-src attributes, inert templates, and commented-out tags.
   const sampleHtml = [
     '<script src="/site/a.js"></script>',
     '<script src=/site/b.js defer></script>',
@@ -731,6 +695,18 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
     '<script data-label="a > b" data-msg="it\'s > fine" src="/site/h.js"></script>',
     "<script title='1 > 0' src=/site/i.js></script>",
     '<script async data-expr="x > y" data-quote=\'m > n\' src="https://leanritual.app/site/j.js"></script>',
+    '<div data-example="<script>"></div><script src="/site/k.js"></script>',
+    "<div data-example='<script>'></div><script src='/site/l.js'></script>",
+    '<script src="https://leanritual&#46;app/site/m.js"></script>',
+    '<script src="https://leanritual&#x2e;app/site/n.js"></script>',
+    '<script src="https://leanritual&period;app/site/o.js"></script>',
+    '<script src=https://leanritual&#46;app/site/p.js></script>',
+    '<script src="//leanritual&#46;app/site/q.js"></script>',
+    '<title><script></title><script src="/site/r.js"></script>',
+    '<textarea><script></textarea><script src="/site/s.js"></script>',
+    '<noscript><script></noscript><script src="/site/t.js"></script>',
+    '<script src="/site/u.js" src="/site/ignored-duplicate.js"></script>',
+    '<template><script src="/site/in-template.js"></script></template>',
     '<script>const fake = \'<script src="/site/in-string.js"><\\/script>\';</script>',
     '<script data-other="a > b" data-src="/site/not-src2.js"></script>',
     '<script src="https://cdn.example.invalid/third-party.js"></script>',
@@ -739,10 +715,50 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
   ].join("\n");
   assert.deepEqual(
     extractSameOriginScriptBasenames(sampleHtml, "https://leanritual.app"),
-    ["a.js", "b.js", "c.js", "d.js", "e.js", "f.js", "g.js", "h.js", "i.js", "j.js"]
+    [
+      "a.js", "b.js", "c.js", "d.js", "e.js", "f.js", "g.js", "h.js", "i.js", "j.js",
+      "k.js", "l.js", "m.js", "n.js", "o.js", "p.js", "q.js", "r.js", "s.js", "t.js", "u.js"
+    ]
   );
 
   const { api } = loadClientModule();
+
+  // Regression from PR #61 review: server.js enforces CSP `base-uri 'none'`, so browsers ignore
+  // <base href> and still resolve root-relative and relative script URLs against the page origin.
+  const crossOriginBaseHtml = '<!doctype html><html><head><base href="https://cdn.example.invalid/"><script src="/site/unlisted-review.js"></script><script src="relative-review.js"></script></head><body></body></html>';
+  assert.deepEqual(
+    extractSameOriginScriptBasenames(crossOriginBaseHtml, "https://leanritual.app"),
+    ["unlisted-review.js", "relative-review.js"]
+  );
+  assert.throws(
+    () => assertSourcesRecognised(extractSameOriginScriptBasenames(crossOriginBaseHtml, "https://leanritual.app"), api),
+    /unlisted-review\.js/,
+    "guard must ignore <base href> (blocked by CSP base-uri 'none') and fail on unlisted same-origin scripts"
+  );
+
+  // Regressions from PR #60 review: both scratch mutations must be discovered and fail the allowlist guard.
+  const attrBeforeScriptHtml = '<!doctype html><html><body><div data-example="<script>"></div><script src="/site/unlisted-after-attr.js"></script></body></html>';
+  assert.deepEqual(
+    extractSameOriginScriptBasenames(attrBeforeScriptHtml, "https://leanritual.app"),
+    ["unlisted-after-attr.js"]
+  );
+  assert.throws(
+    () => assertSourcesRecognised(extractSameOriginScriptBasenames(attrBeforeScriptHtml, "https://leanritual.app"), api),
+    /unlisted-after-attr\.js/,
+    "guard must fail when an unlisted same-origin script immediately follows <div data-example=\"<script>\"></div>"
+  );
+
+  const charRefSrcHtml = '<!doctype html><html><head><script src="https://leanritual&#46;app/site/unlisted-charref.js"></script></head><body></body></html>';
+  assert.deepEqual(
+    extractSameOriginScriptBasenames(charRefSrcHtml, "https://leanritual.app"),
+    ["unlisted-charref.js"]
+  );
+  assert.throws(
+    () => assertSourcesRecognised(extractSameOriginScriptBasenames(charRefSrcHtml, "https://leanritual.app"), api),
+    /unlisted-charref\.js/,
+    "guard must fail when an unlisted same-origin script URL uses HTML character references in src"
+  );
+
   const publicDir = path.join(ROOT, "public");
 
   function walkFiles(dir) {
@@ -779,15 +795,7 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
     assert.ok(loadedScriptBasenames.has(expected), `expected ${expected} to be discovered in public/`);
   }
 
-  for (const name of [...pageSources, ...loadedScriptBasenames]) {
-    const formatted = api.formatSource(`https://leanritual.app/site/${name}?v=123`, 42, 7, "");
-    assert.equal(formatted, `${name}:42:7`, `client-errors.js SOURCE_RE does not recognise ${name}`);
-    const validated = serverErrors.validateReport(
-      { name: "Error", message: "boom", source: `${name}:42:7`, page: "today" },
-      { isAuthenticated: true }
-    );
-    assert.equal(validated.source, `${name}:42:7`, `lib/client-errors.js did not accept source ${name}`);
-  }
+  assertSourcesRecognised([...pageSources, ...loadedScriptBasenames], api);
 });
 
 test("client reporter filters cross-origin Script error., extension/non-origin URLs, and ResizeObserver loop events into separate filtered tally", async () => {
