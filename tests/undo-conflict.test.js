@@ -537,3 +537,179 @@ test('conflict dialog escapes hostile exercise names cleanly (no XSS)', async ()
   assert.doesNotMatch(app.appEl.innerHTML, /<img\b/i);
   assert.match(app.appEl.innerHTML, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;&#39;&amp;&quot;/);
 });
+
+test('overwrite revalidates confirmed snapshot inside transaction and refreshes dialog if persisted value changed again', async () => {
+  const app = createApp({ lang: 'en' });
+  const today = vm.runInContext('todayStr()', app.ctx);
+  await app.seedFeedback({
+    id: 'fb-race-confirm',
+    createdAt: today + 'T10:00:00Z',
+    summary: 'Transactional overwrite check',
+    adjustments: [{ kind: 'kcal', delta: -100, text: 'Trim 100 kcal' }],
+    applied: []
+  });
+
+  // 1. Adopt -100 kcal
+  await app.click('adopt-open', app.findButtonDataV('adopt-open', '-100 kcal'));
+  await app.click('adopt-confirm', app.findButtonDataV('adopt-confirm', 'Adopt'));
+  const entryId = app.docs.get('app/profile').adjustLog[0].id;
+  assert.equal(app.docs.get('app/profile').kcalAdjust, -100);
+
+  // 2. Persisted value changes to +200 -> open conflict dialog showing +200 vs 0
+  const p200 = app.docs.get('app/profile');
+  p200.kcalAdjust = 200;
+  app.docs.set('app/profile', p200);
+  await app.click('undo-adjust', entryId, { src: 'list' });
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.match(app.appEl.innerHTML, /\+200 kcal/);
+
+  // 3. Another tab changes persisted value again to +400 BEFORE user clicks Overwrite!
+  const p400 = app.docs.get('app/profile');
+  p400.kcalAdjust = 400;
+  app.docs.set('app/profile', p400);
+
+  // 4. Click Overwrite & Undo -> MUST abort write, preserve +400, and refresh dialog with +400!
+  await app.click('undo-force', entryId);
+  assert.equal(app.docs.get('app/profile').kcalAdjust, 400, 'must NOT overwrite +400 when user only confirmed +200');
+  assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, false);
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.match(app.appEl.innerHTML, /\+400 kcal/);
+  assert.match(app.appEl.innerHTML, /changed again/i);
+  assert.equal(CJK_RE.test(stripTags(app.appEl.innerHTML)), false, 'refreshed English conflict dialog must have zero CJK');
+
+  // 5. Now user sees +400 and clicks Overwrite & Undo again -> snapshot matches +400 -> restores 0!
+  await app.click('undo-force', entryId);
+  assert.equal(app.docs.get('app/profile').kcalAdjust, 0);
+  assert.equal(app.docs.get('app/profile').adjustLog[0].reverted, true);
+  assert.doesNotMatch(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+});
+
+test('legacy numeric edit checks rest/inc (never silently discards), and legacy savedWorkout/dayEdit without after get conservative Undo confirmation', async () => {
+  const today = '2026-11-27';
+  const prevSavedEx = { name: '引体向上（能做 6 个后负重）', sets: [{ w: '80', r: '5' }, { w: '80', r: '5' }] };
+  const prevSavedPlan = { name: '引体向上（能做 6 个后负重）', sets: 2, lo: 4, hi: 6, rest: '3 分钟', inc: 2.5, orig: '引体向上（能做 6 个后负重）', why: null };
+  const curSavedEx = { name: '高位下拉', sets: [{ w: '95', r: '5' }, { w: '95', r: '5' }] };
+  const curSavedPlan = { name: '高位下拉', sets: 2, lo: 4, hi: 6, rest: '2–3 分钟', inc: 2.5, orig: '引体向上（能做 6 个后负重）', why: '记录后手动改过' };
+
+  const app = createApp({
+    lang: 'zh',
+    profileOverrides: {
+      exEdits: {
+        // Same name/sets/lo/hi as legacy edit, but different rest & inc!
+        '深蹲': { name: '腿举', sets: 3, lo: 8, hi: 12, inc: 2.5, rest: '1–2 分钟' },
+        // Custom exercise not in exMeta
+        '杠铃划船': { name: '自定义划船', sets: 3, lo: 8, hi: 12, inc: 2.5, rest: '2 分钟' }
+      },
+      adjustLog: [
+        { id: 'leg-rest-inc', date: '2026-11-20', scope: 'long', kind: 'edit', from: '深蹲', to: '腿举', sets: 3, lo: 8, hi: 12, prev: { swap: null, exEdit: null }, reverted: false, text: '「深蹲」长期换成 腿举 3×8–12' },
+        { id: 'leg-custom', date: '2026-11-21', scope: 'long', kind: 'edit', from: '杠铃划船', to: '自定义划船', sets: 3, lo: 8, hi: 12, prev: { swap: null, exEdit: null }, reverted: false, text: '「杠铃划船」长期换成 自定义划船 3×8–12' },
+        { id: 'leg-saved-w', date: today, dayDate: today, scope: 'today', kind: 'swap', from: '引体向上（能做 6 个后负重）', to: '高位下拉', sets: 2, lo: 4, hi: 6, prev: { mode: 'savedWorkout', exIdx: 0, hadPlan: true, planItem: prevSavedPlan, exercise: prevSavedEx }, feedbackId: 'fb-leg-sw', idx: 0, reverted: false, text: '只改今天（已保存记录）：「引体向上（能做 6 个后负重）」→ 高位下拉 2×4–6' }
+      ]
+    }
+  });
+
+  app.docs.set('days/' + today, {
+    date: today,
+    meals: [],
+    workout: { done: true, key: 'pull', plan: [curSavedPlan], exercises: [curSavedEx] }
+  });
+  vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))});`, app.ctx);
+  await app.seedFeedback({
+    id: 'fb-leg-sw',
+    createdAt: today + 'T09:00:00Z',
+    summary: 'Legacy savedWorkout entry',
+    adjustments: [{ kind: 'swap', from: '引体向上（能做 6 个后负重）', to: '高位下拉', sets: 2, lo: 4, hi: 6, text: '换高位下拉' }],
+    applied: [0]
+  });
+
+  // 1. Legacy edit with changed rest/inc MUST trigger conflict dialog (NOT silently delete) and show rest/inc!
+  await app.click('undo-adjust', 'leg-rest-inc', { src: 'list' });
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.match(app.appEl.innerHTML, /1–2 分钟/);
+  assert.match(app.appEl.innerHTML, /\+2\.5kg/);
+  assert.equal(app.docs.get('app/profile').exEdits['深蹲'].rest, '1–2 分钟');
+  await app.click('dismiss-conflict');
+
+  // 2. Legacy custom exercise lacking exMeta conservatively requires confirmation
+  await app.click('undo-adjust', 'leg-custom', { src: 'list' });
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.equal(app.docs.get('app/profile').exEdits['杠铃划船'].name, '自定义划船');
+  await app.click('undo-force', 'leg-custom');
+  assert.equal(app.docs.get('app/profile').exEdits['杠铃划船'], undefined);
+
+  // 3. Legacy savedWorkout lacking `after` shows Undo button on BOTH list AND feedback card, and conservatively confirms with logged sets!
+  const undoBtns = app.parseButtons('undo-adjust').filter(b => b.dataset.v === 'leg-saved-w');
+  assert.equal(undoBtns.length, 2, 'legacy savedWorkout should render Undo on both card and list');
+  await app.click('undo-adjust', 'leg-saved-w', { src: 'card' });
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.match(app.appEl.innerHTML, /95kg×5/);
+  assert.match(app.appEl.innerHTML, /80kg×5/);
+  await app.click('undo-force', 'leg-saved-w');
+  const restored = app.docs.get('days/' + today).workout;
+  assert.equal(restored.exercises[0].name, '引体向上（能做 6 个后负重）');
+  assert.equal(restored.exercises[0].sets[0].w, '80');
+});
+
+test('savedWorkout overwrite shows logged weight/rep diff on AI Feedback page 2 and refuses to overwrite a mismatched/reordered slot', async () => {
+  const today = vm.runInContext('todayStr()', createApp().ctx);
+  const app = createApp({ lang: 'en' });
+
+  const origPlan = [
+    { name: '硬拉', sets: 3, lo: 4, hi: 6, rest: '3 分钟', inc: 5, orig: '硬拉', why: null },
+    { name: '引体向上（能做 6 个后负重）', sets: 3, lo: 4, hi: 6, rest: '3 分钟', inc: 2.5, orig: '引体向上（能做 6 个后负重）', why: null }
+  ];
+  const origExercises = [
+    { name: '硬拉', sets: [{ w: '120', r: '5' }, { w: '120', r: '5' }, { w: '120', r: '5' }] },
+    { name: '引体向上（能做 6 个后负重）', sets: [{ w: '80', r: '5' }, { w: '80', r: '5' }, { w: '80', r: '5' }] }
+  ];
+  app.docs.set('days/' + today, {
+    date: today,
+    meals: [],
+    workout: { done: true, key: 'pull', slot: 'eve', deload: false, plan: origPlan, exercises: origExercises }
+  });
+  vm.runInContext(`S.days[${JSON.stringify(today)}] = clone(${JSON.stringify(app.docs.get('days/' + today))});`, app.ctx);
+
+  // Seed 4 feedback cards so our target card is on AI Feedback page 2 (PAGE_SIZE.feedback === 3)
+  await app.seedFeedback([
+    { id: 'fb-p1-1', createdAt: today + 'T12:00:00Z', summary: 'Card 1', adjustments: [], applied: [] },
+    { id: 'fb-p1-2', createdAt: today + 'T11:00:00Z', summary: 'Card 2', adjustments: [], applied: [] },
+    { id: 'fb-p1-3', createdAt: today + 'T10:00:00Z', summary: 'Card 3', adjustments: [], applied: [] },
+    {
+      id: 'fb-p2-saved',
+      createdAt: today + 'T09:00:00Z',
+      summary: 'Saved workout swap on page 2',
+      adjustments: [{ kind: 'swap', from: '引体向上（能做 6 个后负重）', to: '高位下拉', sets: 3, lo: 4, hi: 6, text: 'Swap to pulldown' }],
+      applied: []
+    }
+  ]);
+
+  await app.click('page', 'feedback:2');
+  await app.click('adopt-open', app.findButtonDataV('adopt-open', 'Pull-Up'));
+  await app.click('adopt-confirm', app.findButtonDataV('adopt-confirm', 'Today only'));
+  const entryId = app.docs.get('app/profile').adjustLog.at(-1).id;
+
+  // User later edits logged weight from 80 kg -> 95 kg
+  const dDay = app.docs.get('days/' + today);
+  dDay.workout.exercises[1].sets = [{ w: '95', r: '5' }, { w: '95', r: '5' }, { w: '95', r: '5' }];
+  app.docs.set('days/' + today, dDay);
+
+  await app.click('undo-adjust', entryId, { src: 'card' });
+  assert.match(app.appEl.innerHTML, /id="undo-conflict-dialog"/);
+  assert.match(app.appEl.innerHTML, /95kg×5/, 'dialog must display current logged weight 95kg');
+  assert.match(app.appEl.innerHTML, /80kg×5/, 'dialog must display restored logged weight 80kg');
+  assert.equal(CJK_RE.test(stripTags(app.appEl.innerHTML)), false, 'EN savedWorkout conflict dialog must have zero CJK');
+
+  // Now simulate slot mismatch (slot 1 replaced by an unrelated exercise 平板杠铃卧推) -> Overwrite MUST be blocked!
+  const reordered = app.docs.get('days/' + today);
+  reordered.workout.plan[1] = { name: '平板杠铃卧推', sets: 3, lo: 4, hi: 6, rest: '3 分钟', inc: 2.5, orig: '平板杠铃卧推', why: null };
+  reordered.workout.exercises[1] = { name: '平板杠铃卧推', sets: [{ w: '70', r: '6' }] };
+  app.docs.set('days/' + today, reordered);
+
+  await app.click('undo-force', entryId);
+  // Must refuse to overwrite unrelated exercise at index 1!
+  assert.equal(app.docs.get('days/' + today).workout.exercises[1].name, '平板杠铃卧推');
+  assert.equal(app.docs.get('days/' + today).workout.exercises[1].sets[0].w, '70');
+  assert.equal(app.docs.get('app/profile').adjustLog.at(-1).reverted, false);
+  assert.doesNotMatch(app.appEl.innerHTML, /data-act="undo-force"/, 'Overwrite button must be hidden when target slot no longer matches');
+});
+

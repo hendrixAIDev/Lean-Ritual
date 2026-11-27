@@ -223,7 +223,7 @@ const PROGRAM = {
   ]},
   pull:{label:"拉", title:"Day 2 · 拉", ex:[
     E("硬拉",3,4,6,"3 分钟",5,{lowback:{name:"杠铃臀推",lo:8,hi:10},hip:"六角杠铃硬拉（无痛幅度）"},{name:"单腿罗马尼亚硬拉（背包负重）",lo:8,hi:12,inc:0,subs:{lowback:{name:"臀桥（可背包负重）",lo:10,hi:15},hip:{name:"臀桥（可背包负重）",lo:10,hi:15}}}),
-    E("引体向上（能做 6 个后负重）",3,4,6,"3 分钟",2.5,{shoulder:"高位下拉（中立握）",elbow:"高位下拉（中立握）"},{name:"引体向上",lo:4,hi:10,inc:0,beginner:{name:"弹力带下拉（门扣或高处固定）",sets:3,lo:10,hi:15,rest:"1–2 分钟",inc:0}},{name:"高位下拉",sets:3,lo:8,hi:12,rest:"2–3 分钟",inc:2.5}),
+    E("引体向上（能做 6 个后负重）",3,4,6,"3 分钟",2.5,{shoulder:"高位下拉（中立握）",elbow:"高位下拉（中立握）"},{name:"引体向上",lo:4,hi:10,inc:0,subs:{shoulder:{name:"弹力带下拉（中立握，无痛幅度）",sets:3,lo:10,hi:15,rest:"1–2 分钟",inc:0},elbow:{name:"弹力带下拉（中立握，无痛幅度）",sets:3,lo:10,hi:15,rest:"1–2 分钟",inc:0}},beginner:{name:"弹力带下拉（门扣或高处固定）",sets:3,lo:10,hi:15,rest:"1–2 分钟",inc:0}},{name:"高位下拉",sets:3,lo:8,hi:12,rest:"2–3 分钟",inc:2.5}),
     E("杠铃划船",3,4,6,"3 分钟",2.5,{lowback:"胸托哑铃划船"},{name:"反向划船（桌下或低杠）",lo:6,hi:12,inc:0}),
     E("面拉",3,12,15,"1–2 分钟",1,{},{name:"弹力带面拉",lo:15,hi:20,inc:0}),
     E("二头弯举",3,8,12,"1–2 分钟",1,{elbow:"锤式弯举（轻重量）",wrist:"锤式弯举"},{name:"背包弯举",lo:10,hi:15,inc:0})
@@ -281,8 +281,10 @@ const CUES = {
   "罗马尼亚硬拉":["膝盖微屈固定，髋部向后推，杠铃贴腿下滑","背部保持平直，下到大腿后侧明显拉伸即停（通常在膝下）","用臀部把髋向前推回站直；腰椎有伤禁止做"],
   "俯卧腿弯举":["趴在器械上，膝盖对准转轴","勾起时髋部不要离开垫子","下放控制 2–3 秒"],
   "引体向上":["正手略宽于肩，先把肩胛骨下沉","胸口向单杠拉，下巴过杠","下放到手臂接近伸直，不要甩腿借力"],
-  "高位下拉":["正手略宽于肩或用中立握把，大腿固定在挡垫下","肩胛先下沉，再把把手拉到上胸","身体略后倾 10–15°，不要大幅后仰"],
+  "高位下拉":["正手略宽于肩握住横杆，大腿固定在挡垫下","肩胛先下沉，再把横杆拉到上胸","身体略后倾 10–15°，不要大幅后仰借力"],
+  "高位下拉（中立握）":["用对握/中立握把手（掌心相对），大腿固定在挡垫下，对肩和肘更友好","肩胛先下沉，肘部贴近身体两侧把把手拉到上胸","身体略后倾 10–15°，只在无痛幅度内完成，不要大幅后仰"],
   "弹力带下拉":["把弹力带用门扣或绕高处固定，跪姿或坐姿拉直弹力带","先下沉肩胛骨，再把双手拉向锁骨与上胸两侧","底端停 1 秒感受背部发力，慢慢放回不要让弹力带甩回"],
+  "弹力带下拉（中立握，无痛幅度）":["把弹力带用门扣或高处固定，掌心相对中立握住两侧带端","先下沉肩胛骨，肘部贴近身体两侧把弹力带拉向胸前","只在肩肘无痛幅度内完成，底端停 1 秒再慢放"],
   "杠铃划船":["屈髋让上身前倾约 45°，背部平直","杠铃拉向肚脐，肘部贴身体向后","腰椎有伤换胸托哑铃划船"],
   "胸托哑铃划船":["胸口贴在上斜凳上，腰部完全不受力","把哑铃拉向髋部方向","顶端夹紧肩胛，慢慢放下"],
   "反向划船":["躺在结实的桌子或低杠下，双手握住边缘","身体绷直，把胸口拉向桌边","脚放得越远越难"],
@@ -345,6 +347,7 @@ const EX_EN = {
   "高位下拉（中立握）":"Lat Pulldown (Neutral Grip)",
   "高位下拉":"Lat Pulldown",
   "弹力带下拉（门扣或高处固定）":"Band Lat Pulldown (Door Anchor or High Point)",
+  "弹力带下拉（中立握，无痛幅度）":"Band Lat Pulldown (Neutral Grip, Pain-Free ROM)",
   "弹力带下拉":"Band Lat Pulldown",
   "杠铃划船":"Barbell Row",
   "胸托哑铃划船":"Chest-Supported Dumbbell Row",
@@ -420,8 +423,10 @@ const CUES_EN = {
   "罗马尼亚硬拉":["Keep a soft fixed knee bend, push hips back sliding bar down thighs","Maintain flat back and stop at strong hamstring stretch (usually below knee)","Drive hips forward with glutes to stand; avoid if lumbar spine is injured"],
   "俯卧腿弯举":["Lie face down aligning knees with machine pivot","Keep hips pressed into pad as you curl up","Lower under 2–3s control"],
   "引体向上":["Overhand grip slightly wider than shoulders; depress scapulae first","Pull chest toward bar until chin clears","Lower to near full hang without kipping"],
-  "高位下拉":["Use an overhand grip slightly wider than shoulders or a neutral-grip handle, thighs secured under pad","Depress shoulders first, then pull handle to upper chest","Lean back only 10–15° without swinging"],
+  "高位下拉":["Take an overhand grip slightly wider than shoulders with thighs secured under pad","Depress shoulders first, then pull bar to upper chest","Lean back only 10–15° without swinging"],
+  "高位下拉（中立握）":["Use a neutral/parallel-grip attachment (palms facing each other) with thighs secured under pad — easier on shoulders and elbows","Depress shoulders first, then pull handle to upper chest keeping elbows close to your sides","Lean back only 10–15° and stay within a pain-free range without swinging"],
   "弹力带下拉":["Anchor band with a door anchor or high point; kneel or sit with light starting tension","Depress shoulder blades first, then pull hands down toward upper chest","Pause 1s at the bottom to squeeze your lats, then return slowly under control"],
+  "弹力带下拉（中立握，无痛幅度）":["Anchor band overhead and grip ends with palms facing each other (neutral grip)","Depress shoulder blades first and pull elbows down close to your ribs","Stay strictly within a shoulder- and elbow-pain-free range, pausing 1s at the bottom"],
   "杠铃划船":["Hinge torso to ~45° with a flat neutral back","Row bar toward navel keeping elbows close to body","Swap to chest-supported dumbbell row if lower back is injured"],
   "胸托哑铃划船":["Rest chest on incline bench to unload lower back completely","Row dumbbells back toward hips","Squeeze shoulder blades at top and lower slowly"],
   "反向划船":["Lie under a sturdy table or low bar gripping edge","Keep body rigid and pull chest to bar","Walk feet further forward to increase difficulty"],
@@ -852,6 +857,9 @@ const I18N = {
     "fb.conflictTodaySaved":"今天训练已保存（当天替换：{val}）",
     "fb.conflictDefault":"这项调整之后又被修改过，不能直接恢复到采纳前的值。",
     "fb.conflictToday":"这天的训练动作后来又被修改过（或已保存），无法直接恢复到采纳前的值。",
+    "fb.conflictChangedAgain":"当前设置刚才又发生了变化，已更新为最新值，请重新确认后再覆盖。",
+    "fb.conflictLegacyConfirm":"这条早期记录缺少完整的采纳后快照，为避免误覆盖后续修改，请先核对以下内容再确认撤销。",
+    "fb.conflictSpecExtra":"休 {rest}，进阶 {inc}",
     "fb.prevKcalRange":"每日热量目标：{cur} kcal → {next} kcal（{delta} kcal）",
     "fb.prevKcalSimple":"每日热量 {delta} kcal",
     "fb.hintKcal":"采纳后会更新每日热量目标，随时可以撤销。",
@@ -1292,6 +1300,9 @@ const I18N = {
     "fb.conflictTodaySaved":"Today's workout saved (day swap: {val})",
     "fb.conflictDefault":"Modified after adoption — can't automatically restore the previous value.",
     "fb.conflictToday":"Today's workout was edited or saved afterward — can't restore the previous value.",
+    "fb.conflictChangedAgain":"The current setting changed again — refreshed with the latest value. Please review before confirming.",
+    "fb.conflictLegacyConfirm":"This earlier record lacks a full post-adoption snapshot. Please review what will change before confirming undo.",
+    "fb.conflictSpecExtra":"rest {rest}, inc {inc}",
     "fb.prevKcalRange":"Daily calorie target: {cur} kcal → {next} kcal ({delta} kcal)",
     "fb.prevKcalSimple":"Daily calories {delta} kcal",
     "fb.hintKcal":"Updates your daily calorie target; you can undo anytime.",
@@ -1694,7 +1705,8 @@ function fmtLabelCalc(s, by){
 }
 
 function howTo(name){
-  const b = baseName(name), cues = (getLang() === "en" ? CUES_EN[b] : CUES[b]) || CUES[b] || [], kw = SEARCH_KW[b] || b;
+  const b = baseName(name), cueDict = getLang() === "en" ? CUES_EN : CUES;
+  const cues = cueDict[name] || cueDict[b] || CUES[name] || CUES[b] || [], kw = SEARCH_KW[b] || b;
   const ytQ = getLang() === "en" ? exName(b) + " form tutorial" : kw + " 动作教学";
   const mine = S.library?.links?.[b];
   const open = S.openCues?.has(b);
@@ -2041,7 +2053,10 @@ function resolveExForProfile(ex, p){
     if (s) { Object.assign(o, typeof s === "string" ? {name:s} : s, {why: INJ[k] + "有伤，已替换"}); break; }
   }
   const sw = (p?.swaps || {})[ex.name];
-  if (sw) Object.assign(o, {name:sw, why:"根据反馈调整"});
+  if (sw) {
+    const sm = exMeta(sw);
+    Object.assign(o, sm ? {name:sw, sets:sm.sets, lo:sm.lo, hi:sm.hi, rest:sm.rest, inc:sm.inc} : {name:sw}, {why:"根据反馈调整"});
+  }
   const pe = (p?.exEdits || {})[ex.name];
   if (pe) Object.assign(o, pe, {why:"你设定的长期调整"});
   return o;
@@ -3422,31 +3437,57 @@ function normAction(raw){
 const _tr = (k, v) => typeof t === "function" ? t(k, v) : (v ? Object.values(v).join(" ") : k), _ex = n => typeof exName === "function" ? exName(n) : n;
 function describeUndoConflict(entry, c){
   const p = S.profile || {}, prev = entryPrev(entry) || {};
+  const after = entry ? deriveEntryAfter(entry) : null;
   const fmtKcal = v => { const n = num(v) || 0; return n === 0 ? _tr("fb.conflictKcalZero") : `${n > 0 ? "+" : ""}${n} kcal`; };
   const fmtDeload = v => v ? _tr("fb.conflictDeloadFrom", {date:v}) : _tr("fb.conflictDeloadOff");
   const fmtStage = v => stageLabel(v || "auto");
-  const fmtSpec = (orig, sw, ed) => {
-    if (ed?.name) return `${_ex(ed.name)} ${ed.sets}×${ed.lo}–${ed.hi}`;
+  const fmtSpec = (orig, sw, ed, includeExtra = false) => {
+    if (ed?.name) {
+      const base = `${_ex(ed.name)} ${ed.sets}×${ed.lo}–${ed.hi}`;
+      if (!includeExtra) return base;
+      const incStr = ed.inc === 0 ? _tr("unit.bw") : `+${ed.inc ?? 0}kg`;
+      const extra = _tr("fb.conflictSpecExtra", {rest:fmtRest(ed.rest || ""), inc:incStr});
+      return getLang() === "en" ? `${base} (${extra})` : `${base}（${extra}）`;
+    }
     if (sw) return _ex(sw);
     return _tr("fb.conflictDefaultPlan", {ex:_ex(orig)});
   };
+  const fmtLoggedSets = ex => {
+    const sets = Array.isArray(ex?.sets) ? ex.sets : [];
+    const timed = isTimed(ex?.name);
+    const parts = sets
+      .filter(s => String(s?.w ?? "").trim() !== "" || String(s?.r ?? "").trim() !== "")
+      .map(s => {
+        const w = numOr(s?.w);
+        const wStr = w != null ? fmtW(w) : "?";
+        const rRaw = String(s?.r ?? "").trim();
+        const rStr = rRaw ? (timed ? `${rRaw}${getLang() === "en" ? "s" : "秒"}` : rRaw) : "?";
+        return `${wStr}×${rStr}`;
+      });
+    return joinList(parts);
+  };
   const fmtSaved = (pl, ex, orig) => {
     const nm = _ex(pl?.name || ex?.name || orig);
-    if (pl?.sets != null && pl?.lo != null && pl?.hi != null) return `${nm} ${pl.sets}×${pl.lo}–${pl.hi}`;
-    if (ex?.sets?.length) return `${nm} ${ex.sets.length}${_tr("ex.setsSuffix")}`;
-    return nm;
+    const presc = pl?.sets != null && pl?.lo != null && pl?.hi != null
+      ? ` ${pl.sets}×${pl.lo}–${pl.hi}`
+      : (ex?.sets?.length ? ` ${ex.sets.length}${_tr("ex.setsSuffix")}` : "");
+    const logged = fmtLoggedSets(ex);
+    if (!logged) return `${nm}${presc}`;
+    return getLang() === "en" ? `${nm}${presc} (${logged})` : `${nm}${presc}（${logged}）`;
   };
   if (c.dayConflict && entry) {
     const day = S.days?.[c.dayDate || entry.dayDate || entry.date] || {};
     if (prev.mode === "dayEdit") {
-      const curRaw = fmtSpec(entry.from, null, (day.exEdits || {})[entry.from] ?? null);
+      const curEd = (day.exEdits || {})[entry.from] ?? null;
+      const showExtra = !!(curEd && after?.dayEdit && curEd.name === after.dayEdit.name && +curEd.sets === +after.dayEdit.sets && +curEd.lo === +after.dayEdit.lo && +curEd.hi === +after.dayEdit.hi);
+      const curRaw = fmtSpec(entry.from, null, curEd, showExtra);
       const cur = day.workout?.done ? _tr("fb.conflictTodaySaved", {val:curRaw}) : curRaw;
-      const restore = fmtSpec(entry.from, null, prev.dayEdit ?? null);
+      const restore = fmtSpec(entry.from, null, prev.dayEdit ?? null, showExtra);
       return {cur, restore};
     }
     if (prev.mode === "savedWorkout") {
-      const w = day.workout, i = prev.exIdx;
-      const cur = w?.done && i != null && w.exercises?.[i] ? fmtSaved(w.plan?.[i], w.exercises[i], entry.from) : _tr("fb.conflictWorkoutMissing");
+      const w = day.workout, slot = verifySavedWorkoutSlot(w, entry);
+      const cur = slot >= 0 ? fmtSaved(w.plan?.[slot], w.exercises[slot], entry.from) : _tr("fb.conflictWorkoutMissing");
       const restore = fmtSaved(prev.planItem, prev.exercise, entry.from);
       return {cur, restore};
     }
@@ -3458,7 +3499,8 @@ function describeUndoConflict(entry, c){
   if (entry.kind === "swap" || entry.kind === "edit") {
     const curSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, entry.from) ? p.swaps[entry.from] : null;
     const curEdit = (p.exEdits || {})[entry.from] ?? null;
-    return {cur:fmtSpec(entry.from, curSwap, curEdit), restore:fmtSpec(entry.from, prev.swap ?? null, prev.exEdit ?? null)};
+    const showExtra = !!(curEdit && after?.exEdit && curEdit.name === after.exEdit.name && +curEdit.sets === +after.exEdit.sets && +curEdit.lo === +after.exEdit.lo && +curEdit.hi === +after.exEdit.hi);
+    return {cur:fmtSpec(entry.from, curSwap, curEdit, showExtra), restore:fmtSpec(entry.from, prev.swap ?? null, prev.exEdit ?? null, showExtra)};
   }
   return null;
 }
@@ -3473,7 +3515,9 @@ function conflictNotice(c){
     links.push(`<button type="button" class="link small" data-act="clear-swaps">${esc(_tr("fb.clearSwaps"))}</button>`);
   } else if (c.kind === "kcal") links.push(`<button type="button" class="link small" data-act="reset-kcal">${esc(_tr("fb.resetKcal"))}</button>`);
   else if (c.kind === "deload") links.push(`<button type="button" class="link small" data-act="stop-deload">${esc(_tr("fb.stopDeload"))}</button>`);
-  const msg = c.dayConflict ? _tr("fb.conflictToday") : _tr("fb.conflictDefault");
+  const msg = c.staleConfirm ? _tr("fb.conflictChangedAgain")
+    : c.legacyConfirm ? _tr("fb.conflictLegacyConfirm")
+    : (c.dayConflict ? _tr("fb.conflictToday") : _tr("fb.conflictDefault"));
   const extraNote = c.missingSaved ? _tr("fb.conflictTodayMissingNote")
     : (c.dayConflict && c.workoutDone && entryPrev(entry)?.mode === "dayEdit" ? _tr("fb.conflictTodayDoneNote") : "");
   return `<div class="conflict-dialog stack" id="undo-conflict-dialog" role="alertdialog" aria-labelledby="undo-conflict-title" aria-describedby="undo-conflict-desc">
@@ -3881,8 +3925,11 @@ function deriveEntryAfter(e){
   const prev = entryPrev(e);
   if (!e.id || !prev || typeof prev !== "object") return null;
   if (e.scope === "today") {
-    if (prev.mode === "dayEdit" && e.from && e.to && e.sets != null && e.lo != null && e.hi != null) {
-      return {mode:"dayEdit", dayEdit:{name:canonExName(e.to), sets:+e.sets, lo:+e.lo, hi:+e.hi}, _partialDayEdit:true};
+    if (prev.mode === "dayEdit" && e.from) {
+      return {mode:"dayEdit", _requireConfirm:true};
+    }
+    if (prev.mode === "savedWorkout" && prev.exIdx != null && prev.exercise && (e.from || prev.planItem?.orig || prev.exercise?.name)) {
+      return {mode:"savedWorkout", exIdx:prev.exIdx, _requireConfirm:true};
     }
     return null;
   }
@@ -3898,8 +3945,24 @@ function deriveEntryAfter(e){
   }
   if ((e.kind === "swap" || e.kind === "edit") && e.from) {
     if (e.sets != null && e.lo != null && e.hi != null) {
-      const name = canonExName(e.to || prev.exEdit?.name || prev.swap || e.from);
-      return {swap:prev.swap ?? null, exEdit:{name, sets:+e.sets, lo:+e.lo, hi:+e.hi}, _partialExEdit:true};
+      const cur = prev.exEdit;
+      const name = canonExName(e.to || cur?.name || prev.swap || e.from);
+      const meta = exMeta(name);
+      const hi = +e.hi;
+      const knownPrev = !!(cur && name === cur.name && cur.inc != null && cur.rest);
+      if (!knownPrev && !meta) {
+        return {swap:prev.swap ?? null, exEdit:null, _requireConfirm:true};
+      }
+      const val = {
+        ...(cur || {}),
+        name,
+        sets: +e.sets,
+        lo: +e.lo,
+        hi,
+        inc: knownPrev ? cur.inc : (meta.inc ?? (hi <= 8 ? 2.5 : 1)),
+        rest: knownPrev ? cur.rest : (meta.rest || (hi <= 8 ? "2–3 分钟" : "1–2 分钟"))
+      };
+      return {swap:prev.swap ?? null, exEdit:val};
     }
     if (e.kind === "swap" && e.to) {
       const toCanon = canonExName(e.to);
@@ -3911,21 +3974,72 @@ function deriveEntryAfter(e){
 function canUndoEntry(e){
   return !!(e?.id && !e.reverted && entryPrev(e) && deriveEntryAfter(e));
 }
-function sameExSpec(cur, expected, partial){
-  if (!partial) return sameVal(cur, expected);
-  if (!cur || !expected) return cur === expected;
-  return cur.name === expected.name && +cur.sets === +expected.sets && +cur.lo === +expected.lo && +cur.hi === +expected.hi;
+function verifySavedWorkoutSlot(w, entry){
+  const prev = entryPrev(entry);
+  if (!w?.done || !Array.isArray(w.exercises) || prev?.mode !== "savedWorkout") return -1;
+  const i = prev.exIdx;
+  if (i == null || i < 0 || i >= w.exercises.length) return -1;
+  const ex = w.exercises[i];
+  if (!ex) return -1;
+  const pl = Array.isArray(w.plan) ? w.plan[i] : null;
+  if (pl?.extra) return -1;
+  const orig = entry?.from || prev.planItem?.orig || null;
+  if (pl?.orig && orig) return pl.orig === orig ? i : -1;
+  const expectedNames = new Set([
+    orig,
+    entry?.to,
+    entry?.after?.planItem?.name,
+    entry?.after?.exercise?.name,
+    prev.planItem?.name,
+    prev.exercise?.name
+  ].filter(Boolean));
+  if (!expectedNames.size) return -1;
+  const curName = pl?.name || ex.name;
+  return expectedNames.has(curName) || expectedNames.has(ex.name) ? i : -1;
+}
+function liveTargetSnapshot(p, day, entry){
+  const prev = entryPrev(entry);
+  if (entry.scope === "today") {
+    if (prev?.mode === "dayEdit") {
+      return {
+        mode: "dayEdit",
+        workoutDone: !!(day?.workout?.done),
+        dayEdit: (day?.exEdits || {})[entry.from] ? clone(day.exEdits[entry.from]) : null
+      };
+    }
+    if (prev?.mode === "savedWorkout") {
+      const slot = verifySavedWorkoutSlot(day?.workout, entry);
+      return {
+        mode: "savedWorkout",
+        slot,
+        workoutDone: !!(day?.workout?.done),
+        planItem: slot >= 0 && Array.isArray(day?.workout?.plan) ? clone(day.workout.plan[slot] ?? null) : null,
+        exercise: slot >= 0 ? clone(day.workout.exercises[slot]) : null
+      };
+    }
+    return null;
+  }
+  if (entry.kind === "kcal") return {kcalAdjust: num(p.kcalAdjust) || 0};
+  if (entry.kind === "deload") return {deloadFrom: p.deloadFrom ?? null};
+  if (entry.kind === "stage") return {stage: p.stage || "auto"};
+  if (entry.kind === "swap" || entry.kind === "edit") {
+    return {
+      swap: Object.prototype.hasOwnProperty.call(p.swaps || {}, entry.from) ? p.swaps[entry.from] : null,
+      exEdit: (p.exEdits || {})[entry.from] ? clone(p.exEdits[entry.from]) : null
+    };
+  }
+  return null;
 }
 function isLongConflict(p, e){
   const after = deriveEntryAfter(e);
-  if (!p || !after) return true;
+  if (!p || !after || after._requireConfirm) return true;
   if (e.kind === "kcal") return (num(p.kcalAdjust) || 0) !== after.kcalAdjust;
   if (e.kind === "deload") return (p.deloadFrom ?? null) !== after.deloadFrom;
   if (e.kind === "stage") return (p.stage || "auto") !== (after.stage || "auto");
   if (e.kind === "swap" || e.kind === "edit") {
     const curSwap = Object.prototype.hasOwnProperty.call(p.swaps || {}, e.from) ? p.swaps[e.from] : null;
     const curEdit = (p.exEdits || {})[e.from] ?? null;
-    return curSwap !== (after.swap ?? null) || !sameExSpec(curEdit, after.exEdit ?? null, !!after._partialExEdit);
+    return curSwap !== (after.swap ?? null) || !sameVal(curEdit, after.exEdit ?? null);
   }
   return true;
 }
@@ -3944,14 +4058,14 @@ function restoreLongPrev(p, e){
 }
 function isTodayConflict(day, e){
   const after = deriveEntryAfter(e);
-  if (!day || !after) return true;
+  if (!day || !after || after._requireConfirm) return true;
   if (after.mode === "dayEdit") {
     if (day.workout?.done) return true;
-    return !sameExSpec((day.exEdits || {})[e.from] ?? null, after.dayEdit ?? null, !!after._partialDayEdit);
+    return !sameVal((day.exEdits || {})[e.from] ?? null, after.dayEdit ?? null);
   }
   if (after.mode === "savedWorkout") {
     const w = day.workout, i = after.exIdx;
-    if (!w?.done || i == null) return true;
+    if (verifySavedWorkoutSlot(w, e) !== i) return true;
     return !sameVal(w.plan?.[i] ?? null, after.planItem ?? null) || !sameVal(w.exercises?.[i] ?? null, after.exercise ?? null);
   }
   return true;
@@ -3968,7 +4082,7 @@ function restoreTodayPrev(day, e){
   }
   if (prev.mode === "savedWorkout") {
     const w = day.workout, i = prev.exIdx;
-    if (!w?.done || i == null || !w.exercises?.[i]) return null;
+    if (verifySavedWorkoutSlot(w, e) !== i) return null;
     w.exercises[i] = clone(prev.exercise);
     if (prev.hadPlan) {
       if (Array.isArray(w.plan)) w.plan[i] = clone(prev.planItem);
@@ -3982,7 +4096,7 @@ function restoreTodayPrev(day, e){
   }
   return null;
 }
-async function undoAdjust(entryId, { force = false, src = null } = {}){
+async function undoAdjust(entryId, { force = false, expectedSnap = null, src = null } = {}){
   const entry = (S.profile?.adjustLog || []).find(x => x?.id === entryId);
   if (!canUndoEntry(entry)) return;
   const dayDate = entry.scope === "today" ? (entry.dayDate || entry.date) : null;
@@ -3990,12 +4104,19 @@ async function undoAdjust(entryId, { force = false, src = null } = {}){
     const result = await mutateAdjustment(dayDate, entry.feedbackId, entry.idx, (p, day, feedback) => {
       const current = p.adjustLog?.find(x => x?.id === entryId);
       if (!current || current.reverted) return {already:true};
-      const prev = entryPrev(current);
-      const missingSaved = !!(day && prev?.mode === "savedWorkout" && !(day.workout?.done && prev.exIdx != null && day.workout.exercises?.[prev.exIdx]));
-      if (!force && (day ? isTodayConflict(day, current) : isLongConflict(p, current))) {
-        return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved, liveProfile:clone(p), liveDay:day ? clone(day) : null};
+      const prev = entryPrev(current), after = deriveEntryAfter(current);
+      const missingSaved = !!(day && prev?.mode === "savedWorkout" && verifySavedWorkoutSlot(day.workout, current) === -1);
+      const liveSnap = liveTargetSnapshot(p, day, current);
+      if (missingSaved) {
+        return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved:true, legacyConfirm:!!after?._requireConfirm, liveProfile:clone(p), liveDay:day ? clone(day) : null, liveSnap};
       }
-      if (missingSaved) return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved:true, liveProfile:clone(p), liveDay:day ? clone(day) : null};
+      if (!force) {
+        if (day ? isTodayConflict(day, current) : isLongConflict(p, current)) {
+          return {conflict:true, workoutDone:!!(day?.workout?.done), missingSaved:false, legacyConfirm:!!after?._requireConfirm, liveProfile:clone(p), liveDay:day ? clone(day) : null, liveSnap};
+        }
+      } else if (!expectedSnap || !sameVal(liveSnap, expectedSnap)) {
+        return {conflict:true, staleConfirm:true, workoutDone:!!(day?.workout?.done), missingSaved:false, legacyConfirm:false, liveProfile:clone(p), liveDay:day ? clone(day) : null, liveSnap};
+      }
       let savedW;
       if (day) savedW = restoreTodayPrev(day, current);
       else restoreLongPrev(p, current);
@@ -4011,10 +4132,18 @@ async function undoAdjust(entryId, { force = false, src = null } = {}){
     if (result.conflict) {
       if (result.liveProfile) S.profile = migrateProfile(result.liveProfile);
       if (dayDate && result.liveDay) S.days[dayDate] = migrateDay(result.liveDay);
-      const onAdjPage = paginate(pageItems("adjust"), "adjust").items.some(x => x?.id === entryId);
-      const targetSrc = src === "list" || src === "card" ? src : (onAdjPage ? "list" : "card");
-      const msg = dayDate ? t("fb.conflictToday") : t("fb.conflictDefault");
-      S.undoConflict = {id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null, dayDate, dayConflict:!!dayDate, workoutDone:!!result.workoutDone, missingSaved:!!result.missingSaved, src:targetSrc};
+      const inAdjPage = paginate(pageItems("adjust"), "adjust").items.some(x => x?.id === entryId);
+      const targetSrc = src === "list" || src === "card" ? src : (inAdjPage ? "list" : "card");
+      const msg = result.staleConfirm ? t("fb.conflictChangedAgain")
+        : result.legacyConfirm ? t("fb.conflictLegacyConfirm")
+        : (dayDate ? t("fb.conflictToday") : t("fb.conflictDefault"));
+      S.undoConflict = {
+        id:entryId, kind:entry.kind, scope:entry.scope, from:entry.from || null,
+        dayDate, dayConflict:!!dayDate, workoutDone:!!result.workoutDone,
+        missingSaved:!!result.missingSaved, staleConfirm:!!result.staleConfirm,
+        legacyConfirm:!!result.legacyConfirm, confirmedSnap:result.liveSnap ?? null,
+        src:targetSrc
+      };
       render();
       focusEl($("#undo-conflict-dialog [data-act=\"dismiss-conflict\"]") || $("#undo-conflict-dialog button"));
       announce(msg);
@@ -4499,7 +4628,7 @@ document.addEventListener("click", async ev => {
     case "adopt-confirm": await applyAction(JSON.parse(v)); break;
     case "adopt-decline": await declineAction(JSON.parse(v)); break;
     case "undo-adjust": await undoAdjust(v, {src: b.dataset?.src || null}); break;
-    case "undo-force": await undoAdjust(v, {force: true}); break;
+    case "undo-force": { const c = S.undoConflict?.id === v ? S.undoConflict : null; await undoAdjust(v, {force: true, expectedSnap: c?.confirmedSnap ?? null, src: c?.src || null}); break; }
     case "dismiss-conflict": { const c = S.undoConflict; S.undoConflict = null; render(); focusUndoTrigger(c); break; }
     case "apply": await applyAction(JSON.parse(v)); break;
     case "start-deload": { S.undoConflict = null; const td = todayStr(); updateProfile(p => { p.deloadFrom = td; }).then(()=>toast(t("toast.deloadStarted"))).catch(()=>{}); break; }

@@ -420,3 +420,93 @@ test('past completed workouts (day.workout.done / savedPlan) are 100% unaffected
   assert.equal(afterWithPlan, beforeWithPlan, 'completed workout with saved plan must be 100% unaffected');
   assert.equal(afterLegacy, beforeLegacy, 'legacy completed workout without plan snapshot must be 100% unaffected');
 });
+
+test('name-only p.swaps back to Pull-Up restores canonical pull-up sets/reps/rest/inc (does not inherit band pulldown defaults)', () => {
+  const app = createApp();
+
+  // Home beginner with name-only swap back to weighted Pull-Up
+  const swappedWeighted = vm.runInContext(`
+    resolveExForProfile(PROGRAM.pull.ex[1], {
+      exp: "new", equipment: "home", injuries: [],
+      swaps: { ${JSON.stringify(PULLUP_ORIG)}: ${JSON.stringify(PULLUP_ORIG)} },
+      exEdits: {}
+    })
+  `, app.ctx);
+  assert.equal(swappedWeighted.name, PULLUP_ORIG);
+  assert.equal(swappedWeighted.sets, 3);
+  assert.equal(swappedWeighted.lo, 4);
+  assert.equal(swappedWeighted.hi, 6);
+  assert.equal(swappedWeighted.rest, '3 分钟');
+  assert.equal(swappedWeighted.inc, 2.5);
+  assert.equal(swappedWeighted.why, '根据反馈调整');
+
+  // Home beginner with name-only swap to bodyweight Pull-Up
+  const swappedBw = vm.runInContext(`
+    resolveExForProfile(PROGRAM.pull.ex[1], {
+      exp: "new", equipment: "home", injuries: [],
+      swaps: { ${JSON.stringify(PULLUP_ORIG)}: "引体向上" },
+      exEdits: {}
+    })
+  `, app.ctx);
+  assert.equal(swappedBw.name, '引体向上');
+  assert.equal(swappedBw.sets, 3);
+  assert.equal(swappedBw.lo, 4);
+  assert.equal(swappedBw.hi, 10);
+  assert.equal(swappedBw.rest, '3 分钟');
+  assert.equal(swappedBw.inc, 0);
+  assert.equal(swappedBw.why, '根据反馈调整');
+});
+
+test('injury substitutions use grip-specific neutral cues on Gym and Home shoulder/elbow profiles without breaking Home lowback', () => {
+  const today = '2026-11-27';
+
+  // 1. Gym neutral-grip cues in zh & en must instruct neutral/parallel grip, NOT overhand grip
+  const zhGym = createApp({ lang: 'zh', profileOverrides: { exp: 'new', equipment: 'gym', injuries: ['shoulder'] }, days: { [today]: { date: today, override: 'pull', meals: [] } } });
+  const zhNeutralHtml = vm.runInContext('howTo("高位下拉（中立握）")', zhGym.ctx);
+  const zhOverhandHtml = vm.runInContext('howTo("高位下拉")', zhGym.ctx);
+  assert.match(zhNeutralHtml, /对握\/中立握/);
+  assert.doesNotMatch(zhNeutralHtml, /正手/);
+  assert.match(zhOverhandHtml, /正手/);
+
+  const enGym = createApp({ lang: 'en', profileOverrides: { exp: 'new', equipment: 'gym', injuries: ['elbow'], lang: 'en' }, days: { [today]: { date: today, override: 'pull', meals: [] } } });
+  const enNeutralHtml = vm.runInContext('howTo("高位下拉（中立握）")', enGym.ctx);
+  const enOverhandHtml = vm.runInContext('howTo("高位下拉")', enGym.ctx);
+  assert.match(enNeutralHtml, /neutral\/parallel-grip/i);
+  assert.doesNotMatch(enNeutralHtml, /overhand/i);
+  assert.match(enOverhandHtml, /overhand/i);
+
+  // 2. Home shoulder/elbow beginner gets neutral-grip pain-free ROM band pulldown with dedicated cues and zero duplicates
+  for (const inj of ['shoulder', 'elbow']) {
+    const res = vm.runInContext(`
+      PROGRAM.pull.ex.map(ex => resolveExForProfile(ex, { exp: "new", equipment: "home", injuries: [${JSON.stringify(inj)}], swaps: {}, exEdits: {} }))
+    `, zhGym.ctx);
+    assert.equal(res[1].name, '弹力带下拉（中立握，无痛幅度）');
+    assert.equal(res[1].sets, 3);
+    assert.equal(res[1].lo, 10);
+    assert.equal(res[1].hi, 15);
+    assert.equal(res[1].inc, 0);
+    assert.match(res[1].why, /有伤，已替换/);
+    const names = res.map(e => e.name);
+    assert.equal(new Set(names).size, names.length, `zero duplicates for home/${inj}/pull`);
+  }
+
+  // English Home shoulder Today view renders neutral-grip band pulldown & cues with zero CJK
+  const enHomeInj = createApp({
+    lang: 'en',
+    profileOverrides: { exp: 'new', equipment: 'home', injuries: ['shoulder'], lang: 'en' },
+    days: { [today]: { date: today, override: 'pull', meals: [] } }
+  });
+  vm.runInContext(`S.date = ${JSON.stringify(today)}; render();`, enHomeInj.ctx);
+  assert.match(enHomeInj.appEl.innerHTML, /Band Lat Pulldown \(Neutral Grip, Pain-Free ROM\)/);
+  assert.match(enHomeInj.appEl.innerHTML, /palms facing each other/i);
+  assert.equal(CJK_RE.test(stripTags(enHomeInj.appEl.innerHTML)), false, `Unexpected CJK in EN Home shoulder view: ${stripTags(enHomeInj.appEl.innerHTML)}`);
+
+  // 3. Home lowback still swaps hinge to glute bridge and keeps regular beginner band pulldown in vertical pull slot
+  const homeLowback = vm.runInContext(`
+    PROGRAM.pull.ex.map(ex => resolveExForProfile(ex, { exp: "new", equipment: "home", injuries: ["lowback"], swaps: {}, exEdits: {} }))
+  `, zhGym.ctx);
+  assert.equal(homeLowback[0].name, '臀桥（可背包负重）');
+  assert.equal(homeLowback[1].name, '弹力带下拉（门扣或高处固定）');
+  assert.equal(homeLowback[1].why, '新手默认');
+});
+
