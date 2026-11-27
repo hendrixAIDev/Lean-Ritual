@@ -154,10 +154,18 @@
     return null;
   }
 
-  function formatSource(filename, lineno, colno, stack, errMessage) {
-    let base = extractBasename(filename);
+  function formatSource(filename, lineno, colno, stack, errMessage, pageOrigin) {
+    const origin = typeof pageOrigin === "string" ? pageOrigin : "";
+    let base = "";
     let line = Number.isFinite(+lineno) && +lineno > 0 ? Math.min(9999999, Math.trunc(+lineno)) : 0;
     let col = Number.isFinite(+colno) && +colno > 0 ? Math.min(9999999, Math.trunc(+colno)) : 0;
+
+    if (filename && (!origin || classifyUrlOrigin(filename, origin) !== "external")) {
+      const candidate = extractBasename(filename);
+      if (candidate && normalizeSource(candidate) !== "unknown") {
+        base = candidate;
+      }
+    }
 
     if (!base && typeof stack === "string" && stack) {
       const frameText = stripStackMessageHeader(stack, errMessage);
@@ -167,11 +175,14 @@
           const frame = parseStackFrameLocation(lines[i]);
           if (!frame || frame.native || !frame.location) continue;
           const m = frame.location.match(/^(https?:\/\/[^\s)@]+?|\/[A-Za-z0-9_./-]*):(\d+)(?::(\d+))?$/);
-          if (m) {
-            base = extractBasename(m[1]);
+          if (!m) continue;
+          if (origin && classifyUrlOrigin(m[1], origin) === "external") continue;
+          const candidate = extractBasename(m[1]);
+          if (candidate && normalizeSource(candidate) !== "unknown") {
+            base = candidate;
             line = Math.min(9999999, Math.trunc(+m[2]) || 0);
             col = Math.min(9999999, Math.trunc(+m[3]) || 0);
-            if (base) break;
+            break;
           }
         }
       }
@@ -179,9 +190,15 @@
         const head = frameText.slice(0, 1024);
         const m = head.match(/(?:https?:\/\/[^\s)@]+?|\/[A-Za-z0-9_./-]*):(\d+)(?::(\d+))?(?=[\s)]|$)/);
         if (m) {
-          base = extractBasename(m[0].replace(/:\d+(?::\d+)?$/, ""));
-          line = Math.min(9999999, Math.trunc(+m[1]) || 0);
-          col = Math.min(9999999, Math.trunc(+m[2]) || 0);
+          const url = m[0].replace(/:\d+(?::\d+)?$/, "");
+          if (!origin || classifyUrlOrigin(url, origin) !== "external") {
+            const candidate = extractBasename(url);
+            if (candidate && normalizeSource(candidate) !== "unknown") {
+              base = candidate;
+              line = Math.min(9999999, Math.trunc(+m[1]) || 0);
+              col = Math.min(9999999, Math.trunc(+m[2]) || 0);
+            }
+          }
         }
       }
     }
@@ -331,16 +348,17 @@
     if (SCRIPT_ERROR_RE.test(trimmedMsg) && !rawFile && lineno === 0 && colno === 0 && !err) {
       return "script_error";
     }
-    if (rawFile) {
-      const fileKind = classifyUrlOrigin(rawFile, pageOrigin);
-      if (fileKind === "external") return "non_origin";
-      if (fileKind === "same") return null;
-    }
-    if (err && typeof err.stack === "string" && err.stack) {
-      if (classifyStackOrigin(err.stack, pageOrigin, typeof err.message === "string" ? err.message : "") === "external") {
-        return "non_origin";
-      }
-    }
+    const fileKind = rawFile ? classifyUrlOrigin(rawFile, pageOrigin) : "unknown";
+    const stackText = err && typeof err.stack === "string" ? err.stack : "";
+    const stackKind = stackText
+      ? classifyStackOrigin(stackText, pageOrigin, typeof err.message === "string" ? err.message : "")
+      : "unknown";
+
+    // Same-origin evidence in either the event filename or the Error stack always wins.
+    if (fileKind === "same" || stackKind === "same") return null;
+    // Filter as non_origin only when every available provenance signal is strictly external.
+    if (stackKind === "external") return "non_origin";
+    if (fileKind === "external" && !stackText) return "non_origin";
     return null;
   }
 
@@ -499,7 +517,8 @@
         if (!ev) return;
         const err = ev.error;
         if (!err && !ev.message) return;
-        const filterReason = classifyWindowError(ev, getPageOrigin(loc));
+        const pageOrigin = getPageOrigin(loc);
+        const filterReason = classifyWindowError(ev, pageOrigin);
         if (filterReason) {
           reportFiltered(filterReason);
           return;
@@ -507,7 +526,7 @@
         const name = (err && typeof err.name === "string" && err.name) || "Error";
         const message = (err && typeof err.message === "string" && err.message) || (typeof ev.message === "string" ? ev.message : "");
         if (!message && !err) return;
-        const source = formatSource(ev.filename, ev.lineno, ev.colno, err && err.stack, err && typeof err.message === "string" ? err.message : "");
+        const source = formatSource(ev.filename, ev.lineno, ev.colno, err && err.stack, err && typeof err.message === "string" ? err.message : "", pageOrigin);
         report({ name, message, source });
       } catch {}
     }
@@ -521,13 +540,14 @@
           if (code === "cancelled" || code === "session_expired" || errName === "AbortError") return;
           const stack = typeof reason.stack === "string" ? reason.stack : "";
           const rawErrMsg = typeof reason.message === "string" ? reason.message : "";
-          if (stack && classifyStackOrigin(stack, getPageOrigin(loc), rawErrMsg) === "external") {
+          const pageOrigin = getPageOrigin(loc);
+          if (stack && classifyStackOrigin(stack, pageOrigin, rawErrMsg) === "external") {
             reportFiltered("non_origin");
             return;
           }
           const name = errName || code || "UnhandledRejection";
           const message = rawErrMsg || code || "Unhandled rejection";
-          const source = formatSource("", 0, 0, stack, rawErrMsg);
+          const source = formatSource("", 0, 0, stack, rawErrMsg, pageOrigin);
           report({ name, message, source });
           return;
         }

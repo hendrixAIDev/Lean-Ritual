@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const net = require("node:net");
+const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { DatabaseSync } = require("node:sqlite");
@@ -625,23 +626,93 @@ test("headless Chromium: client error reporting on login and app pages with zero
 
 function extractSameOriginScriptBasenames(html, siteOrigin = "https://leanritual.app") {
   const origin = new URL(siteOrigin).origin;
-  const cleaned = html.replace(/<!--[\s\S]*?-->/g, "");
   const out = [];
-  for (const tagMatch of cleaned.matchAll(/<script\b([^>]*)>/gi)) {
-    const attrs = tagMatch[1];
-    const srcMatch = attrs.match(/(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
-    if (!srcMatch) continue;
-    const raw = (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? "").trim();
-    if (!raw) continue;
-    let resolved;
-    try {
-      resolved = new URL(raw, origin + "/");
-    } catch {
+  const len = html.length;
+  let i = 0;
+
+  while (i < len) {
+    if (html.startsWith("<!--", i)) {
+      const end = html.indexOf("-->", i + 4);
+      i = end === -1 ? len : end + 3;
       continue;
     }
-    if (resolved.origin !== origin) continue;
-    const base = path.posix.basename(resolved.pathname);
-    if (base) out.push(base);
+    if (html[i] !== "<") {
+      i++;
+      continue;
+    }
+    if (
+      i + 7 < len
+      && html.slice(i + 1, i + 7).toLowerCase() === "script"
+      && /[\s/>]/.test(html[i + 7])
+    ) {
+      let j = i + 7;
+      let firstSrc = null;
+      while (j < len) {
+        while (j < len && /\s/.test(html[j])) j++;
+        if (j >= len) break;
+        if (html[j] === ">") {
+          j++;
+          break;
+        }
+        if (html[j] === "/") {
+          j++;
+          continue;
+        }
+        const nameStart = j;
+        while (j < len && !/[\s=/>]/.test(html[j])) j++;
+        if (j === nameStart) {
+          j++;
+          continue;
+        }
+        const attrName = html.slice(nameStart, j).toLowerCase();
+        while (j < len && /\s/.test(html[j])) j++;
+        let attrValue = null;
+        if (j < len && html[j] === "=") {
+          j++;
+          while (j < len && /\s/.test(html[j])) j++;
+          if (j < len && (html[j] === '"' || html[j] === "'")) {
+            const quote = html[j++];
+            const valStart = j;
+            const valEnd = html.indexOf(quote, j);
+            if (valEnd === -1) {
+              attrValue = html.slice(valStart);
+              j = len;
+            } else {
+              attrValue = html.slice(valStart, valEnd);
+              j = valEnd + 1;
+            }
+          } else {
+            const valStart = j;
+            while (j < len && !/[\s>]/.test(html[j])) j++;
+            attrValue = html.slice(valStart, j);
+          }
+        }
+        if (attrName === "src" && attrValue !== null && firstSrc === null) {
+          firstSrc = attrValue.trim();
+        }
+      }
+
+      if (firstSrc) {
+        try {
+          const resolved = new URL(firstSrc, origin + "/");
+          if (resolved.origin === origin) {
+            const base = path.posix.basename(resolved.pathname);
+            if (base) out.push(base);
+          }
+        } catch {}
+      }
+
+      // Advance past raw script contents until the closing </script> tag so
+      // script-like strings inside inline JS are never misparsed as HTML tags.
+      const closeRe = /<\/script[\s/>]/gi;
+      closeRe.lastIndex = j;
+      const closeMatch = closeRe.exec(html);
+      if (!closeMatch) break;
+      const closeGt = html.indexOf(">", closeMatch.index + 8);
+      i = closeGt === -1 ? len : closeGt + 1;
+      continue;
+    }
+    i++;
   }
   return out;
 }
@@ -657,13 +728,18 @@ test("every HTML page and script loaded or shipped under public/ is recognised b
     '<script src=https://leanritual.app/site/e.js></script>',
     '<script src="//leanritual.app/site/f.js"></script>',
     '<script src="site/g.js"></script>',
+    '<script data-label="a > b" data-msg="it\'s > fine" src="/site/h.js"></script>',
+    "<script title='1 > 0' src=/site/i.js></script>",
+    '<script async data-expr="x > y" data-quote=\'m > n\' src="https://leanritual.app/site/j.js"></script>',
+    '<script>const fake = \'<script src="/site/in-string.js"><\\/script>\';</script>',
+    '<script data-other="a > b" data-src="/site/not-src2.js"></script>',
     '<script src="https://cdn.example.invalid/third-party.js"></script>',
     '<script data-src="/site/not-src.js"></script>',
     '<!-- <script src="/site/commented.js"></script> -->'
   ].join("\n");
   assert.deepEqual(
     extractSameOriginScriptBasenames(sampleHtml, "https://leanritual.app"),
-    ["a.js", "b.js", "c.js", "d.js", "e.js", "f.js", "g.js"]
+    ["a.js", "b.js", "c.js", "d.js", "e.js", "f.js", "g.js", "h.js", "i.js", "j.js"]
   );
 
   const { api } = loadClientModule();
@@ -741,15 +817,24 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
   assert.equal(sent[0].filtered, "script_error");
 
   // 2. Extension & non-origin script URLs -> filtered as non_origin (deduped per reason on same page-load)
-  onError({ message: "ext boom", filename: "chrome-extension://abcdef/content.js", lineno: 10, colno: 2, error: new Error("ext boom") });
+  const chromeExtErr = Object.assign(new Error("ext boom"), {
+    stack: "Error: ext boom\n    at inject (chrome-extension://abcdef/content.js:10:2)"
+  });
+  onError({ message: "ext boom", filename: "chrome-extension://abcdef/content.js", lineno: 10, colno: 2, error: chromeExtErr });
   assert.equal(sent.length, 2);
   assert.deepEqual(Object.keys(sent[1]).sort(), ["filtered", "lang", "page", "revision", "ts", "ua"]);
   assert.equal(sent[1].filtered, "non_origin");
 
   // Additional non-origin variants are classified as non_origin too
-  assert.equal(api.classifyWindowError({ message: "x", filename: "safari-web-extension://1234/inject.js", lineno: 1, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
+  const safariExtErr = Object.assign(new Error("x"), {
+    stack: "inject@safari-web-extension://1234/inject.js:1:1"
+  });
+  const otherHostErr = Object.assign(new Error("x"), {
+    stack: "Error: x\n    at https://other-host.example/inject.js:5:1"
+  });
+  assert.equal(api.classifyWindowError({ message: "x", filename: "safari-web-extension://1234/inject.js", lineno: 1, colno: 1, error: safariExtErr }, "https://leanritual.app"), "non_origin");
   assert.equal(api.classifyWindowError({ message: "x", filename: "webkit-masked-url://hidden/", lineno: 0, colno: 0, error: null }, "https://leanritual.app"), "non_origin");
-  assert.equal(api.classifyWindowError({ message: "x", filename: "https://other-host.example/inject.js", lineno: 5, colno: 1, error: new Error("x") }, "https://leanritual.app"), "non_origin");
+  assert.equal(api.classifyWindowError({ message: "x", filename: "https://other-host.example/inject.js", lineno: 5, colno: 1, error: otherHostErr }, "https://leanritual.app"), "non_origin");
 
   // 3. Benign ResizeObserver browser notifications (no Error object, zero line/col) -> filtered as resize_observer
   onError({ message: "ResizeObserver loop completed with undelivered notifications.", filename: "https://leanritual.app/", lineno: 0, colno: 0, error: null });
@@ -838,6 +923,50 @@ test("client reporter filters cross-origin Script error., extension/non-origin U
   assert.equal(sent[4].source, "login.js:88:4");
   assert.equal(sent[5].filtered, undefined);
   assert.equal(sent[5].source, "phone-rules.js:365:5");
+
+  // 5b. Cross-origin rethrow of a same-origin Error MUST NOT be filtered; same-origin evidence wins
+  const rethrownSameOrigin = new TypeError("same-origin boom");
+  rethrownSameOrigin.stack = "TypeError: same-origin boom\n    at submit (https://leanritual.app/site/login.js:44:9)\n    at rethrow (https://other-host.example/rethrow.js:4:1)";
+  const rethrowEv = {
+    message: rethrownSameOrigin.message,
+    filename: "https://other-host.example/rethrow.js",
+    lineno: 4,
+    colno: 1,
+    error: rethrownSameOrigin
+  };
+  assert.equal(api.classifyWindowError(rethrowEv, "https://leanritual.app"), null);
+  onError(rethrowEv);
+  assert.equal(sent.length, 7);
+  assert.equal(sent[6].filtered, undefined);
+  assert.equal(sent[6].source, "login.js:44:9");
+
+  // Even when the external rethrow script shares an allowlisted basename (e.g. login.js), source must come from our origin's stack frame
+  const rethrownCollision = new RangeError("collision boom");
+  rethrownCollision.stack = "RangeError: collision boom\n    at checkPhone (https://leanritual.app/site/phone-rules.js:12:3)";
+  onError({
+    message: rethrownCollision.message,
+    filename: "https://other-host.example/login.js",
+    lineno: 99,
+    colno: 1,
+    error: rethrownCollision
+  });
+  assert.equal(sent.length, 8);
+  assert.equal(sent[7].filtered, undefined);
+  assert.equal(sent[7].source, "phone-rules.js:12:3");
+
+  // External filename with incomplete/ambiguous stack (unknown frame or >64 KiB) keeps ordinary report
+  const extWithAmbigStack = new Error("ambig rethrow");
+  extWithAmbigStack.stack = "Error: ambig rethrow\n    at extFn (https://other-host.example/rethrow.js:4:1)\n    at <anonymous>:1:1";
+  assert.equal(
+    api.classifyWindowError({ message: "ambig rethrow", filename: "https://other-host.example/rethrow.js", lineno: 4, colno: 1, error: extWithAmbigStack }, "https://leanritual.app"),
+    null
+  );
+  const extWithHugeStack = new Error("huge rethrow");
+  extWithHugeStack.stack = "Error: huge rethrow\n" + "    at f (https://other-host.example/rethrow.js:1:1)\n".repeat(2000);
+  assert.equal(
+    api.classifyWindowError({ message: "huge rethrow", filename: "https://other-host.example/rethrow.js", lineno: 1, colno: 1, error: extWithHugeStack }, "https://leanritual.app"),
+    null
+  );
 
   // 6. Filtered counter does not consume real error session budget (all maxPerSession real errors can still be sent)
   const capSent = [];
@@ -972,4 +1101,101 @@ test("server lib/client-errors logs filtered noise separately, rejects mixed pay
   for (let i = 0; i < 5; i++) assert.equal(await invokeAnon({ page: "login", name: "Error", message: `err ${i}`, source: "login.js:1:1" }), 204);
   assert.equal(anonLogs.filter(l => l.startsWith("client-error ")).length, 3, "anon ordinary gets reserved 3 slots");
   assert.equal(anonLogs.length, 5, "anon aggregate total never exceeds 5/hr");
+});
+
+test("headless Chromium: cross-origin script rethrowing a same-origin Error stays an ordinary report", { timeout: 60000 }, async t => {
+  const pw = loadPlaywright();
+  if (!pw) {
+    t.skip("Playwright/Chromium not installed locally");
+    return;
+  }
+  const received = [];
+  const originB = http.createServer((req, res) => {
+    if (req.url === "/rethrow.js") {
+      res.writeHead(200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      });
+      res.end([
+        "window.__rethrowFromOtherOrigin = function (err) { setTimeout(function () { throw err; }, 0); };",
+        "window.__throwPureExternal = function () { setTimeout(function () { throw new Error('pure ext boom'); }, 0); };"
+      ].join("\n"));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise(resolve => originB.listen(0, "127.0.0.1", resolve));
+  const portB = originB.address().port;
+
+  const originA = http.createServer((req, res) => {
+    if (req.url === "/client-errors.js") {
+      res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+      res.end(clientScript);
+      return;
+    }
+    if (req.url === "/api/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, revision: "1e51b8e456ad" }));
+      return;
+    }
+    if (req.url === "/api/client-error" && req.method === "POST") {
+      const chunks = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", () => {
+        received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        res.writeHead(204);
+        res.end();
+      });
+      return;
+    }
+    if (req.url === "/login.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<script src="/client-errors.js"></script>
+<script crossorigin="anonymous" src="http://127.0.0.1:${portB}/rethrow.js"></script>
+</head><body>
+<script>
+window.__triggerCrossOriginRethrow = function () {
+  var err = new TypeError("same-origin boom");
+  window.__rethrowFromOtherOrigin(err);
+};
+</script>
+</body></html>`);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise(resolve => originA.listen(0, "127.0.0.1", resolve));
+  const portA = originA.address().port;
+
+  let browser;
+  t.after(async () => {
+    if (browser) await browser.close();
+    await new Promise(r => originA.close(r));
+    await new Promise(r => originB.close(r));
+  });
+
+  browser = await pw.chromium.launch({ executablePath: pw.executablePath, headless: true, args: ["--no-sandbox"] });
+  const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${portA}/login.html`);
+  await page.waitForFunction(() => !!window.ritualErrorReporter && typeof window.__rethrowFromOtherOrigin === "function");
+
+  // 1. Same-origin Error rethrown by CORS cross-origin script -> Chromium supplies cross-origin ev.filename + same-origin stack
+  const rethrowPostP = page.waitForResponse(r => new URL(r.url()).pathname === "/api/client-error" && r.status() === 204);
+  await page.evaluate(() => { window.__triggerCrossOriginRethrow(); });
+  await rethrowPostP;
+  assert.equal(received.length, 1);
+  assert.equal(received[0].filtered, undefined, `same-origin Error rethrown cross-origin must not be filtered: ${JSON.stringify(received[0])}`);
+  assert.equal(received[0].name, "TypeError");
+  assert.match(received[0].source, /^login\.html:\d+:\d+$/);
+
+  // 2. Pure cross-origin Error thrown directly in external script -> still filtered as non_origin
+  const extPostP = page.waitForResponse(r => new URL(r.url()).pathname === "/api/client-error" && r.status() === 204);
+  await page.evaluate(() => { window.__throwPureExternal(); });
+  await extPostP;
+  assert.equal(received.length, 2);
+  assert.equal(received[1].filtered, "non_origin");
 });
