@@ -860,6 +860,10 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
     "MAIL_FROM=Lean Ritual <noreply@leanritual.app>",
     'MAIL_REPLY_TO="Lean Ritual Support <support@leanritual.app>"',
     "SMTP_PASS=re_secret#with#hashes$and$(not_evaled)",
+    'SMTP_PASS_IQ=prefix"suffix"',
+    "SMTP_PASS_SQ_INT=a'b'c",
+    'SMTP_PASS_MIXED=unmatched"quote\'here',
+    "SMTP_PASS_BS=foo\\bar",
     'SMTP_PASS_DQ="re_abc\\ndef\\t123\\"quote\\\\slash\\$dollar\\`tick"',
     "SINGLE_QUOTED='literal \\n value <keep>'",
     'ESCAPED_TRAIL="foo\\\\"',
@@ -879,6 +883,10 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
   assert.equal(parsed.MAIL_FROM, "Lean Ritual <noreply@leanritual.app>");
   assert.equal(parsed.MAIL_REPLY_TO, "Lean Ritual Support <support@leanritual.app>");
   assert.equal(parsed.SMTP_PASS, "re_secret#with#hashes$and$(not_evaled)");
+  assert.equal(parsed.SMTP_PASS_IQ, 'prefix"suffix"', "unquoted values must preserve interior double quotes literally");
+  assert.equal(parsed.SMTP_PASS_SQ_INT, "a'b'c", "unquoted values must preserve interior single quotes literally");
+  assert.equal(parsed.SMTP_PASS_MIXED, 'unmatched"quote\'here', "unquoted values must preserve unmatched interior quotes literally");
+  assert.equal(parsed.SMTP_PASS_BS, "foo\\bar", "unquoted values must preserve non-continuation backslashes literally");
   assert.equal(parsed.SMTP_PASS_DQ, 're_abc\\ndef\\t123"quote\\slash$dollar`tick', "systemd preserves \\n and \\t in double quotes while unescaping \", \\, $, `");
   assert.equal(parsed.SINGLE_QUOTED, "literal \\n value <keep>");
   assert.equal(parsed.ESCAPED_TRAIL, "foo\\");
@@ -904,6 +912,8 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
   assert.throws(() => parseSystemdEnvFile("1INVALID_KEY=value"), /Invalid environment variable name at line 1/);
   assert.throws(() => parseSystemdEnvFile('UNCLOSED="abc'), /Unterminated double-quoted value/);
   assert.throws(() => parseSystemdEnvFile("UNCLOSED='abc"), /Unterminated single-quoted value/);
+  assert.throws(() => parseSystemdEnvFile('TRAILING_DQ="abc"extra'), /Unexpected trailing characters after double-quoted value/);
+  assert.throws(() => parseSystemdEnvFile("TRAILING_SQ='abc'extra"), /Unexpected trailing characters after single-quoted value/);
   assert.throws(() => loadEnvFile(path.join(dir, "missing.env"), {}), /Failed to read --env-file/);
 });
 
@@ -1540,4 +1550,288 @@ test("concurrent fulfill-pending processes at 49/50 cap serialize atomically, is
   const statuses = checkBojin.prepare("SELECT id, status FROM invite_requests WHERE id IN (?, ?) ORDER BY id").all(reqA.id, reqB.id);
   checkBojin.close();
   assert.deepEqual(statuses.map(r => r.status).sort(), ["invited", "pending"]);
+});
+
+test("in-flight SMTP interleaving: active-contact dedup and auth.sqlite in_flight guard prevent false invited on SMTP 550 rejection", async () => {
+  const bojinDb = openMemoryDb();
+  const bojinDb2 = openMemoryDb();
+  const authDb = openMemoryDb();
+  const nowMs = Date.parse("2026-11-27T15:00:00.000Z");
+
+  const svc = createInviteRequests(bojinDb, { now: () => nowMs });
+  const svc2 = createInviteRequests(bojinDb2, { now: () => nowMs });
+  const invitations = createInvitations(authDb);
+
+  const req1 = await svc.submit({
+    name: "Inflight User",
+    contactKind: "email",
+    contactValue: "inflight@example.com",
+    goal: "First submission",
+    lang: "en"
+  }, { ip: "198.51.100.91" });
+
+  // Competing pending row in a separate DB (tests the auth.sqlite in_flight guard even if a second row existed)
+  const req2 = await svc2.submit({
+    name: "Competing User",
+    contactKind: "email",
+    contactValue: "inflight@example.com",
+    goal: "Competing row",
+    lang: "en"
+  }, { ip: "198.51.100.92" });
+
+  let notifyInSmtp;
+  const enteredSmtp = new Promise(resolve => { notifyInSmtp = resolve; });
+  let rejectSmtp;
+  const smtpGate = new Promise((_, reject) => { rejectSmtp = reject; });
+
+  const worker1Promise = fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs,
+    mailer: {
+      async sendInvitationEmail() {
+        notifyInSmtp();
+        return smtpGate;
+      }
+    }
+  });
+
+  await enteredSmtp;
+
+  // Verify req1 is currently 'sending' in bojin.db and 'sending' in auth.sqlite
+  assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(req1.id).status, "sending");
+  const inFlightInv = authDb.prepare("SELECT source_request_id, delivery_state, revoked FROM launch_invites WHERE email = ?").get("inflight@example.com");
+  assert.equal(inFlightInv.source_request_id, req1.id);
+  assert.equal(inFlightInv.delivery_state, "sending");
+  assert.equal(inFlightInv.revoked, 0);
+
+  // Layer 1: Public re-submission during in-flight 'sending' must deduplicate to req1 without inserting a 2nd row
+  const dupDuringSending = await svc.submit({
+    name: "Repeat Submit",
+    contactKind: "email",
+    contactValue: "INFLIGHT@example.com",
+    goal: "Repeat while sending",
+    lang: "en"
+  }, { ip: "198.51.100.93" });
+  assert.equal(dupDuringSending.deduplicated, true);
+  assert.equal(dupDuringSending.id, req1.id);
+  assert.equal(bojinDb.prepare("SELECT COUNT(*) AS n FROM invite_requests").get().n, 1);
+
+  // Layer 2: Direct auth.sqlite reserveEmailForFulfillment for another requestId must return 'in_flight', NEVER 'already_invited'
+  const directCheck = invitations.reserveEmailForFulfillment("inflight@example.com", {
+    maxSpots: 50,
+    requestId: "req_other",
+    nowMs
+  });
+  assert.equal(directCheck.outcome, "in_flight");
+
+  // Layer 2 via fulfillInviteRequests: competing Worker 2 must NOT mark req2 'invited' and must send 0 emails
+  let worker2Sent = 0;
+  const worker2Res = await fulfillInviteRequests({
+    bojinDb: bojinDb2,
+    authDb,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs,
+    mailer: { async sendInvitationEmail() { worker2Sent++; } }
+  });
+  assert.equal(worker2Sent, 0);
+  assert.equal(worker2Res.emailedCount, 0);
+  assert.equal(worker2Res.resolvedCount, 0);
+  assert.equal(bojinDb2.prepare("SELECT status FROM invite_requests WHERE id = ?").get(req2.id).status, "pending");
+
+  // Targeted fulfill for req2 while req1 is in-flight must reject with IN_FLIGHT and leave req2 pending
+  await assert.rejects(
+    () => fulfillInviteRequests({
+      bojinDb: bojinDb2,
+      authDb,
+      targetId: req2.id,
+      baseURL: "https://leanritual.app",
+      maxSpots: 50,
+      now: () => nowMs,
+      mailer: { async sendInvitationEmail() { worker2Sent++; } }
+    }),
+    err => err.code === "IN_FLIGHT"
+  );
+  assert.equal(bojinDb2.prepare("SELECT status FROM invite_requests WHERE id = ?").get(req2.id).status, "pending");
+
+  // Now Worker 1 gets SMTP 550 rejection and rolls back!
+  rejectSmtp(Object.assign(new Error("550 5.1.1 User unknown"), { code: "EENVELOPE", responseCode: 550 }));
+  const worker1Res = await worker1Promise;
+  assert.equal(worker1Res.ok, false);
+  assert.equal(worker1Res.emailedCount, 0);
+  assert.equal(worker1Res.failedCount, 1);
+  assert.equal(worker1Res.failedIds[0].code, "EENVELOPE");
+
+  // ZERO rows marked 'invited' in either DB, and ZERO active unrevoked invites left in auth.sqlite!
+  assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(req1.id).status, "pending");
+  assert.equal(bojinDb2.prepare("SELECT status FROM invite_requests WHERE id = ?").get(req2.id).status, "pending");
+  assert.equal(countBetaSpots(authDb, { nowMs }).spotsUsed, 0);
+  assert.equal(authDb.prepare("SELECT COUNT(*) AS n FROM launch_invites WHERE revoked = 0").get().n, 0);
+
+  // Also verify active-contact dedup covers 'sending_uncertain'
+  bojinDb.prepare("UPDATE invite_requests SET status = 'sending_uncertain' WHERE id = ?").run(req1.id);
+  const dupDuringUncertain = await svc.submit({
+    name: "Repeat Uncertain",
+    contactKind: "email",
+    contactValue: "inflight@example.com",
+    goal: "Repeat while uncertain",
+    lang: "en"
+  }, { ip: "198.51.100.94" });
+  assert.equal(dupDuringUncertain.deduplicated, true);
+  assert.equal(dupDuringUncertain.id, req1.id);
+  assert.equal(bojinDb.prepare("SELECT COUNT(*) AS n FROM invite_requests").get().n, 1);
+
+  bojinDb.close();
+  bojinDb2.close();
+  authDb.close();
+});
+
+test("pre-SMTP crash orphan recovery via source_request_id/delivery_state vs mid-SMTP sending protection", async () => {
+  const bojinDb = openMemoryDb();
+  const authDb = openMemoryDb();
+  const nowMs = Date.parse("2026-11-27T16:00:00.000Z");
+
+  const svc = createInviteRequests(bojinDb, { now: () => nowMs });
+  const invitations = createInvitations(authDb);
+
+  // Case A: Pre-SMTP crash right after reserveEmailForFulfillment commits (delivery_state = 'reserved')
+  const reqOrphan = await svc.submit({
+    name: "Orphan User",
+    contactKind: "email",
+    contactValue: "orphan@example.com",
+    goal: "Pre-SMTP crash recovery",
+    lang: "zh"
+  }, { ip: "198.51.100.95" });
+
+  const orphanRes = invitations.reserveEmailForFulfillment("orphan@example.com", {
+    maxSpots: 50,
+    requestId: reqOrphan.id,
+    nowMs
+  });
+  assert.equal(orphanRes.outcome, "reserved");
+  assert.equal(countBetaSpots(authDb, { nowMs }).spotsUsed, 1);
+  // Simulate bojin.db row reset to pending (fulfill_token_hash never persisted before crash)
+  assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(reqOrphan.id).status, "pending");
+
+  const sentMails = [];
+  const res1 = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs + 1000,
+    mailer: {
+      async sendInvitationEmail(payload) {
+        sentMails.push(payload);
+      }
+    }
+  });
+  assert.equal(res1.ok, true);
+  assert.equal(res1.emailedCount, 1, "pre-SMTP orphan must be replaced and actually emailed (not misclassified as already_invited)");
+  assert.deepEqual(res1.emailedIds, [reqOrphan.id]);
+  assert.equal(res1.resolvedCount, 0);
+  assert.equal(sentMails.length, 1);
+  assert.equal(countBetaSpots(authDb, { nowMs: nowMs + 1000 }).spotsUsed, 1, "revoking orphan in-tx must not leak a beta spot");
+
+  const orphanRows = authDb.prepare("SELECT tokenHash, revoked, delivery_state, source_request_id FROM launch_invites WHERE email = ? ORDER BY rowid ASC").all("orphan@example.com");
+  assert.equal(orphanRows.length, 2);
+  assert.equal(orphanRows[0].tokenHash, orphanRes.tokenHash);
+  assert.equal(orphanRows[0].revoked, 1, "unsent pre-SMTP orphan token must be revoked");
+  assert.equal(orphanRows[1].revoked, 0);
+  assert.equal(orphanRows[1].delivery_state, "delivered");
+  assert.equal(orphanRows[1].source_request_id, reqOrphan.id);
+
+  // Delivered token is claimable and matches the emailed link
+  const emailedToken = new URL(sentMails[0].url).searchParams.get("invite");
+  assert.ok(invitations.claim(emailedToken, "orphan@example.com"));
+
+  // Case B: Mid-SMTP crash after markDeliverySending (delivery_state = 'sending') + operator resets row to pending
+  const reqMid = await svc.submit({
+    name: "Mid SMTP User",
+    contactKind: "email",
+    contactValue: "midsmtp@example.com",
+    goal: "Mid-SMTP crash safety",
+    lang: "en"
+  }, { ip: "198.51.100.96" });
+
+  const midRes = invitations.reserveEmailForFulfillment("midsmtp@example.com", {
+    maxSpots: 50,
+    requestId: reqMid.id,
+    nowMs: nowMs + 2000
+  });
+  assert.equal(midRes.outcome, "reserved");
+  assert.equal(invitations.markDeliverySending(midRes.token).changes, 1);
+
+  const res2 = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs + 3000,
+    mailer: {
+      async sendInvitationEmail(payload) {
+        sentMails.push(payload);
+      }
+    }
+  });
+  assert.equal(res2.ok, false);
+  assert.equal(res2.emailedCount, 0, "mid-SMTP sending invite must NEVER be rotated or re-emailed");
+  assert.equal(res2.failedCount, 1);
+  assert.equal(res2.failedIds[0].code, "DELIVERY_UNCERTAIN");
+  assert.equal(res2.failedIds[0].uncertain, true);
+  assert.deepEqual(res2.uncertainIds, [reqMid.id]);
+  assert.equal(sentMails.length, 1, "no second email sent");
+  assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(reqMid.id).status, "sending_uncertain");
+
+  // Original mid-SMTP token must remain unrevoked and claimable
+  const midRow = authDb.prepare("SELECT revoked, delivery_state FROM launch_invites WHERE tokenHash = ?").get(midRes.tokenHash);
+  assert.equal(midRow.revoked, 0);
+  assert.equal(midRow.delivery_state, "sending");
+  assert.ok(invitations.claim(midRes.token, "midsmtp@example.com"));
+
+  bojinDb.close();
+  authDb.close();
+});
+
+test("legacy invite_requests_pending_contact index migrates cleanly to invite_requests_active_contact", async () => {
+  const bojinDb = openMemoryDb();
+  const authDb = openMemoryDb();
+  bojinDb.exec(`
+    CREATE TABLE invite_requests (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      contact_kind TEXT NOT NULL,
+      contact_value TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      lang TEXT NOT NULL DEFAULT 'zh',
+      status TEXT NOT NULL DEFAULT 'pending',
+      status_note TEXT NOT NULL DEFAULT '',
+      created TEXT NOT NULL,
+      updated TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX invite_requests_pending_contact
+      ON invite_requests(contact_kind, contact_value) WHERE status = 'pending';
+  `);
+
+  await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    mailer: { async sendInvitationEmail() {} }
+  });
+
+  const idxNames = bojinDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'invite_requests'")
+    .all()
+    .map(r => r.name);
+  assert.ok(idxNames.includes("invite_requests_active_contact"), "new active-contact unique index must exist");
+  assert.ok(!idxNames.includes("invite_requests_pending_contact"), "legacy pending-only index must be dropped");
+
+  bojinDb.close();
+  authDb.close();
 });

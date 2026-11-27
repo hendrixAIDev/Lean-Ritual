@@ -416,7 +416,7 @@ async function main() {
           try { db.exec("ROLLBACK"); } catch {}
         }
         if (err && /UNIQUE constraint failed/i.test(String(err.message))) {
-          throw new Error("Another pending invite request already exists for this contact");
+          throw new Error("Another active invite request already exists for this contact");
         }
         throw err;
       }
