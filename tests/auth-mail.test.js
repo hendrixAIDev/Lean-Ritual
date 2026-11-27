@@ -676,3 +676,108 @@ test("SMTP logging records only local Message-ID and metadata, redacts addresses
   assert.equal(extractDomain("not-an-email"), "unknown");
   assert.equal(extractDomain("user@163.com\r\nX-Inject: 1"), "unknown");
 });
+
+test("createMailer.sendInvitationEmail sends localized zh/en multipart/alternative invite emails with quickstart, origin guard, Reply-To, and metadata-only logs", async t => {
+  const nodemailer = require("nodemailer");
+  const smtpEnv = {
+    MAIL_MODE: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "465",
+    SMTP_USER: "resend",
+    SMTP_PASS: "re_test_key",
+    MAIL_FROM: "Lean Ritual <noreply@leanritual.app>",
+    MAIL_REPLY_TO: "Lean Ritual Support <support@leanritual.app>",
+  };
+  const secretToken = "inv_tok_super_secret_9876543210";
+  const secretEmail = "beta.applicant@163.com";
+  const inviteUrl = `https://leanritual.app/login.html?invite=${secretToken}&email=${encodeURIComponent(secretEmail)}`;
+
+  // 1. Rendered zh and en templates have invite URL, 2-minute quickstart, no images/external links, and zero CJK in en
+  const zhRendered = renderEmail({ kind: "invite", url: inviteUrl, lang: "zh", replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(zhRendered.lang, "zh");
+  assert.match(zhRendered.subject, /内测邀请/);
+  assert.ok(zhRendered.text.includes(inviteUrl));
+  assert.match(zhRendered.text, /7 天内有效/);
+  assert.match(zhRendered.text, /关闭 VPN/);
+  assert.match(zhRendered.text, /8 位以上密码/);
+  assert.match(zhRendered.text, /添加到主屏幕/);
+  assert.match(zhRendered.text, /我的 → 意见反馈/);
+  assert.doesNotMatch(zhRendered.html, /<(img|svg|script|iframe|form|style)\b/i);
+  assert.equal([...zhRendered.html.matchAll(/<a\b[^>]*\bhref="https?:\/\/[^"]*"/gi)].length, 1);
+
+  const enRendered = renderEmail({ kind: "invite", url: inviteUrl, lang: "en", replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(enRendered.lang, "en");
+  assert.equal(enRendered.subject, "Lean Ritual · Your beta invitation");
+  assert.ok(enRendered.text.includes(inviteUrl));
+  assert.match(enRendered.text, /7 days/);
+  assert.match(enRendered.text, /Mainland China/);
+  assert.match(enRendered.text, /8\+ character password/);
+  assert.match(enRendered.text, /Add to Home Screen/);
+  assert.match(enRendered.text, /Me → Send feedback/);
+  assert.doesNotMatch(enRendered.subject, CJK_RE);
+  assert.doesNotMatch(enRendered.text, CJK_RE);
+  assert.doesNotMatch(enRendered.html, CJK_RE);
+  assert.doesNotMatch(enRendered.html, /<(img|svg|script|iframe|form|style)\b/i);
+  assert.equal([...enRendered.html.matchAll(/<a\b[^>]*\bhref="https?:\/\/[^"]*"/gi)].length, 1);
+  for (const foundUrl of [...extractHttpUrls(enRendered.text), ...extractHttpUrls(enRendered.html)]) {
+    assert.equal(new URL(foundUrl).hostname, "leanritual.app");
+  }
+
+  // 2. SMTP stream transport verifies multipart/alternative MIME headers, Reply-To, Message-ID, and metadata-only log
+  const logs = [];
+  const streamTransport = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  const mailer = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    transport: streamTransport,
+    log: line => logs.push(line),
+  });
+  const info = await mailer.sendInvitationEmail({ to: secretEmail, url: inviteUrl, lang: "zh" });
+  const raw = info.message.toString("utf8");
+  assert.match(raw, /^From: Lean Ritual <noreply@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Reply-To: Lean Ritual Support <support@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Message-ID: <[0-9a-f-]+@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Content-Type: multipart\/alternative;/m);
+  assert.match(raw, /^Content-Type: text\/plain; charset=utf-8\r?$/m);
+  assert.match(raw, /^Content-Type: text\/html; charset=utf-8\r?$/m);
+  assert.doesNotMatch(raw, /^List-Unsubscribe:/im);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^mail status=sent type=invite recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none$/);
+  assert.ok(!logs[0].includes("beta.applicant"));
+  assert.ok(!logs[0].includes(secretEmail));
+  assert.ok(!logs[0].includes(secretToken));
+  assert.ok(!logs[0].includes("https://"));
+
+  // 3. Origin validation & invalid recipient fail closed without invoking transport and without leaking secrets
+  let sendCalls = 0;
+  const errLogs = [];
+  const guardedMailer = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    transport: { async sendMail() { sendCalls++; return { response: "250 OK" }; } },
+    log: line => errLogs.push(line),
+  });
+  await assert.rejects(
+    () => guardedMailer.sendInvitationEmail({ to: secretEmail, url: "https://evil.example/login.html?invite=abc", lang: "en" }),
+    err => err.code === "INVALID_ACTION_URL" && !err.message.includes("evil.example") && !err.message.includes(secretEmail)
+  );
+  await assert.rejects(
+    () => guardedMailer.sendInvitationEmail({ to: "not-an-email", url: inviteUrl, lang: "en" }),
+    err => err.code === "INVALID_RECIPIENT" && !err.message.includes("not-an-email")
+  );
+  assert.equal(sendCalls, 0);
+  assert.equal(errLogs.length, 2);
+  assert.match(errLogs[0], /^mail status=error type=invite recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none error_code=INVALID_ACTION_URL$/);
+  assert.match(errLogs[1], /^mail status=error type=invite recipient_domain=unknown message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none error_code=INVALID_RECIPIENT$/);
+
+  // 4. File mode (localhost dev) writes private 0600 JSON with rendered invite content
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-invite-mail-file-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const fileMailer = createMailer({ MAIL_MODE: "file" }, { dataDir, baseURL: "http://127.0.0.1:8080" });
+  const localInviteUrl = "http://127.0.0.1:8080/login.html?invite=local_tok_1&email=dev%40example.com";
+  await fileMailer.sendInvitationEmail({ to: "dev@example.com", url: localInviteUrl, lang: "en" });
+  const files = readMailFiles(dataDir);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].kind, "invite");
+  assert.equal(files[0].lang, "en");
+  assert.equal(files[0].url, localInviteUrl);
+  assert.match(files[0].subject, /Your beta invitation/);
+});

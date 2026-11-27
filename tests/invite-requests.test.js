@@ -20,8 +20,14 @@ const {
   pruneInviteRequestData,
   formatAlertBody,
   sendInviteRequestAlert,
-  createInviteRequests
+  createInviteRequests,
+  parseSystemdEnvFile,
+  loadEnvFile,
+  countBetaSpots,
+  fulfillInviteRequests
 } = require("../lib/invite-requests");
+const { createInvitations } = require("../lib/invitations");
+const { createMailer } = require("../lib/mail");
 const { createSnapshot, restoreSnapshot } = require("../lib/snapshots");
 const { readLedger, validateLedger } = require("../lib/deletion-ledger");
 const { collectDailySummary, formatSummaryText } = require("../lib/daily-summary");
@@ -830,6 +836,7 @@ test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts,
     "values above `90` are clamped to `90`",
     "[invite-request] #id (phone|email, zh|en)",
     "invite_request_deletions",
+    "invite-requests-admin.js fulfill-pending",
     "invite-requests-admin.js delete",
     "invite-requests-admin.js prune",
     "deletions-live.json",
@@ -838,4 +845,328 @@ test("privacy.html and docs/OPERATIONS.md accurately cover metadata-only alerts,
   ]) {
     assert.ok(ops.includes(term), `docs/OPERATIONS.md missing term: ${term}`);
   }
+});
+
+test("systemd --env-file parser handles MAIL_FROM=<...>, quotes, comments, and process.env precedence without shell eval", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-envfile-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const parsed = parseSystemdEnvFile([
+    "# Systemd EnvironmentFile example",
+    "; semicolon comment",
+    "",
+    "DATA_DIR=/var/lib/bojin",
+    "MAIL_MODE=smtp",
+    "MAIL_FROM=Lean Ritual <noreply@leanritual.app>",
+    'MAIL_REPLY_TO="Lean Ritual Support <support@leanritual.app>"',
+    "SMTP_PASS=re_secret#with#hashes$and$(not_evaled)",
+    "SINGLE_QUOTED='literal \\n value <keep>'",
+    'ESCAPED_TRAIL="foo\\\\"',
+    "CONTINUED=hello\\",
+    "world"
+  ].join("\n"));
+
+  assert.equal(parsed.DATA_DIR, "/var/lib/bojin");
+  assert.equal(parsed.MAIL_MODE, "smtp");
+  assert.equal(parsed.MAIL_FROM, "Lean Ritual <noreply@leanritual.app>");
+  assert.equal(parsed.MAIL_REPLY_TO, "Lean Ritual Support <support@leanritual.app>");
+  assert.equal(parsed.SMTP_PASS, "re_secret#with#hashes$and$(not_evaled)");
+  assert.equal(parsed.SINGLE_QUOTED, "literal \\n value <keep>");
+  assert.equal(parsed.ESCAPED_TRAIL, "foo\\");
+  assert.equal(parsed.CONTINUED, "helloworld");
+
+  const envPath = path.join(dir, "environment");
+  fs.writeFileSync(envPath, "DATA_DIR=/from/envfile\nMAIL_FROM=Lean Ritual <noreply@leanritual.app>\nAUTH_BASE_URL=https://leanritual.app\n");
+  const merged = loadEnvFile(envPath, { DATA_DIR: "/override/from/process" });
+  assert.equal(merged.DATA_DIR, "/override/from/process", "existing process.env must win over --env-file");
+  assert.equal(merged.MAIL_FROM, "Lean Ritual <noreply@leanritual.app>");
+  assert.equal(merged.AUTH_BASE_URL, "https://leanritual.app");
+
+  assert.throws(() => parseSystemdEnvFile("BAD LINE WITHOUT EQUALS"), /Invalid env-file syntax at line 1/);
+  assert.throws(() => parseSystemdEnvFile("1INVALID_KEY=value"), /Invalid environment variable name at line 1/);
+  assert.throws(() => loadEnvFile(path.join(dir, "missing.env"), {}), /Failed to read --env-file/);
+});
+
+test("fulfillInviteRequests: auto-emails zh/en requests, rolls back on SMTP failure, enforces 50-spot cap, and keeps phone rows pending with zero PII", async () => {
+  const bojinDb = openMemoryDb();
+  const authDb = openMemoryDb();
+  let nowMs = Date.parse("2026-11-27T12:00:00.000Z");
+
+  authDb.exec(`
+    CREATE TABLE "user" (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      emailVerified INTEGER NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+  `);
+  const insertUser = authDb.prepare('INSERT INTO "user" (id, email, emailVerified, createdAt) VALUES (?, ?, 1, ?)');
+  // Seed 47 existing registered users
+  for (let i = 1; i <= 47; i++) {
+    insertUser.run(`u_seed_${i}`, `seed${i}@example.com`, "2026-11-20T00:00:00.000Z");
+  }
+  const invitations = createInvitations(authDb);
+  // Seed 1 active unused invite (total 48 spots used), 1 expired unused invite (must NOT count), 1 revoked invite (must NOT count)
+  invitations.issue("active-unused@example.com", { expiresInDays: 7 });
+  const toRevoke = invitations.issue("revoked-only@example.com", { expiresInDays: 7 });
+  invitations.revoke(toRevoke.token);
+  authDb.prepare(
+    "INSERT INTO launch_invites(tokenHash, email, phone, userId, expires, consumed, revoked) VALUES (?, ?, NULL, ?, ?, NULL, 0)"
+  ).run("expired_hash_1", "expired@example.com", "u_expired_1", nowMs - 1000);
+
+  assert.deepEqual(countBetaSpots(authDb, { nowMs }), {
+    registeredUsers: 47,
+    activeUnusedInvites: 1,
+    expiredUnusedInvites: 1,
+    spotsUsed: 48
+  });
+
+  const svc = createInviteRequests(bojinDb, { now: () => nowMs });
+  const rPhone = await svc.submit({
+    name: "张保密",
+    contactKind: "phone",
+    contactValue: "13800138999",
+    goal: "Private phone goal",
+    lang: "zh"
+  }, { ip: "198.51.100.1" });
+  nowMs += 1000;
+  const rEmail1 = await svc.submit({
+    name: "林保密",
+    contactKind: "email",
+    contactValue: "first.secret@163.com",
+    goal: "减脂增肌",
+    lang: "zh"
+  }, { ip: "198.51.100.2" });
+  nowMs += 1000;
+  const rEmail2 = await svc.submit({
+    name: "Alex Secret",
+    contactKind: "email",
+    contactValue: "second.secret@example.com",
+    goal: "Lean bulk",
+    lang: "en"
+  }, { ip: "198.51.100.3" });
+  nowMs += 1000;
+  const rEmail3 = await svc.submit({
+    name: "Third OverCap",
+    contactKind: "email",
+    contactValue: "third.overcap@example.com",
+    goal: "Waitlist over 50 cap",
+    lang: "en"
+  }, { ip: "198.51.100.4" });
+
+  // 1. Mock SMTP transport fails on second.secret@example.com first -> verify rollback!
+  const sentMessages = [];
+  const mailLogs = [];
+  let failSecondOnce = true;
+  const smtpEnv = {
+    MAIL_MODE: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "465",
+    SMTP_USER: "resend",
+    SMTP_PASS: "re_test_key",
+    MAIL_FROM: "Lean Ritual <noreply@leanritual.app>"
+  };
+  const mailer = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    log: line => mailLogs.push(line),
+    transport: {
+      async sendMail(opts) {
+        if (failSecondOnce && opts.to === "second.secret@example.com") {
+          failSecondOnce = false;
+          const err = new Error(`550 Temporary reject for ${opts.to}`);
+          err.code = "EENVELOPE";
+          err.responseCode = 550;
+          throw err;
+        }
+        sentMessages.push(opts);
+        return { response: "250 OK" };
+      }
+    }
+  });
+
+  // Cap is 50; 48 spots used -> rEmail1 succeeds (49), rEmail2 fails SMTP and rolls back (still 49!), rEmail3 succeeds (50)
+  const run1 = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    mailer,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs
+  });
+
+  assert.equal(run1.ok, false, "partial SMTP failure marks ok=false while reporting metadata");
+  assert.equal(run1.spotsUsed, 50);
+  assert.equal(run1.maxSpots, 50);
+  assert.equal(run1.capReached, true);
+  assert.equal(run1.emailedCount, 2);
+  assert.deepEqual(run1.emailedIds, [rEmail1.id, rEmail3.id]);
+  assert.equal(run1.failedCount, 1);
+  assert.deepEqual(run1.failedIds, [{ id: rEmail2.id, code: "EENVELOPE" }]);
+  assert.equal(run1.phonePendingCount, 1);
+  assert.deepEqual(run1.phonePendingIds, [rPhone.id]);
+
+  // Verify rollback: second.secret@example.com row stayed pending AND its launch_invites token was revoked!
+  const row2AfterFail = bojinDb.prepare("SELECT status, status_note FROM invite_requests WHERE id = ?").get(rEmail2.id);
+  assert.equal(row2AfterFail.status, "pending");
+  assert.equal(row2AfterFail.status_note, "");
+  const inv2Rows = authDb.prepare("SELECT revoked, consumed FROM launch_invites WHERE email = ?").all("second.secret@example.com");
+  assert.equal(inv2Rows.length, 1);
+  assert.equal(inv2Rows[0].revoked, 1, "failed SMTP delivery must revoke the newly issued invite token");
+  assert.equal(inv2Rows[0].consumed, null);
+
+  // Verify succeeded rows marked invited with auto-emailed note and localized emails sent
+  const row1After = bojinDb.prepare("SELECT status, status_note FROM invite_requests WHERE id = ?").get(rEmail1.id);
+  assert.equal(row1After.status, "invited");
+  assert.equal(row1After.status_note, "auto-emailed invite");
+  assert.equal(sentMessages.length, 2);
+  assert.equal(sentMessages[0].to, "first.secret@163.com");
+  assert.match(sentMessages[0].subject, /内测邀请/);
+  assert.equal(sentMessages[1].to, "third.overcap@example.com");
+  assert.equal(sentMessages[1].subject, "Lean Ritual · Your beta invitation");
+
+  // Phone-only row remained untouched pending
+  assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(rPhone.id).status, "pending");
+
+  // 2. Now at 50/50 cap: next run MUST issue zero invites and leave rEmail2 pending!
+  const runAtCap = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    mailer,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs
+  });
+  assert.equal(runAtCap.ok, true);
+  assert.equal(runAtCap.capReached, true);
+  assert.equal(runAtCap.spotsUsed, 50);
+  assert.equal(runAtCap.maxSpots, 50);
+  assert.equal(runAtCap.emailedCount, 0);
+  assert.deepEqual(runAtCap.emailedIds, []);
+  assert.equal(runAtCap.phonePendingCount, 1);
+  assert.deepEqual(runAtCap.phonePendingIds, [rPhone.id]);
+  assert.equal(sentMessages.length, 2, "must not send any email when cap is reached");
+
+  // 3. Raising cap to 51 lets the retried rEmail2 succeed cleanly via single-row fulfill!
+  const retryOne = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    mailer,
+    baseURL: "https://leanritual.app",
+    maxSpots: 51,
+    targetId: rEmail2.id,
+    now: () => nowMs
+  });
+  assert.equal(retryOne.ok, true);
+  assert.equal(retryOne.spotsUsed, 51);
+  assert.equal(retryOne.emailedCount, 1);
+  assert.deepEqual(retryOne.emailedIds, [rEmail2.id]);
+  assert.equal(bojinDb.prepare("SELECT status, status_note FROM invite_requests WHERE id = ?").get(rEmail2.id).status, "invited");
+
+  // 4. Single-row fulfill rejects phone-only and already-invited rows
+  await assert.rejects(
+    () => fulfillInviteRequests({ bojinDb, authDb, mailer, baseURL: "https://leanritual.app", maxSpots: 60, targetId: rPhone.id }),
+    /phone-only/
+  );
+  await assert.rejects(
+    () => fulfillInviteRequests({ bojinDb, authDb, mailer, baseURL: "https://leanritual.app", maxSpots: 60, targetId: rEmail2.id }),
+    /not pending/
+  );
+
+  // 5. Strict zero-PII check across outputs & mail logs
+  const combined = JSON.stringify([run1, runAtCap, retryOne]) + "\n" + mailLogs.join("\n");
+  for (const leak of ["first.secret@163.com", "second.secret@example.com", "third.overcap@example.com", "13800138999", "张保密", "林保密", "invite="]) {
+    assert.ok(!combined.includes(leak), `fulfill metadata/logs leaked ${leak}`);
+  }
+
+  bojinDb.close();
+  authDb.close();
+});
+
+test("CLI scripts/invite-requests-admin.js fulfill-pending & fulfill with --env-file emit metadata-only JSON and issue claimable invite links", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-fulfill-cli-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dataDir = path.join(dir, "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  const bojinDb = new DatabaseSync(path.join(dataDir, "bojin.db"));
+  const svc = createInviteRequests(bojinDb);
+  const rEmail = await svc.submit({
+    name: "CLI Tester",
+    contactKind: "email",
+    contactValue: "cli.tester@example.com",
+    goal: "Cut 4kg",
+    lang: "en"
+  }, { ip: "198.51.100.55" });
+  const rPhone = await svc.submit({
+    name: "CLI Phone",
+    contactKind: "phone",
+    contactValue: "13900139000",
+    goal: "Build lean muscle",
+    lang: "zh"
+  }, { ip: "198.51.100.56" });
+  bojinDb.close();
+
+  // Write a systemd-style env file with MAIL_FROM containing <...> and a different DATA_DIR to test precedence
+  const envFile = path.join(dir, "bojin.environment");
+  fs.writeFileSync(envFile, [
+    "# production-style systemd EnvironmentFile",
+    "DATA_DIR=/nonexistent/must-be-overridden-by-process-env",
+    "MAIL_MODE=file",
+    "MAIL_FROM=Lean Ritual <noreply@leanritual.app>",
+    "AUTH_BASE_URL=http://127.0.0.1:8080"
+  ].join("\n"));
+
+  const runCli = (args) => spawnSync(
+    process.execPath,
+    [path.join(ROOT, "scripts/invite-requests-admin.js"), ...args],
+    {
+      cwd: ROOT,
+      env: { PATH: process.env.PATH, DATA_DIR: dataDir },
+      encoding: "utf8",
+      timeout: 10000
+    }
+  );
+
+  const res = runCli(["fulfill-pending", "--env-file", envFile, "--max-spots", "50", "--json"]);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out, {
+    ok: true,
+    spotsUsed: 1,
+    maxSpots: 50,
+    capReached: false,
+    emailedCount: 1,
+    emailedIds: [rEmail.id],
+    failedCount: 0,
+    failedIds: [],
+    phonePendingCount: 1,
+    phonePendingIds: [rPhone.id]
+  });
+
+  // Zero PII or bearer tokens in CLI stdout/stderr
+  const cliText = res.stdout + "\n" + res.stderr;
+  for (const leak of ["cli.tester@example.com", "13900139000", "CLI Tester", "CLI Phone", "invite="]) {
+    assert.ok(!cliText.includes(leak), `CLI output leaked ${leak}`);
+  }
+
+  // Delivered mail file contains a valid single-use invite URL that claims cleanly in auth.sqlite!
+  const mailDir = path.join(dataDir, "mail");
+  const mailFiles = fs.readdirSync(mailDir).filter(f => f.endsWith(".json"));
+  assert.equal(mailFiles.length, 1);
+  const mail = JSON.parse(fs.readFileSync(path.join(mailDir, mailFiles[0]), "utf8"));
+  assert.equal(mail.kind, "invite");
+  assert.equal(mail.lang, "en");
+  assert.equal(mail.to, "cli.tester@example.com");
+  const parsedUrl = new URL(mail.url);
+  assert.equal(parsedUrl.origin, "http://127.0.0.1:8080");
+  assert.equal(parsedUrl.pathname, "/login.html");
+  assert.equal(parsedUrl.searchParams.get("email"), "cli.tester@example.com");
+  const token = parsedUrl.searchParams.get("invite");
+  assert.ok(token && token.length >= 32);
+
+  const authDb = new DatabaseSync(path.join(dataDir, "auth.sqlite"));
+  const inv = createInvitations(authDb);
+  const claimedUid = inv.claim(token, "cli.tester@example.com");
+  assert.match(claimedUid, /^u_/);
+  authDb.close();
 });

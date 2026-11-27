@@ -13,6 +13,7 @@ const {
   DEFAULT_AI_PRICING,
   createReportPseudonymizer,
   parsePricing,
+  parseBackupTimestampMs,
   sanitizeFeedbackExcerpt,
   parseJournalStream,
   collectDailySummary,
@@ -1295,4 +1296,322 @@ test("daily summary reports invite-request counts from snapshots and handles old
   for (const leak of ["SecretOne", "SecretTwo", "+8613800138999", "secret2@example.com", "Secret goal 1", "req_111111111111"]) {
     assert.ok(!combined.includes(leak), `daily-summary leaked invite request PII: ${leak}`);
   }
+});
+
+test("backup timestamps resolve strictly in UTC, resist China CST misparsing, fall back to UTC dir stamp, and flag genuine future clock skew", (t) => {
+  // 1. Strict parser unit checks
+  const expectedUtc = Date.parse("2026-11-24T04:01:15.000Z");
+  assert.equal(parseBackupTimestampMs("2026-11-24T04:01:15.000Z"), expectedUtc);
+  assert.equal(parseBackupTimestampMs("2026-11-24T12:01:15+08:00"), expectedUtc);
+  assert.equal(parseBackupTimestampMs("2026-11-24T12:01:15+0800"), expectedUtc);
+  assert.equal(parseBackupTimestampMs("Tue 2026-11-24 04:01:15 UTC"), expectedUtc);
+  assert.equal(parseBackupTimestampMs("20261124T040115Z"), expectedUtc);
+  assert.equal(parseBackupTimestampMs(`@${Math.floor(expectedUtc / 1000)}`), expectedUtc);
+
+  // Ambiguous timezone abbreviations (China CST = +08:00 vs US CST = -06:00) and naive strings MUST return null
+  assert.equal(parseBackupTimestampMs("Tue 2026-11-24 12:01:15 CST"), null);
+  assert.equal(parseBackupTimestampMs("Tue 2026-11-24 12:01:15 IST"), null);
+  assert.equal(parseBackupTimestampMs("2026-11-24T12:01:15"), null);
+  assert.equal(parseBackupTimestampMs("2026-11-24 12:01:15"), null);
+  assert.equal(parseBackupTimestampMs("2026-02-30T00:00:00Z"), null);
+
+  // 2. Host regression: systemctl receives TZ=UTC, and even if a host ignores --timestamp=utc and emits CST,
+  //    daily-summary never misparses CST as US Central Time (+14h in the future) or overwrites a sane snapshot!
+  const fx = createFixture(t, {
+    nowIso: "2026-11-24T10:00:00.000Z",
+    snapshotIso: "2026-11-24T04:01:15.000Z"
+  });
+  const seenSystemctlEnvs = [];
+  const chinaCstRunner = (cmd, args, opts) => {
+    if (cmd === "systemctl") {
+      seenSystemctlEnvs.push(opts?.env || null);
+      if (args.includes("bojin-backup.service")) {
+        // Reproduces systemd 249 on Asia/Shanghai host ignoring --timestamp=utc and emitting CST
+        return {
+          status: 0,
+          stdout: [
+            "LoadState=loaded",
+            "ActiveState=inactive",
+            "Result=success",
+            "ExecMainStatus=0",
+            "ExecMainExitTimestamp=Tue 2026-11-24 12:01:20 CST",
+            "InactiveEnterTimestamp=Tue 2026-11-24 12:01:20 CST"
+          ].join("\n"),
+          stderr: "",
+          error: null
+        };
+      }
+      if (args.includes("bojin-backup.timer")) {
+        return {
+          status: 0,
+          stdout: "LoadState=loaded\nLastTriggerUSec=Tue 2026-11-24 12:00:05 CST\n",
+          stderr: "",
+          error: null
+        };
+      }
+    }
+    return { status: 1, stdout: "", stderr: "", error: null };
+  };
+
+  const sCst = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    backupRoot: fx.backupRoot,
+    deployBackupRoot: fx.deployBackupRoot,
+    noJournal: true,
+    runCommand: chinaCstRunner
+  });
+  assert.ok(seenSystemctlEnvs.length >= 2);
+  assert.ok(seenSystemctlEnvs.every(e => e && e.TZ === "UTC"), "systemctl must be invoked with TZ=UTC");
+  assert.equal(sCst.backup.lastBackupAt, "2026-11-24T04:01:15.000Z");
+  assert.equal(sCst.backup.ageHours, 6.0);
+  assert.equal(sCst.backup.clockSkewFuture, false);
+  assert.equal(sCst.backup.timerLastTriggerAt, null);
+  assert.match(sCst.backup.note, /ambiguous timezone/i);
+
+  // 3. Manifest with explicit +08:00 offset resolves accurately to UTC; manifest with ambiguous CST falls back to dir UTC stamp
+  const tzRoot = path.join(fx.root, "tz-snaps");
+  const offsetSnap = path.join(tzRoot, "snapshot-20261124T040000Z");
+  fs.cpSync(fx.snapshotDir, offsetSnap, { recursive: true });
+  writeSnapshotManifest(offsetSnap, "2026-11-24T12:01:15+08:00", ["bojin.db", "auth.sqlite"]);
+  const sOffset = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    snapshotDir: offsetSnap,
+    noJournal: true,
+    noSystemd: true
+  });
+  assert.equal(sOffset.dataAsOf, "2026-11-24T04:01:15.000Z");
+  assert.equal(sOffset.dbSource.ageHours, 6.0);
+  assert.equal(sOffset.backup.lastBackupAt, "2026-11-24T04:01:15.000Z");
+  assert.equal(sOffset.backup.ageHours, 6.0);
+  assert.equal(sOffset.backup.clockSkewFuture, false);
+
+  const fallbackSnap = path.join(tzRoot, "snapshot-20261124T040000Z-fallback");
+  const namedFallbackSnap = path.join(fallbackSnap, "snapshot-20261124T040000Z");
+  fs.cpSync(fx.snapshotDir, namedFallbackSnap, { recursive: true });
+  writeSnapshotManifest(namedFallbackSnap, "Tue 2026-11-24 12:00:00 CST", ["bojin.db", "auth.sqlite"]);
+  const sFallback = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: fx.nowMs,
+    snapshotDir: namedFallbackSnap,
+    noJournal: true,
+    noSystemd: true
+  });
+  assert.equal(sFallback.dataAsOf, "2026-11-24T04:00:00.000Z");
+  assert.equal(sFallback.backup.lastBackupAt, "2026-11-24T04:00:00.000Z");
+  assert.equal(sFallback.backup.ageHours, 6.0);
+
+  // 4. Genuine future clock skew (now < backupTs) is flagged explicitly in JSON and text output
+  const sSkew = collectDailySummary({
+    dataDir: fx.dataDir,
+    nowMs: Date.parse("2026-11-24T03:31:15.000Z"), // 30 minutes BEFORE snapshotIso 04:01:15Z
+    snapshotDir: fx.snapshotDir,
+    noJournal: true,
+    noSystemd: true
+  });
+  assert.equal(sSkew.dbSource.clockSkewFuture, true);
+  assert.equal(sSkew.dbSource.futureSkewHours, 0.5);
+  assert.equal(sSkew.backup.clockSkewFuture, true);
+  assert.equal(sSkew.backup.futureSkewHours, 0.5);
+  assert.match(sSkew.backup.note, /clock skew/i);
+  const skewText = formatSummaryText(sSkew);
+  assert.match(skewText, /时钟超前 0\.5 小时 \(future clock skew\)/);
+  assert.doesNotMatch(skewText, /约 -0\.5 小时前/);
+});
+
+test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacity across full, TRIAL_START-filtered, and legacy snapshots", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-summary-cohort-"));
+  const dataDir = path.join(root, "data");
+  const snapDir = path.join(root, "snapshot-20261124T040000Z");
+  fs.mkdirSync(path.join(dataDir, "blobs"), { recursive: true });
+  fs.mkdirSync(snapDir, { recursive: true });
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const snapIso = "2026-11-24T04:00:00.000Z";
+  const snapMs = Date.parse(snapIso);
+  const nowMs = Date.parse("2026-11-24T10:00:00.000Z");
+  const daysAgo = (d) => new Date(snapMs - d * 24 * 3600 * 1000).toISOString();
+  const daysAgoMs = (d) => snapMs - d * 24 * 3600 * 1000;
+
+  const authDb = new DatabaseSync(path.join(snapDir, "auth.sqlite"));
+  authDb.exec(`
+    PRAGMA journal_mode = DELETE;
+    CREATE TABLE "user" (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      emailVerified INTEGER NOT NULL,
+      phoneNumber TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+    CREATE TABLE launch_invites (
+      tokenHash TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      phone TEXT,
+      userId TEXT NOT NULL,
+      expires INTEGER NOT NULL,
+      consumed INTEGER,
+      revoked INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+
+  const insUser = authDb.prepare('INSERT INTO "user" (id, name, email, emailVerified, phoneNumber, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const insInv = authDb.prepare("INSERT INTO launch_invites (tokenHash, email, phone, userId, expires, consumed, revoked) VALUES (?, ?, ?, ?, ?, ?, ?)");
+
+  // u1 (14d ago, verified email): profile + active day 1 & day 10 (4d ago) -> eligible 7d+, RETAINED, activeLast7d
+  insUser.run("u_cohort_1", "UserOne", "u1@secret.example", 1, null, daysAgo(14), daysAgo(14));
+  insInv.run("h1_old_reissue", "u1@secret.example", null, "u_cohort_1", daysAgoMs(7), null, 1); // reissued old revoked row -> same userId, must not double-count!
+  insInv.run("h1_consumed", "u1@secret.example", null, "u_cohort_1", daysAgoMs(7), daysAgoMs(14), 0);
+
+  // u2 (14d ago, verified phone): profile + active ONLY on day 4 (10d ago) -> eligible 7d+, NOT retained, NOT activeLast7d
+  insUser.run("u_cohort_2", "UserTwo", "phone-u2@phone.leanritual.invalid", 0, "+8613800138002", daysAgo(14), daysAgo(14));
+  insInv.run("h2_consumed", "", "+8613800138002", "u_cohort_2", daysAgoMs(7), daysAgoMs(14), 0);
+
+  // u3 (10d ago, verified email): profile + active on day 8 (2d ago) -> eligible 7d+, RETAINED, activeLast7d
+  insUser.run("u_cohort_3", "UserThree", "u3@secret.example", 1, null, daysAgo(10), daysAgo(10));
+  insInv.run("h3_consumed", "u3@secret.example", null, "u_cohort_3", daysAgoMs(3), daysAgoMs(10), 0);
+
+  // u4 (8d ago, verified email): profile ONLY, empty check-in / undone workout (no real activity) -> eligible 7d+, NOT logged, NOT retained
+  insUser.run("u_cohort_4", "UserFour", "u4@secret.example", 1, null, daysAgo(8), daysAgo(8));
+  insInv.run("h4_consumed", "u4@secret.example", null, "u_cohort_4", daysAgoMs(1), daysAgoMs(8), 0);
+
+  // u5 (3d ago, verified email): profile + meal 1d ago -> NOT eligible 7d+, loggedFirstActivity, activeLast7d
+  insUser.run("u_cohort_5", "UserFive", "u5@secret.example", 1, null, daysAgo(3), daysAgo(3));
+  insInv.run("h5_consumed", "u5@secret.example", null, "u_cohort_5", snapMs + 4 * 864e5, daysAgoMs(3), 0);
+
+  // u6 (2d ago, UNVERIFIED email): registered row exists (counts in capacity & invitedTotal), NOT in verified registeredUsers
+  insUser.run("u_cohort_6", "UserSix", "u6@secret.example", 0, null, daysAgo(2), daysAgo(2));
+  insInv.run("h6_consumed", "u6@secret.example", null, "u_cohort_6", snapMs + 5 * 864e5, daysAgoMs(2), 0);
+
+  // 2 active unused invites + 1 expired unused invite + 1 revoked-only invite (must NOT count in capacity or invitedTotal)
+  insInv.run("h_active_1", "pending1@secret.example", null, "u_inv_active_1", snapMs + 3 * 864e5, null, 0);
+  insInv.run("h_active_2", "", "+8613900139009", "u_inv_active_2", snapMs + 5 * 864e5, null, 0);
+  insInv.run("h_expired_1", "expired1@secret.example", null, "u_inv_expired_1", snapMs - 2 * 864e5, null, 0);
+  insInv.run("h_revoked_only", "revoked1@secret.example", null, "u_inv_revoked_only", snapMs + 5 * 864e5, null, 1);
+  authDb.close();
+
+  const bojinDb = new DatabaseSync(path.join(snapDir, "bojin.db"));
+  bojinDb.exec(`
+    PRAGMA journal_mode = DELETE;
+    CREATE TABLE docs (path TEXT PRIMARY KEY, uid TEXT NOT NULL, parent TEXT NOT NULL, data TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE blobs (id TEXT PRIMARY KEY, uid TEXT NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created TEXT NOT NULL);
+    CREATE TABLE invite_requests (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, contact_kind TEXT NOT NULL, contact_value TEXT NOT NULL,
+      goal TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', lang TEXT NOT NULL DEFAULT 'zh',
+      status TEXT NOT NULL DEFAULT 'pending', status_note TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL
+    );
+  `);
+  const putDoc = bojinDb.prepare("INSERT INTO docs (path, uid, parent, data, updated) VALUES (?, ?, ?, ?, ?)");
+  for (const uid of ["u_cohort_1", "u_cohort_2", "u_cohort_3", "u_cohort_4", "u_cohort_5"]) {
+    putDoc.run(`data/users/${uid}/app/app/profile`, uid, `data/users/${uid}/app/app`, JSON.stringify({ weight: 70 }), daysAgo(1));
+  }
+  // u1: day 1 checkin + day 10 workout (4d ago)
+  putDoc.run("data/users/u_cohort_1/app/days/2026-11-11", "u_cohort_1", "data/users/u_cohort_1/app/days",
+    JSON.stringify({ checkin: { weight: 70.5, savedAt: daysAgo(13) } }), daysAgo(13));
+  putDoc.run("data/users/u_cohort_1/app/days/2026-11-20", "u_cohort_1", "data/users/u_cohort_1/app/days",
+    JSON.stringify({ workout: { done: true, savedAt: daysAgo(4) } }), daysAgo(4));
+  // u2: day 4 checkin ONLY (10d ago)
+  putDoc.run("data/users/u_cohort_2/app/days/2026-11-14", "u_cohort_2", "data/users/u_cohort_2/app/days",
+    JSON.stringify({ checkin: { sleep: 7.5, savedAt: daysAgo(10) } }), daysAgo(10));
+  // u3: day 8 meal (2d ago)
+  putDoc.run("data/users/u_cohort_3/app/days/2026-11-22", "u_cohort_3", "data/users/u_cohort_3/app/days",
+    JSON.stringify({ meals: [{ id: "m1", createdAt: daysAgo(2) }] }), daysAgo(2));
+  // u4: empty checkin + undone workout (must NOT count as logged activity!)
+  putDoc.run("data/users/u_cohort_4/app/days/2026-11-22", "u_cohort_4", "data/users/u_cohort_4/app/days",
+    JSON.stringify({ checkin: { weight: null, steps: "" }, workout: { done: false }, meals: [] }), daysAgo(2));
+  // u5: meal 1d ago
+  putDoc.run("data/users/u_cohort_5/app/days/2026-11-23", "u_cohort_5", "data/users/u_cohort_5/app/days",
+    JSON.stringify({ meals: [{ id: "m2", createdAt: daysAgo(1) }] }), daysAgo(1));
+
+  bojinDb.prepare(
+    "INSERT INTO invite_requests (id, name, contact_kind, contact_value, goal, lang, status, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run("req_pending_a", "WaiterA", "email", "waiter@secret.example", "Goal", "zh", "pending", daysAgo(1), daysAgo(1));
+  bojinDb.close();
+
+  writeSnapshotManifest(snapDir, snapIso, ["bojin.db", "auth.sqlite"]);
+
+  // 1. All-time snapshot cohort funnel
+  const s = collectDailySummary({
+    dataDir,
+    nowMs,
+    snapshotDir: snapDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(s.cohortFunnel.snapshotAvailable, true);
+  assert.equal(s.cohortFunnel.authDbPresent, true);
+  assert.equal(s.cohortFunnel.invitesTablePresent, true);
+  assert.deepEqual(s.cohortFunnel.capacity, {
+    maxSpots: 50,
+    spotsUsed: 8, // 6 users + 2 active unused invites
+    spotsRemaining: 42,
+    registeredUsers: 6,
+    activeUnusedInvites: 2,
+    expiredUnusedInvites: 1,
+    pendingInviteRequests: 1
+  });
+  assert.deepEqual(s.cohortFunnel.funnel, {
+    invitedTotal: 9, // 6 users + 2 active unused + 1 expired unused (revoked-only excluded, reissue deduplicated)
+    registeredUsers: 5, // u1..u5 verified (u6 unverified excluded)
+    completedProfileSetup: 5, // u1..u5
+    loggedFirstActivity: 4, // u1, u2, u3, u5 (u4 had only empty checkin/undone workout)
+    activeLast7d: 3, // u1 (4d ago), u3 (2d ago), u5 (1d ago)
+    retainedDay7Plus: {
+      eligibleUsersCreated7dAgo: 4, // u1 (14d), u2 (14d), u3 (10d), u4 (8d)
+      activeOnOrAfterDay7: 2, // u1, u3
+      retentionRatePct: 50
+    }
+  });
+
+  const text = formatSummaryText(s);
+  assert.match(text, /\[7日内测留存漏斗 \/ Beta Cohort Funnel & Capacity\]/);
+  assert.match(text, /内测名额 \(Capacity\): 8 \/ 50 \(已注册 6, 有效未使用邀请 2, 已过期未使用邀请 1, 待处理申请 1\)/);
+  assert.match(text, /第 7 天\+留存 \(Retained Day 7\+\): 2 \/ 4 \(50\.0%\)/);
+
+  // Strict zero-PII check
+  const combined = JSON.stringify(s) + "\n" + text;
+  for (const leak of [
+    "u_cohort_1", "u_inv_active_1", "u1@secret.example", "pending1@secret.example",
+    "+8613800138002", "+8613900139009", "waiter@secret.example", "req_pending_a"
+  ]) {
+    assert.ok(!combined.includes(leak), `cohort funnel leaked PII: ${leak}`);
+  }
+
+  // 2. With TRIAL_START = 12 days ago: u1 and u2 (14d ago) excluded from funnel, while Capacity remains 8/50
+  const sFiltered = collectDailySummary({
+    dataDir,
+    nowMs,
+    sinceMs: daysAgoMs(12),
+    snapshotDir: snapDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(sFiltered.cohortFunnel.capacity.spotsUsed, 8);
+  assert.equal(sFiltered.cohortFunnel.funnel.registeredUsers, 3); // u3, u4, u5
+  assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.eligibleUsersCreated7dAgo, 2); // u3, u4
+  assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.activeOnOrAfterDay7, 1); // u3
+  assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.retentionRatePct, 50);
+
+  // 3. Legacy snapshot without auth.sqlite degrades gracefully
+  const legacyDir = path.join(root, "legacy-no-auth");
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.copyFileSync(path.join(snapDir, "bojin.db"), path.join(legacyDir, "bojin.db"));
+  writeSnapshotManifest(legacyDir, snapIso, ["bojin.db"]);
+  const sLegacy = collectDailySummary({
+    dataDir,
+    nowMs,
+    snapshotDir: legacyDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(sLegacy.cohortFunnel.snapshotAvailable, true);
+  assert.equal(sLegacy.cohortFunnel.authDbPresent, false);
+  assert.equal(sLegacy.cohortFunnel.funnel, null);
+  assert.equal(sLegacy.cohortFunnel.capacity.spotsUsed, null);
+  assert.equal(sLegacy.cohortFunnel.capacity.pendingInviteRequests, 1);
 });

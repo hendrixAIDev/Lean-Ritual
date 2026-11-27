@@ -5,26 +5,34 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { normalizeEmail } = require("../lib/invitations");
 const { normalizePhone } = require("../lib/phone");
+const { createMailer } = require("../lib/mail");
 const {
   ALLOWED_STATUSES,
   DEFAULT_RETENTION_DAYS,
   MAX_RETENTION_DAYS,
+  DEFAULT_MAX_BETA_SPOTS,
+  MAX_BETA_SPOTS_LIMIT,
   inviteRequestOptions,
   sanitizeStatusNote,
-  pruneInviteRequestData
+  pruneInviteRequestData,
+  loadEnvFile,
+  countBetaSpots,
+  fulfillInviteRequests
 } = require("../lib/invite-requests");
 
 const USAGE = [
   "Usage: node scripts/invite-requests-admin.js",
-  "  [list [--status pending|invited|dismissed|all] [--limit N] [--json]]",
-  "  | show <id> [--json]",
-  "  | mark <id> --status invited|dismissed|pending [--note <short-reason>] [--json]",
-  "  | delete (<id> | --contact <email-or-phone>) [--json]",
-  "  | prune [--days N] [--json]"
+  "  [list [--status pending|invited|dismissed|all] [--limit N] [--env-file <path>] [--json]]",
+  "  | show <id> [--env-file <path>] [--json]",
+  "  | mark <id> --status invited|dismissed|pending [--note <short-reason>] [--env-file <path>] [--json]",
+  "  | fulfill <id> [--env-file <path>] [--max-spots N] [--json]",
+  "  | fulfill-pending [--env-file <path>] [--max-spots N] [--json]",
+  "  | delete (<id> | --contact <email-or-phone>) [--env-file <path>] [--json]",
+  "  | prune [--days N] [--env-file <path>] [--json]"
 ].join(" ");
 
 const LIST_STATUSES = new Set(["pending", "invited", "dismissed", "all"]);
-const COMMANDS = new Set(["list", "show", "mark", "delete", "prune"]);
+const COMMANDS = new Set(["list", "show", "mark", "fulfill", "fulfill-pending", "delete", "prune"]);
 
 function parseContactTarget(raw) {
   if (typeof raw !== "string" || !raw.trim()) {
@@ -44,7 +52,7 @@ function parseContactTarget(raw) {
   return { contactKind: "phone", contactValue: phone };
 }
 
-function parseArgs(argv, env = process.env) {
+function parseArgs(argv) {
   let command = "list";
   let targetId = null;
   let contact = null;
@@ -52,13 +60,15 @@ function parseArgs(argv, env = process.env) {
   let days = null;
   let status = null;
   let note = undefined;
+  let maxSpots = DEFAULT_MAX_BETA_SPOTS;
+  let envFile = null;
   let json = false;
   let i = 0;
 
   if (argv[0] && COMMANDS.has(argv[0])) {
     command = argv[0];
     i = 1;
-    if (command === "show" || command === "mark") {
+    if (command === "show" || command === "mark" || command === "fulfill") {
       if (!argv[1] || argv[1].startsWith("-")) throw new Error(USAGE);
       targetId = argv[1];
       i = 2;
@@ -72,6 +82,20 @@ function parseArgs(argv, env = process.env) {
     const arg = argv[i];
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--env-file" || arg.startsWith("--env-file=")) {
+      const raw = arg === "--env-file" ? argv[++i] : arg.slice("--env-file=".length);
+      if (typeof raw !== "string" || !raw.trim()) {
+        throw new Error("--env-file requires a file path");
+      }
+      envFile = raw;
+    } else if (arg === "--max-spots" || arg.startsWith("--max-spots=")) {
+      if (command !== "fulfill" && command !== "fulfill-pending") throw new Error(USAGE);
+      const raw = arg === "--max-spots" ? argv[++i] : arg.slice("--max-spots=".length);
+      const n = Number(raw);
+      if (!Number.isSafeInteger(n) || n < 1 || n > MAX_BETA_SPOTS_LIMIT) {
+        throw new Error(`--max-spots must be an integer between 1 and ${MAX_BETA_SPOTS_LIMIT}`);
+      }
+      maxSpots = n;
     } else if (arg === "--limit" || arg.startsWith("--limit=")) {
       if (command !== "list") throw new Error(USAGE);
       const raw = arg === "--limit" ? argv[++i] : arg.slice("--limit=".length);
@@ -122,14 +146,11 @@ function parseArgs(argv, env = process.env) {
       throw new Error("delete requires either <id> or --contact <email-or-phone>");
     }
   }
-  if (command === "prune" && days === null) {
-    days = inviteRequestOptions(env).retentionDays || DEFAULT_RETENTION_DAYS;
-  }
   if (command === "list" && !status) {
     status = "all";
   }
 
-  return { command, targetId, contact, limit, days, status, note, json };
+  return { command, targetId, contact, limit, days, status, note, maxSpots, envFile, json };
 }
 
 function hydrateRow(row) {
@@ -206,16 +227,59 @@ function formatShowText(item) {
   return lines.join("\n");
 }
 
+function formatFulfillText(res) {
+  const lines = [
+    `Spots:         ${res.spotsUsed} / ${res.maxSpots}${res.capReached ? " [CAP REACHED]" : ""}`,
+    `Emailed:       ${res.emailedCount}${res.emailedIds.length ? ` (${res.emailedIds.map(escapeTerminalText).join(", ")})` : ""}`,
+    `Failed:        ${res.failedCount}${res.failedIds && res.failedIds.length ? ` (${res.failedIds.map(f => `${escapeTerminalText(f.id)}:${escapeTerminalText(f.code)}`).join(", ")})` : ""}`,
+    `Phone pending: ${res.phonePendingCount}${res.phonePendingIds.length ? ` (${res.phonePendingIds.map(escapeTerminalText).join(", ")})` : ""}`
+  ];
+  return lines.join("\n");
+}
+
 const SELECT_COLS = "id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated";
 
-function main() {
-  const opts = parseArgs(process.argv.slice(2), process.env);
-  const dataDir = path.resolve(process.env.DATA_DIR || path.join(__dirname, "..", "data"));
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  const env = opts.envFile ? loadEnvFile(opts.envFile, process.env) : process.env;
+  if (opts.command === "prune" && opts.days === null) {
+    opts.days = inviteRequestOptions(env).retentionDays || DEFAULT_RETENTION_DAYS;
+  }
+  const dataDir = path.resolve(env.DATA_DIR || path.join(__dirname, "..", "data"));
   const dbPath = path.join(dataDir, "bojin.db");
+  const authDbPath = path.join(dataDir, "auth.sqlite");
 
   if (!fs.existsSync(dbPath)) {
-    if (opts.command === "show" || opts.command === "mark" || opts.command === "delete") {
+    if (opts.command === "show" || opts.command === "mark" || opts.command === "delete" || opts.command === "fulfill") {
       throw new Error(`Invite request not found: ${opts.targetId || "(matching contact)"}`);
+    }
+    if (opts.command === "fulfill-pending") {
+      let spotsUsed = 0;
+      if (fs.existsSync(authDbPath)) {
+        const release = require("../lib/data-access").shared(dataDir);
+        const authDb = new DatabaseSync(authDbPath, { readOnly: true });
+        try {
+          authDb.exec("PRAGMA busy_timeout = 5000");
+          spotsUsed = countBetaSpots(authDb).spotsUsed;
+        } finally {
+          authDb.close();
+          release();
+        }
+      }
+      const out = {
+        ok: true,
+        spotsUsed,
+        maxSpots: opts.maxSpots,
+        capReached: spotsUsed >= opts.maxSpots,
+        emailedCount: 0,
+        emailedIds: [],
+        failedCount: 0,
+        failedIds: [],
+        phonePendingCount: 0,
+        phonePendingIds: []
+      };
+      console.log(opts.json ? JSON.stringify(out, null, 2) : formatFulfillText(out));
+      return;
     }
     if (opts.command === "prune") {
       const out = { ok: true, deletedRequests: 0, deletedRateLimits: 0 };
@@ -228,8 +292,10 @@ function main() {
 
   const releaseDataAccess = require("../lib/data-access").shared(dataDir);
   process.once("exit", releaseDataAccess);
-  const isMutating = opts.command === "mark" || opts.command === "delete" || opts.command === "prune";
+  const isFulfill = opts.command === "fulfill" || opts.command === "fulfill-pending";
+  const isMutating = isFulfill || opts.command === "mark" || opts.command === "delete" || opts.command === "prune";
   const db = new DatabaseSync(dbPath, { readOnly: !isMutating });
+  let authDb = null;
   try {
     db.exec("PRAGMA busy_timeout = 5000");
     if (opts.command === "prune") {
@@ -240,6 +306,30 @@ function main() {
           ? JSON.stringify(out, null, 2)
           : `Pruned ${result.deletedRequests} expired invite request(s) and ${result.deletedRateLimits} expired rate-limit bucket(s) (cutoff ${result.cutoffIso}).`
       );
+      return;
+    }
+
+    if (isFulfill) {
+      authDb = new DatabaseSync(authDbPath);
+      authDb.exec("PRAGMA busy_timeout = 5000");
+      const baseURL = typeof env.AUTH_BASE_URL === "string" ? env.AUTH_BASE_URL.trim() : "";
+      const result = await fulfillInviteRequests({
+        bojinDb: db,
+        authDb,
+        baseURL,
+        maxSpots: opts.maxSpots,
+        targetId: opts.command === "fulfill" ? opts.targetId : null,
+        createMailerFn: () => createMailer(env, {
+          dataDir,
+          baseURL,
+          log: msg => console.error(msg),
+          warn: msg => console.error(msg)
+        })
+      });
+      console.log(opts.json ? JSON.stringify(result, null, 2) : formatFulfillText(result));
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
       return;
     }
 
@@ -335,14 +425,17 @@ function main() {
     const items = rows.map(hydrateRow);
     console.log(opts.json ? JSON.stringify(items, null, 2) : formatListText(items));
   } finally {
+    if (authDb) authDb.close();
     db.close();
     releaseDataAccess();
   }
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exitCode = 1;
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
 }
+
+module.exports = { parseArgs, formatFulfillText };
