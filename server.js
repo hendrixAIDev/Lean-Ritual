@@ -29,14 +29,19 @@ const CFG = {
   aiProvider: process.env.AI_PROVIDER,
   orKey: process.env.OPENROUTER_API_KEY || "",
   orBase: process.env.OPENROUTER_BASE || "https://openrouter.ai/api/v1",
-  orModel: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
+  orModel: process.env.OPENROUTER_MODEL || "google/gemini-3.8-flash",
   geminiKey: process.env.GEMINI_API_KEY || "",
   geminiBase: process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta/openai",
   geminiModel: process.env.GEMINI_MODEL || "gemini-3.8-flash",
   aiGlobalDaily: +(process.env.AI_GLOBAL_DAILY_LIMIT ?? 300),
   aiMaxTokens: +(process.env.AI_MAX_OUTPUT_TOKENS ?? 2000),
+  aiMaxConcurrent: process.env.AI_MAX_CONCURRENT,
   aiDaily: +(process.env.AI_DAILY_LIMIT ?? 60),            // 每人每天 AI 次数上限
+  aiUserMonthlyUsd: process.env.AI_USER_MONTHLY_USD,
+  aiGlobalMonthlyUsd: process.env.AI_GLOBAL_MONTHLY_USD,
+  aiPricing: require("./lib/ai-pricing").parsePricing(process.env),
   aiReasoningEffort: process.env.AI_REASONING_EFFORT,
+  alertUrl: typeof process.env.ALERT_URL === "string" ? process.env.ALERT_URL.trim() : "",
   cookieSecure: process.env.COOKIE_SECURE === "1",         // 走 HTTPS 时设为 1
   trustProxy: process.env.TRUST_PROXY === "1",             // 在 Caddy/Nginx 后面时设为 1，按 X-Forwarded-For 限流
 };
@@ -116,7 +121,8 @@ function putDoc(p, uid, data, write = docQuota.write){
 function mergeDoc(old, patch){ const o = { ...(old || {}) }; for (const [k, v] of Object.entries(patch || {})) { if (v && typeof v === "object" && v.__delete__ === true) delete o[k]; else o[k] = v; } return o; }
 
 /* ---------- AI 代理 ---------- */
-const aiProxy = require("./lib/ai").createAIProxy(db, CFG);
+const getUserLang = user => { try { return user?.id ? getDoc(`data/users/${user.id}/app/app/profile`)?.lang : null; } catch { return null; } };
+const aiProxy = require("./lib/ai").createAIProxy(db, { ...CFG, getUserLang });
 const clientErrors = require("./lib/client-errors").createClientErrors({
   expectedOrigin: new URL(CFG.authBaseURL).origin,
   releaseRevision
@@ -246,6 +252,7 @@ async function handle(req, res){
     if (p === "/api/me" && m === "GET") return send(res, 200, {
       id: user.id, username: user.username, email: user.email, phoneNumber: user.phoneNumber || null, created: user.created, mustChange: !!user.mustChange,
       ai: aiProxy.enabled, aiModel: aiProxy.model,
+      aiBudget: aiProxy.enabled ? aiProxy.getBudgetStatus(user.id) : null,
       consentVersion: user.consentVersion || null, consentedAt: user.consentedAt || null,
       requiredConsentVersion: CONSENT_VERSION, consentRequired
     });
@@ -327,7 +334,19 @@ async function handle(req, res){
       db.prepare("DELETE FROM blobs WHERE id = ?").run(am[1]); fs.rmSync(path.join(CFG.dataDir, "blobs", am[1]), { force: true });
       return send(res, 200, { ok: true });
     }
-    if (p === "/api/ai" && m === "POST") { const b = await readJSON(req, 20e6); accountData.ensureActive(user.id); return send(res, 200, await aiProxy(user, b)); }
+    if (p === "/api/ai" && m === "POST") {
+      const b = await readJSON(req, 20e6);
+      accountData.ensureActive(user.id);
+      try {
+        const result = await aiProxy(user, b);
+        const budget = aiProxy.enabled ? aiProxy.getBudgetStatus(user.id) : null;
+        return send(res, 200, result, budget ? { "X-Bojin-AI-Budget": JSON.stringify(budget) } : {});
+      } catch (err) {
+        const budget = aiProxy.enabled ? aiProxy.getBudgetStatus(user.id) : null;
+        if (budget) res.setHeader("X-Bojin-AI-Budget", JSON.stringify(budget));
+        throw err;
+      }
+    }
     if (p === "/api/feedback" && m === "POST") {
       const release = feedback.begin(user.id);
       try {
@@ -414,7 +433,7 @@ async function cli(args){
   const { createMailer } = require("./lib/mail");
   authentication = await createAuth({dataDir: CFG.dataDir, baseURL: CFG.authBaseURL, secret: CFG.authSecret,
     cookieSecure: CFG.cookieSecure, clientIP,
-    getUserLang: user => { try { return user?.id ? getDoc(`data/users/${user.id}/app/app/profile`)?.lang : null; } catch { return null; } },
+    getUserLang,
     onDeleteRequested: user => accountData.requestDeletion(user),
     onDeleteCompleted: user => { authentication.purgeDeletedArtifacts(user.id); accountData.completeDeletion(user.id); },
     sendEmail: createMailer(process.env, {dataDir: CFG.dataDir, baseURL: CFG.authBaseURL})});
@@ -422,7 +441,10 @@ async function cli(args){
   const retryDeletes = () => { try { for (const {uid} of accountData.pending()) {
     if (!authentication.isUserPresent(uid)) { try {authentication.purgeDeletedArtifacts(uid);accountData.completeDeletion(uid);} catch {console.error("Account deletion cleanup needs attention");} }
   }} catch { console.error("Account deletion retry check failed; will retry"); } };
-  retryDeletes();setInterval(retryDeletes,60000).unref();
+  retryDeletes();
+  const flushAiAlerts = () => { if (aiProxy.enabled) aiProxy.flushAlerts().catch(() => {}); };
+  flushAiAlerts();
+  setInterval(() => { retryDeletes(); flushAiAlerts(); }, 60000).unref();
   const server = http.createServer((req, res) => {
     handle(req, res).catch(e => {
       const status = e.status || 500; if (status >= 500) console.error("request failed", e.code || "server_error");
