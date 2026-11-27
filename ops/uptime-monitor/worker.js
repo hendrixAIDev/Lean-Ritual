@@ -265,15 +265,53 @@ export async function sendAlert(
 }
 
 async function readState(kv, logger) {
+  let raw;
   try {
-    const raw = await kv.get(STATE_KEY);
-    if (!raw) return null;
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!parsed || typeof parsed !== "object" || (parsed.status !== "up" && parsed.status !== "down")) {
-      logger?.warn?.("Ignoring malformed uptime state in STATE_KV");
-      return null;
-    }
-    return {
+    raw = await kv.get(STATE_KEY);
+  } catch (err) {
+    const errName = sanitizeText(err?.name || "Error", 40) || "Error";
+    logger?.error?.(`STATE_KV read failed (${errName})`);
+    return { state: null, readFailed: true };
+  }
+
+  if (raw === null || raw === undefined || raw === "") {
+    return { state: null, readFailed: false };
+  }
+
+  let parsed;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    logger?.warn?.("Ignoring malformed uptime state in STATE_KV");
+    return { state: null, readFailed: false };
+  }
+
+  if (!parsed || typeof parsed !== "object" || (parsed.status !== "up" && parsed.status !== "down")) {
+    logger?.warn?.("Ignoring malformed uptime state in STATE_KV");
+    return { state: null, readFailed: false };
+  }
+
+  const pendingRecovery =
+    parsed.status === "up" &&
+    parsed.pendingRecovery &&
+    typeof parsed.pendingRecovery === "object" &&
+    typeof parsed.pendingRecovery.recoveredAt === "string"
+      ? {
+          downSince:
+            typeof parsed.pendingRecovery.downSince === "string"
+              ? parsed.pendingRecovery.downSince
+              : null,
+          recoveredAt: parsed.pendingRecovery.recoveredAt,
+          revision:
+            typeof parsed.pendingRecovery.revision === "string"
+              ? parsed.pendingRecovery.revision
+              : null
+        }
+      : null;
+
+  return {
+    readFailed: false,
+    state: {
       status: parsed.status,
       since: typeof parsed.since === "string" ? parsed.since : null,
       lastAlertAt: typeof parsed.lastAlertAt === "string" ? parsed.lastAlertAt : null,
@@ -284,13 +322,10 @@ async function readState(kv, logger) {
             ? 1
             : 0,
       lastRevision: typeof parsed.lastRevision === "string" ? parsed.lastRevision : null,
-      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null
-    };
-  } catch (err) {
-    const errName = sanitizeText(err?.name || "Error", 40) || "Error";
-    logger?.error?.(`STATE_KV read failed (${errName})`);
-    return null;
-  }
+      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
+      ...(pendingRecovery ? { pendingRecovery } : {})
+    }
+  };
 }
 
 async function writeState(kv, state, logger) {
@@ -386,13 +421,55 @@ export async function runCheck(env = {}, deps = {}) {
     };
   }
 
-  const prev = await readState(kv, logger);
+  const { state: prev, readFailed } = await readState(kv, logger);
+
+  if (readFailed) {
+    if (probe.ok) {
+      return {
+        ok: true,
+        status: "up",
+        transition: "kv_read_failed",
+        revision: probe.revision,
+        attempts: probe.attempts,
+        alerted: false,
+        kvBound: true,
+        kvReadFailed: true
+      };
+    }
+
+    const alertMessage = `[DOWN] ${host} health check failed: ${probe.reason}`;
+    const alert = await sendAlert(env.ALERT_URL, alertMessage, {
+      kind: "down",
+      fetchImpl,
+      timeoutMs: alertTimeoutMs,
+      logger
+    });
+    return {
+      ok: false,
+      status: "down",
+      transition: "kv_read_failed",
+      error: probe.reason,
+      attempts: probe.attempts,
+      alerted: alert.sent,
+      alertMessage,
+      kvBound: true,
+      kvReadFailed: true
+    };
+  }
 
   if (probe.ok) {
-    if (prev?.status === "down") {
-      const sinceMs = prev.since ? Date.parse(prev.since) : NaN;
-      const duration = formatDuration(Number.isFinite(sinceMs) ? Math.max(0, nowMs - sinceMs) : NaN);
-      const shortRev = formatShortRevision(probe.revision);
+    if (prev?.status === "down" || prev?.pendingRecovery) {
+      const downSince = prev.pendingRecovery ? prev.pendingRecovery.downSince : prev.since;
+      const recoveredAt = prev.pendingRecovery ? prev.pendingRecovery.recoveredAt : nowIso;
+      const recoveryRevision = prev.pendingRecovery?.revision || probe.revision;
+      const sinceMs = downSince ? Date.parse(downSince) : NaN;
+      const recoveredMs = Date.parse(recoveredAt);
+      const duration = formatDuration(
+        Number.isFinite(sinceMs) && Number.isFinite(recoveredMs)
+          ? Math.max(0, recoveredMs - sinceMs)
+          : NaN
+      );
+      const shortRev = formatShortRevision(recoveryRevision);
       const alertMessage = `[RECOVERED] ${host} is back up (down for ${duration}, rev ${shortRev})`;
       const alert = await sendAlert(env.ALERT_URL, alertMessage, {
         kind: "recovered",
@@ -400,19 +477,43 @@ export async function runCheck(env = {}, deps = {}) {
         timeoutMs: alertTimeoutMs,
         logger
       });
-      const nextState = {
-        status: "up",
-        since: nowIso,
-        lastAlertAt: alert.sent ? nowIso : prev.lastAlertAt,
-        consecutiveFailures: 0,
-        lastRevision: probe.revision,
-        lastError: null
-      };
-      await writeState(kv, nextState, logger);
+      const deliveredOrSkipped = alert.sent || alert.skipped === true;
+      const nextState = deliveredOrSkipped
+        ? {
+            status: "up",
+            since: recoveredAt,
+            lastAlertAt: alert.sent ? nowIso : prev.lastAlertAt,
+            consecutiveFailures: 0,
+            lastRevision: probe.revision,
+            lastError: null
+          }
+        : {
+            status: "up",
+            since: recoveredAt,
+            lastAlertAt: prev.lastAlertAt ?? null,
+            consecutiveFailures: 0,
+            lastRevision: probe.revision,
+            lastError: null,
+            pendingRecovery: {
+              downSince: downSince ?? null,
+              recoveredAt,
+              revision: recoveryRevision
+            }
+          };
+
+      const needsWrite =
+        deliveredOrSkipped ||
+        prev.status !== "up" ||
+        !prev.pendingRecovery ||
+        prev.lastRevision !== probe.revision;
+      if (needsWrite) {
+        await writeState(kv, nextState, logger);
+      }
+
       return {
         ok: true,
         status: "up",
-        transition: "recovered",
+        transition: deliveredOrSkipped ? "recovered" : "recovery_pending",
         revision: probe.revision,
         attempts: probe.attempts,
         alerted: alert.sent,
