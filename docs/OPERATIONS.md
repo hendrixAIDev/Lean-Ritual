@@ -82,30 +82,53 @@ The latest deletion ledger is mandatory, even if `users` and `inviteRequests` ar
 
 If a deploy, account deletion, or standalone invite-request deletion/prune ran after the last backup export, restoring with only `/var/backups/bojin/deletions-*.json` uses a stale ledger and **can resurrect deleted accounts or deleted invite requests**.
 
-1. **Production restore when outgoing `/var/lib/bojin` is readable (required):** After acquiring `bojin-maintenance-lock` and stopping `bojin.service` and all writers, **first export a fresh deletion ledger from the outgoing `DATA_DIR`** (`deletions-live.json`), then build a **union ledger** across that fresh live export plus every valid export under `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` before running `data-backup.js restore --deletions`:
+1. **Production restore when outgoing `/var/lib/bojin` is readable (required):** After acquiring `bojin-maintenance-lock` and stopping `bojin.service` and all writers, **first export a fresh deletion ledger from the outgoing `DATA_DIR`** into a fresh private `bojin`-owned (`0700`) scratch directory (because `$STAGE` is `root:bojin` `0750` and `data-backup.js ledger` opens a new file with `wx`), stage that export under root control as `$STAGE/deletions-live.json`, remove the scratch directory, and build a **union ledger** that **requires** `$STAGE/deletions-live.json` to exist and parse cleanly (failing closed if missing) alongside every valid daily and pre-deploy export:
 
 ```sh
-# 1a. Export a fresh ledger from the stopped outgoing DATA_DIR whenever /var/lib/bojin/bojin.db is readable
-sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin \
-  /usr/bin/node /opt/bojin/scripts/data-backup.js ledger /var/tmp/bojin-restore-stage/deletions-live.json
+STAGE=/var/tmp/bojin-restore-stage
+sudo install -d -o root -g bojin -m 0750 -- "$STAGE"
 
-# 1b. Merge the fresh live export (if present) with all valid daily + pre-deploy ledgers into one union ledger
-sudo python3 - /var/tmp/bojin-restore-stage/deletions-live.json /var/tmp/bojin-restore-stage/deletions.json <<'PY'
+# 1a. Export a fresh ledger from the stopped outgoing DATA_DIR into a private bojin-owned scratch dir
+LIVE_SCRATCH=$(sudo mktemp -d /var/tmp/bojin-live-ledger.XXXXXX)
+sudo chown bojin:bojin -- "$LIVE_SCRATCH"
+sudo chmod 0700 -- "$LIVE_SCRATCH"
+sudo -u bojin env -i PATH=/usr/bin:/bin HOME=/var/tmp DATA_DIR=/var/lib/bojin \
+  /usr/bin/node /opt/bojin/scripts/data-backup.js ledger "$LIVE_SCRATCH/deletions-live.json"
+sudo install -o root -g bojin -m 0640 -- "$LIVE_SCRATCH/deletions-live.json" "$STAGE/deletions-live.json"
+sudo rm -rf -- "$LIVE_SCRATCH"
+
+# 1b. Merge the REQUIRED live export with all valid daily + pre-deploy ledgers into one union ledger
+sudo python3 - "$STAGE/deletions-live.json" "$STAGE/deletions.json" <<'PY'
 import datetime, glob, json, os, sys
 
 live_path, out_path = sys.argv[1], sys.argv[2]
-sources = []
-for p in [live_path, *glob.glob("/var/backups/bojin/deletions-*.json"), *glob.glob("/var/backups/bojin-deploy/*/deletions.json")]:
+allow_missing_live = os.environ.get("ALLOW_MISSING_LIVE_LEDGER") == "1"
+
+def load_valid_ledger(p):
     if not p or os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
-        continue
+        return None
     with open(p, "r", encoding="utf-8") as fh:
         data = json.load(fh)
-    if data.get("version") == 1 and isinstance(data.get("users"), list) and isinstance(data.get("exportedAt"), str):
-        reqs = data.get("inviteRequests", [])
-        if not isinstance(reqs, list):
-            continue
-        ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
-        sources.append((ts, p, data))
+    if data.get("version") != 1 or not isinstance(data.get("users"), list) or not isinstance(data.get("exportedAt"), str):
+        return None
+    reqs = data.get("inviteRequests", [])
+    if not isinstance(reqs, list):
+        return None
+    ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+    return (ts, p, data)
+
+sources = []
+if not allow_missing_live:
+    live_entry = load_valid_ledger(live_path)
+    if live_entry is None:
+        sys.exit(f"Missing or invalid required live deletion ledger: {live_path}")
+    sources.append(live_entry)
+
+for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
+    for p in glob.glob(pattern):
+        entry = load_valid_ledger(p)
+        if entry is not None:
+            sources.append(entry)
 
 if not sources:
     sys.exit("No valid deletion ledger found")
@@ -130,11 +153,63 @@ with open(out_path, "w", encoding="utf-8") as fh:
     json.dump(union, fh)
 print(out_path)
 PY
-sudo chown root:bojin /var/tmp/bojin-restore-stage/deletions.json
-sudo chmod 0640 /var/tmp/bojin-restore-stage/deletions.json
+sudo chown root:bojin -- "$STAGE/deletions.json"
+sudo chmod 0640 -- "$STAGE/deletions.json"
 ```
 
-2. **When the outgoing `DATA_DIR` is unavailable (e.g., catastrophic disk loss):** Build the union ledger from the newest available `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` exports, run `restore --deletions`, and **before reopening public traffic**, manually reconcile any account deletions and standalone invite-request deletions (`scripts/invite-requests-admin.js delete <id>` or `delete --contact <email-or-phone>`) requested via email or processed since the last exported ledger.
+2. **When the outgoing `DATA_DIR` is unavailable (e.g., catastrophic disk loss):** Use the explicit backup-only merge branch below (`ALLOW_MISSING_LIVE_LEDGER=1`) to build the union ledger from all valid `/var/backups/bojin/deletions-*.json` and `/var/backups/bojin-deploy/*/deletions.json` exports, run `restore --deletions`, and **before reopening public traffic**, manually reconcile any account deletions and standalone invite-request deletions (`scripts/invite-requests-admin.js delete <id>` or `delete --contact <email-or-phone>`) requested via email or processed since the last exported ledger:
+
+```sh
+STAGE=/var/tmp/bojin-restore-stage
+sudo install -d -o root -g bojin -m 0750 -- "$STAGE"
+
+# Explicit backup-only union ledger (ONLY when outgoing /var/lib/bojin is unreadable/lost)
+sudo env ALLOW_MISSING_LIVE_LEDGER=1 python3 - "" "$STAGE/deletions.json" <<'PY'
+import datetime, glob, json, os, sys
+
+if os.environ.get("ALLOW_MISSING_LIVE_LEDGER") != "1":
+    sys.exit("Refusing backup-only ledger without ALLOW_MISSING_LIVE_LEDGER=1")
+out_path = sys.argv[2]
+sources = []
+for pattern in ("/var/backups/bojin/deletions-*.json", "/var/backups/bojin-deploy/*/deletions.json"):
+    for p in glob.glob(pattern):
+        if os.path.islink(p) or os.path.islink(os.path.dirname(p)) or not os.path.isfile(p):
+            continue
+        with open(p, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if data.get("version") != 1 or not isinstance(data.get("users"), list) or not isinstance(data.get("exportedAt"), str):
+            continue
+        if not isinstance(data.get("inviteRequests", []), list):
+            continue
+        ts = datetime.datetime.fromisoformat(data["exportedAt"].replace("Z", "+00:00"))
+        sources.append((ts, p, data))
+
+if not sources:
+    sys.exit("No valid backup deletion ledger found")
+
+sources.sort(key=lambda item: item[0])
+users_by_uid = {}
+reqs_by_id = {}
+for _, p, data in sources:
+    for u in data["users"]:
+        users_by_uid[u["uid"]] = u["requested"]
+    for r in data.get("inviteRequests", []):
+        reqs_by_id[r["id"]] = r["deleted"]
+    print(f"{data['exportedAt']}  users={len(data['users'])}  inviteRequests={len(data.get('inviteRequests', []))}  {p}", file=sys.stderr)
+
+union = {
+    "version": 1,
+    "exportedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+    "users": [{"uid": uid, "requested": req} for uid, req in sorted(users_by_uid.items())],
+    "inviteRequests": [{"id": rid, "deleted": deleted} for rid, deleted in sorted(reqs_by_id.items())],
+}
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(union, fh)
+print(out_path)
+PY
+sudo chown root:bojin -- "$STAGE/deletions.json"
+sudo chmod 0640 -- "$STAGE/deletions.json"
+```
 
 ### Throwaway / staging instance verification (`systemd-run` override safety)
 
