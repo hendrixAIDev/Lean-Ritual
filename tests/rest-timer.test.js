@@ -455,6 +455,68 @@ test('rest timer date-scoping regression: hidden on adjacent completed or other 
   assert.doesNotMatch(env.appEl.innerHTML, /id="rest-timer-bar"/);
 });
 
+test('rest timer off-date and off-tab expiration regression: #sr-status stays silent while away and reconciles once upon returning to owning workout date', async () => {
+  const env = mountTimerEnv({ lang: 'en', uid: 'u1' });
+  vm.runInContext(`
+    S.days["2026-11-19"] = {
+      date: "2026-11-19",
+      meals: [],
+      workout: { key: "pull", slot: "eve", done: true, exercises: [{ name: "硬拉", sets: [{ w: 100, r: 5 }] }] }
+    };
+    render();
+  `, env.ctx);
+
+  // 1. Start 3:00 timer on active workout date 2026-11-20
+  await env.click('rest-start', '0');
+  assert.equal(env.announcements.length, 1, 'start announces once');
+  assert.match(env.announcements[0], /Rest timer started/);
+
+  // 2. Switch to adjacent date 2026-11-19 (completed workout)
+  await env.click('date', '-1');
+  assert.equal(vm.runInContext('S.date', env.ctx), '2026-11-19');
+  assert.doesNotMatch(env.appEl.innerHTML, /id="rest-timer-bar"/);
+
+  // 3. Advance past 3:00 deadline while on 2026-11-19 and fire tick + visibility/focus events
+  env.advanceMs(200_000);
+  env.tickAll();
+  env.fireDoc('visibilitychange');
+  env.fireWin('pageshow');
+  env.fireWin('focus');
+
+  assert.equal(vm.runInContext('S.restTimer.done', env.ctx), true, 'deadline state transitions accurately');
+  assert.equal(env.intervals.size, 0, 'expired timer stops tick interval');
+  assert.equal(env.slotEl.innerHTML, '', 'timer bar stays hidden on non-owning date');
+  assert.equal(env.announcements.length, 1, '#sr-status MUST stay silent while away on another date');
+
+  // 4. Return to owning active workout date 2026-11-20 -> reconciles completed bar and announces ONCE
+  await env.click('date', '1');
+  assert.equal(vm.runInContext('S.date', env.ctx), '2026-11-20');
+  assert.match(env.appEl.innerHTML, /id="rest-timer-bar"/);
+  assert.match(env.appEl.innerHTML, /Rest done · Next set!/);
+  assert.equal(env.valEl.textContent, '0:00');
+  assert.equal(env.announcements.length, 2, 'returning to owning date announces completion once');
+  assert.match(env.announcements[1], /Rest done/);
+
+  // 5. Re-rendering or focus/visibility events on owning date must NOT double-announce
+  vm.runInContext('render()', env.ctx);
+  env.fireDoc('visibilitychange');
+  env.fireWin('focus');
+  assert.equal(env.announcements.length, 2, 'no duplicate completion announcement on return');
+
+  // 6. Also verify off-tab expiration (switching to food tab on owning date) stays silent until returning to today tab
+  await env.click('rest-adj', '30'); // revive for 30s
+  await env.click('tab', 'food');
+  assert.equal(vm.runInContext('S.tab', env.ctx), 'food');
+  env.advanceMs(35_000);
+  env.tickAll();
+  assert.equal(env.announcements.length, 2, '#sr-status stays silent while on Meals tab');
+  await env.click('tab', 'today');
+  assert.match(env.appEl.innerHTML, /Rest done · Next set!/);
+  assert.equal(env.announcements.length, 3, 'returning to Today tab reconciles and announces completion once');
+  vm.runInContext('render()', env.ctx);
+  assert.equal(env.announcements.length, 3, 'no duplicate announcement after returning to Today tab');
+});
+
 function resolvePlaywright() {
   const candidates = ['playwright'];
   const home = os.homedir();

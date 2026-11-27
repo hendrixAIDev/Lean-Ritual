@@ -2588,6 +2588,9 @@ function isRestTimerVisibleFor(date = S.date, rt = S.restTimer){
   if (S.days?.[rt.date]?.workout?.done) return false;
   return true;
 }
+function isRestTimerViewVisible(rt = S.restTimer){
+  return !!S.ready && S.tab === "today" && !S.editing && !S.consentRequired && isRestTimerVisibleFor(S.date, rt);
+}
 function restTimerBarHtml(now = Date.now(), date = S.date){
   const rt = S.restTimer;
   if (!rt) return "";
@@ -2598,14 +2601,16 @@ function restTimerBarHtml(now = Date.now(), date = S.date){
   if (!rt.done && rt.pausedRemainingMs == null && rt.endAt != null && now >= rt.endAt) {
     rt.done = true;
     rt.endAt = null;
+    rt.pausedRemainingMs = null;
     stopRestTimerTick();
-    if (!rt.announcedDone) {
-      rt.announcedDone = true;
-      announce(t("rest.announceDone", { ex: exName(rt.exName) }));
-    }
     persistRestTimer();
   }
   if (!isRestTimerVisibleFor(date, rt)) return "";
+  if (rt.done && !rt.announcedDone && isRestTimerViewVisible(rt)) {
+    rt.announcedDone = true;
+    persistRestTimer();
+    announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+  }
   const isPaused = !rt.done && rt.pausedRemainingMs != null;
   const remSec = restTimerRemainingSec(rt, now);
   const exLabel = exName(rt.exName);
@@ -2646,7 +2651,7 @@ function syncRestTimer(now = Date.now()){
     mountRestTimerSlot();
     return;
   }
-  const visible = isRestTimerVisibleFor(S.date, rt);
+  const visible = isRestTimerViewVisible(rt);
   if (rt.done || rt.pausedRemainingMs != null) {
     stopRestTimerTick();
     if (visible) {
@@ -2663,14 +2668,16 @@ function syncRestTimer(now = Date.now()){
     rt.endAt = null;
     rt.pausedRemainingMs = null;
     stopRestTimerTick();
-    const needAnnounce = !rt.announcedDone;
-    rt.announcedDone = true;
+    const needAnnounce = visible && !rt.announcedDone;
+    if (needAnnounce) rt.announcedDone = true;
     persistRestTimer();
-    const ae = typeof document !== "undefined" ? document.activeElement : null;
-    const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
-    const focusInside = !!(visible && ae && slot && slot.contains?.(ae));
-    mountRestTimerSlot(focusInside ? "rt-dismiss" : null);
-    if (needAnnounce) announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+    if (visible) {
+      const ae = typeof document !== "undefined" ? document.activeElement : null;
+      const slot = typeof document !== "undefined" && typeof document.getElementById === "function" ? document.getElementById("rest-timer-slot") : null;
+      const focusInside = !!(ae && slot && slot.contains?.(ae));
+      mountRestTimerSlot(focusInside ? "rt-dismiss" : null);
+      if (needAnnounce) announce(t("rest.announceDone", { ex: exName(rt.exName) }));
+    }
     return;
   }
   if (!visible) return;
@@ -3205,6 +3212,15 @@ async function quickAddMeal(idx, btn){
     if (btn) btn.disabled = false;
   }
 }
+const mealTextKey = date => `bj-mtext:${date || S.date}`;
+function getMealTextDraft(date = S.date){
+  const v = lsGet(mealTextKey(date), null);
+  if (typeof v === "string") return v;
+  return date === todayStr() ? (lsGet("bj-mtext", "") || "") : "";
+}
+function setMealTextDraft(date = S.date, val = ""){
+  lsSet(mealTextKey(date), String(val ?? ""));
+}
 function viewFood(){
   const date = S.date, tg = dayTargets(date), m = dayMacros(date), meals = S.days[date]?.meals || [];
   const mode = mealMode();
@@ -3230,7 +3246,7 @@ function viewFood(){
       </div>
       ${pn ? `<div class="previews">${pending.map((f, i) => `<figure><img class="preview" src="${esc(safeImage(f.url))}" alt="${esc(t("food.photoAlt", {n:i+1}))}"><button type="button" id="m-photo-rm-${i}" class="thumb-del" data-act="unpick" data-v="${i}" aria-label="${esc(t("food.removePhotoAria", {n:i+1}))}" ${savingMeal?"disabled":""}><span aria-hidden="true">×</span></button></figure>`).join("")}</div>` : ""}
     </div>
-    <label>${esc(t("food.whatAte"))}<textarea id="m-text" placeholder="${esc(t("food.whatAtePh"))}">${esc(lsGet("bj-mtext",""))}</textarea></label>
+    <label>${esc(t("food.whatAte"))}<textarea id="m-text" placeholder="${esc(t("food.whatAtePh"))}">${esc(getMealTextDraft(date))}</textarea></label>
     <div class="row"><span class="small muted">${esc(t("food.macrosMode"))}</span>
       <button class="chip ${mode==="ai"?"on":""}" aria-pressed="${mode==="ai"}" data-act="mmode" data-v="ai" ${aiOK()?"":"disabled"}>${esc(t("food.aiEst"))}</button>
       <button class="chip ${mode==="manual"?"on":""}" aria-pressed="${mode==="manual"}" data-act="mmode" data-v="manual">${esc(t("food.manual"))}</button></div>
@@ -3432,7 +3448,7 @@ async function addMeal(mode, btn){
     picked.forEach(f => { try { URL.revokeObjectURL(f.url); } catch {} });
     const remaining = (S.pendingPhotos || []).filter(f => !savedSet.has(f));
     S.pendingPhotos = remaining.length ? remaining : null;
-    S.mtype = null; lsSet("bj-mtext", "");
+    S.mtype = null; setMealTextDraft(date, ""); if (date === todayStr()) lsSet("bj-mtext", "");
     S.busy.addMeal = false;
     const warnPhoto = m.photoErr ? PHOTO_ERR(m.photoErr, !!(S.files[m.id]?.blob && S.assets && m.photoErr !== "decode")) : null;
     if (mode === "manual") { S.mfill = {}; render(); toast(warnPhoto || t("toast.mealNoted"), warnPhoto ? 6000 : 2200); return; }
@@ -5424,7 +5440,7 @@ document.addEventListener("input", ev => {
     const pl = planFor(S.date), d = getDraft(S.date, pl); d.exercises[+i].sets[+j][k] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
   } else if (el.dataset.f) {
     const pl = planFor(S.date), d = getDraft(S.date, pl); d[el.dataset.f] = el.value; persistDrafts(); syncDraft(S.date, pl.key);
-  } else if (el.id === "m-text") lsSet("bj-mtext", el.value);
+  } else if (el.id === "m-text") setMealTextDraft(S.date, el.value);
   else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
   else if (el.id === "ufb-msg" && S.ufb) { S.ufb.message = el.value; const c = $("#ufb-count"); if (c) c.textContent = `${Array.from(el.value).length} / 2000`; }
   else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }

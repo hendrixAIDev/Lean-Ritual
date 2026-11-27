@@ -58,7 +58,7 @@ function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-
 
   const deletedAssets = [];
   const listeners = {};
-  const mTextEl = { id: 'm-text', value: '' };
+  const mTextEl = { id: 'm-text', value: '', dataset: {} };
   const appEl = {
     id: 'app',
     _html: '',
@@ -172,7 +172,12 @@ function mountApp({ lang = 'zh', days = {}, profile = null, fixedIso = '2026-11-
     shortcutsEl,
     deletedAssets,
     storeData,
+    localStorage,
     setCheckedMtype(v) { checkedMtype = v; },
+    typeMealText(v) {
+      mTextEl.value = String(v);
+      for (const fn of listeners.input || []) fn({ target: mTextEl });
+    },
     async click(act, v) {
       const btn = {
         dataset: { act, ...(v !== undefined ? { v: String(v) } : {}) },
@@ -462,6 +467,62 @@ test('meal shortcuts delayed-write regression: preserves edits typed while write
   assert.equal(app.mTextEl.value, 'Day 19 draft', 'switched date draft is preserved and never clobbered by prior date draft');
   assert.equal(vm.runInContext('S.days["2026-11-19"].meals.length', app.ctx), 0, 'meal was NOT written to switched date');
   assert.equal(vm.runInContext('S.days["2026-11-20"].meals.length', app.ctx), 2, 'meal was written to owning date 2026-11-20');
+});
+
+test('meal draft persistence regression: real input events are keyed by date, stay empty on other dates during pending shortcut save, restore on return, and clear on logout', async () => {
+  let releaseCommit = null;
+  const days = {
+    '2026-11-18': {
+      date: '2026-11-18',
+      meals: [
+        { id: 'h1', type: '午餐', text: '鸡胸肉米饭', time: '12:30', est: { kcal: 640, protein: 48, carbs: 70, fat: 16, by: 'manual' } }
+      ]
+    },
+    '2026-11-19': { date: '2026-11-19', meals: [] },
+    '2026-11-20': { date: '2026-11-20', meals: [] }
+  };
+
+  const app = mountApp({
+    lang: 'zh',
+    days,
+    onCommit: () => new Promise(resolve => { releaseCommit = resolve; })
+  });
+
+  // 1. Start shortcut save on date A (2026-11-20)
+  const tap = app.click('quick-meal', '0');
+  for (let i = 0; i < 10 && !releaseCommit; i++) await Promise.resolve();
+  assert.ok(releaseCommit, 'shortcut save is pending');
+
+  // 2. Type on date A via real input event handler while write is pending
+  app.typeMealText('日期A的餐食草稿');
+  assert.equal(app.localStorage.getItem('bj-user:u1:bj-mtext:2026-11-20'), JSON.stringify('日期A的餐食草稿'));
+
+  // 3. Navigate to date B (2026-11-19): #m-text on date B MUST be empty (zero leak from date A!)
+  await app.click('date', '-1');
+  assert.equal(vm.runInContext('S.date', app.ctx), '2026-11-19');
+  assert.equal(app.mTextEl.value, '', 'navigating to date B loads empty draft instead of date A draft');
+
+  // 4. Resolve date A shortcut write while viewing date B -> date B stays empty
+  const done = releaseCommit;
+  releaseCommit = null;
+  done();
+  await tap;
+  assert.equal(app.mTextEl.value, '', 'completing date A shortcut save keeps date B draft empty');
+
+  // 5. Type a separate draft on date B via real input event
+  app.typeMealText('日期B的草稿');
+  assert.equal(app.localStorage.getItem('bj-user:u1:bj-mtext:2026-11-19'), JSON.stringify('日期B的草稿'));
+
+  // 6. Navigate back to date A (2026-11-20) -> date A's typed draft is intact AND shortcut meal is saved
+  await app.click('date', '1');
+  assert.equal(vm.runInContext('S.date', app.ctx), '2026-11-20');
+  assert.equal(app.mTextEl.value, '日期A的餐食草稿', 'returning to date A restores date A typed draft');
+  assert.equal(vm.runInContext('S.days["2026-11-20"].meals.length', app.ctx), 1);
+
+  // 7. Logout/account cleanup clears all date-keyed drafts for u1
+  vm.runInContext('clearUserLocal("u1")', app.ctx);
+  assert.equal(app.localStorage.getItem('bj-user:u1:bj-mtext:2026-11-20'), null);
+  assert.equal(app.localStorage.getItem('bj-user:u1:bj-mtext:2026-11-19'), null);
 });
 
 function resolvePlaywright() {
