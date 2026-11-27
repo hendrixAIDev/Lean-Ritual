@@ -20,6 +20,7 @@ const {
   formatSummaryText
 } = require("../lib/daily-summary");
 const { createSnapshot, verifySnapshot } = require("../lib/snapshots");
+const { createInvitations } = require("../lib/invitations");
 const dataAccess = require("../lib/data-access");
 
 const ROOT = path.join(__dirname, "..");
@@ -1453,43 +1454,50 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
       userId TEXT NOT NULL,
       expires INTEGER NOT NULL,
       consumed INTEGER,
-      revoked INTEGER NOT NULL DEFAULT 0
+      revoked INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER
     );
   `);
 
   const insUser = authDb.prepare('INSERT INTO "user" (id, name, email, emailVerified, phoneNumber, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  const insInv = authDb.prepare("INSERT INTO launch_invites (tokenHash, email, phone, userId, expires, consumed, revoked) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const insInv = authDb.prepare("INSERT INTO launch_invites (tokenHash, email, phone, userId, expires, consumed, revoked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
 
   // u1 (14d ago, verified email): profile + active day 1 & day 10 (4d ago) -> eligible 7d+, RETAINED, activeLast7d
+  // Issued 15d ago (pre-trial when TRIAL_START=12d ago!)
   insUser.run("u_cohort_1", "UserOne", "u1@secret.example", 1, null, daysAgo(14), daysAgo(14));
-  insInv.run("h1_old_reissue", "u1@secret.example", null, "u_cohort_1", daysAgoMs(7), null, 1); // reissued old revoked row -> same userId, must not double-count!
-  insInv.run("h1_consumed", "u1@secret.example", null, "u_cohort_1", daysAgoMs(7), daysAgoMs(14), 0);
+  insInv.run("h1_old_reissue", "u1@secret.example", null, "u_cohort_1", daysAgoMs(8), null, 1, daysAgoMs(15));
+  insInv.run("h1_consumed", "u1@secret.example", null, "u_cohort_1", daysAgoMs(8), daysAgoMs(14), 0, daysAgoMs(15));
 
   // u2 (14d ago, verified phone): profile + active ONLY on day 4 (10d ago) -> eligible 7d+, NOT retained, NOT activeLast7d
+  // Legacy invite row with created_at = NULL (must appear in legacyInvitesWithoutTimestamp!)
   insUser.run("u_cohort_2", "UserTwo", "phone-u2@phone.leanritual.invalid", 0, "+8613800138002", daysAgo(14), daysAgo(14));
-  insInv.run("h2_consumed", "", "+8613800138002", "u_cohort_2", daysAgoMs(7), daysAgoMs(14), 0);
+  insInv.run("h2_consumed", "", "+8613800138002", "u_cohort_2", daysAgoMs(7), daysAgoMs(14), 0, null);
 
   // u3 (10d ago, verified email): profile + active on day 8 (2d ago) -> eligible 7d+, RETAINED, activeLast7d
+  // Issued 11d ago (in-trial when TRIAL_START=12d ago)
   insUser.run("u_cohort_3", "UserThree", "u3@secret.example", 1, null, daysAgo(10), daysAgo(10));
-  insInv.run("h3_consumed", "u3@secret.example", null, "u_cohort_3", daysAgoMs(3), daysAgoMs(10), 0);
+  insInv.run("h3_consumed", "u3@secret.example", null, "u_cohort_3", daysAgoMs(4), daysAgoMs(10), 0, daysAgoMs(11));
 
-  // u4 (8d ago, verified email): profile ONLY, empty check-in / undone workout (no real activity) -> eligible 7d+, NOT logged, NOT retained
+  // u4 (8d ago, verified email): NO launch_invites row (e.g. legacy imported account) -> must count in verified funnel, NOT in invitation counts!
   insUser.run("u_cohort_4", "UserFour", "u4@secret.example", 1, null, daysAgo(8), daysAgo(8));
-  insInv.run("h4_consumed", "u4@secret.example", null, "u_cohort_4", daysAgoMs(1), daysAgoMs(8), 0);
 
   // u5 (3d ago, verified email): profile + meal 1d ago -> NOT eligible 7d+, loggedFirstActivity, activeLast7d
   insUser.run("u_cohort_5", "UserFive", "u5@secret.example", 1, null, daysAgo(3), daysAgo(3));
-  insInv.run("h5_consumed", "u5@secret.example", null, "u_cohort_5", snapMs + 4 * 864e5, daysAgoMs(3), 0);
+  insInv.run("h5_consumed", "u5@secret.example", null, "u_cohort_5", snapMs + 4 * 864e5, daysAgoMs(3), 0, daysAgoMs(3));
 
-  // u6 (2d ago, UNVERIFIED email): registered row exists (counts in capacity & invitedTotal), NOT in verified registeredUsers
+  // u6 (2d ago, UNVERIFIED email): registered row exists (counts in capacity), NOT in verified registeredUsers funnel
   insUser.run("u_cohort_6", "UserSix", "u6@secret.example", 0, null, daysAgo(2), daysAgo(2));
-  insInv.run("h6_consumed", "u6@secret.example", null, "u_cohort_6", snapMs + 5 * 864e5, daysAgoMs(2), 0);
+  insInv.run("h6_consumed", "u6@secret.example", null, "u_cohort_6", snapMs + 5 * 864e5, daysAgoMs(2), 0, daysAgoMs(2));
 
-  // 2 active unused invites + 1 expired unused invite + 1 revoked-only invite (must NOT count in capacity or invitedTotal)
-  insInv.run("h_active_1", "pending1@secret.example", null, "u_inv_active_1", snapMs + 3 * 864e5, null, 0);
-  insInv.run("h_active_2", "", "+8613900139009", "u_inv_active_2", snapMs + 5 * 864e5, null, 0);
-  insInv.run("h_expired_1", "expired1@secret.example", null, "u_inv_expired_1", snapMs - 2 * 864e5, null, 0);
-  insInv.run("h_revoked_only", "revoked1@secret.example", null, "u_inv_revoked_only", snapMs + 5 * 864e5, null, 1);
+  // 2 active unused invites:
+  //   - h_active_1 issued 4d ago (in-trial)
+  //   - h_active_2 issued 13d ago (PRE-TRIAL when TRIAL_START=12d ago, even though expires is in the future!)
+  // 1 expired unused invite issued 9d ago (in-trial)
+  // 1 revoked-only invite (must NOT count in capacity or issued counts)
+  insInv.run("h_active_1", "pending1@secret.example", null, "u_inv_active_1", snapMs + 3 * 864e5, null, 0, daysAgoMs(4));
+  insInv.run("h_active_2", "", "+8613900139009", "u_inv_active_2", snapMs + 5 * 864e5, null, 0, daysAgoMs(13));
+  insInv.run("h_expired_1", "expired1@secret.example", null, "u_inv_expired_1", snapMs - 2 * 864e5, null, 0, daysAgoMs(9));
+  insInv.run("h_revoked_only", "revoked1@secret.example", null, "u_inv_revoked_only", snapMs + 5 * 864e5, null, 1, daysAgoMs(1));
   authDb.close();
 
   const bojinDb = new DatabaseSync(path.join(snapDir, "bojin.db"));
@@ -1532,7 +1540,7 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
 
   writeSnapshotManifest(snapDir, snapIso, ["bojin.db", "auth.sqlite"]);
 
-  // 1. All-time snapshot cohort funnel
+  // 1. All-time snapshot cohort funnel & separate invitation activity
   const s = collectDailySummary({
     dataDir,
     nowMs,
@@ -1553,8 +1561,17 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
     expiredUnusedInvites: 1,
     pendingInviteRequests: 1
   });
+  assert.deepEqual(s.cohortFunnel.invitations, {
+    tablePresent: true,
+    createdAtColumnPresent: true,
+    activeUnusedInvites: 2,
+    expiredUnusedInvites: 1,
+    claimedInvites: 5, // u1, u2, u3, u5, u6 (u4 had no invite row!)
+    invitesIssuedWithTimestamp: 7, // u1, u3, u5, u6, active_1, active_2, expired_1 (revoked-only excluded; u2 lacks created_at)
+    legacyInvitesWithoutTimestamp: 1 // u2
+  });
   assert.deepEqual(s.cohortFunnel.funnel, {
-    invitedTotal: 9, // 6 users + 2 active unused + 1 expired unused (revoked-only excluded, reissue deduplicated)
+    population: "verified_trial_accounts",
     registeredUsers: 5, // u1..u5 verified (u6 unverified excluded)
     completedProfileSetup: 5, // u1..u5
     loggedFirstActivity: 4, // u1, u2, u3, u5 (u4 had only empty checkin/undone workout)
@@ -1569,6 +1586,7 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
   const text = formatSummaryText(s);
   assert.match(text, /\[7日内测留存漏斗 \/ Beta Cohort Funnel & Capacity\]/);
   assert.match(text, /内测名额 \(Capacity\): 8 \/ 50 \(已注册 6, 有效未使用邀请 2, 已过期未使用邀请 1, 待处理申请 1\)/);
+  assert.match(text, /邀请动态 \(Invitations\): 有效未使用 2, 期内已使用 5, 期内签发\(含时间\) 7，另有 1 条旧邀请缺少签发时间戳/);
   assert.match(text, /第 7 天\+留存 \(Retained Day 7\+\): 2 \/ 4 \(50\.0%\)/);
 
   // Strict zero-PII check
@@ -1580,7 +1598,11 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
     assert.ok(!combined.includes(leak), `cohort funnel leaked PII: ${leak}`);
   }
 
-  // 2. With TRIAL_START = 12 days ago: u1 and u2 (14d ago) excluded from funnel, while Capacity remains 8/50
+  // 2. With TRIAL_START = 12 days ago:
+  //    - h_active_2 (created_at 13d ago, expires in future!) MUST NOT count in invitesIssuedWithTimestamp!
+  //    - u1 (created_at 15d ago) excluded from invitesIssuedWithTimestamp & claimedInvites
+  //    - u4 (uninvited user) NEVER inflated invitation counts
+  //    - Live Capacity remains 8/50
   const sFiltered = collectDailySummary({
     dataDir,
     nowMs,
@@ -1591,12 +1613,57 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
     env: {}
   });
   assert.equal(sFiltered.cohortFunnel.capacity.spotsUsed, 8);
+  assert.deepEqual(sFiltered.cohortFunnel.invitations, {
+    tablePresent: true,
+    createdAtColumnPresent: true,
+    activeUnusedInvites: 2,
+    expiredUnusedInvites: 1,
+    claimedInvites: 3, // u3 (10d), u5 (3d), u6 (2d)
+    invitesIssuedWithTimestamp: 5, // u3 (11d), u5 (3d), u6 (2d), active_1 (4d), expired_1 (9d) -- active_2 (13d) excluded!
+    legacyInvitesWithoutTimestamp: 1 // u2
+  });
   assert.equal(sFiltered.cohortFunnel.funnel.registeredUsers, 3); // u3, u4, u5
   assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.eligibleUsersCreated7dAgo, 2); // u3, u4
   assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.activeOnOrAfterDay7, 1); // u3
   assert.equal(sFiltered.cohortFunnel.funnel.retainedDay7Plus.retentionRatePct, 50);
 
-  // 3. Legacy snapshot without auth.sqlite degrades gracefully
+  // 3. Legacy snapshot whose launch_invites lacks created_at column degrades cleanly without guessing
+  const legacyColsDir = path.join(root, "legacy-no-created-at");
+  fs.mkdirSync(legacyColsDir, { recursive: true });
+  fs.copyFileSync(path.join(snapDir, "bojin.db"), path.join(legacyColsDir, "bojin.db"));
+  const oldAuth = new DatabaseSync(path.join(legacyColsDir, "auth.sqlite"));
+  oldAuth.exec(`
+    PRAGMA journal_mode = DELETE;
+    CREATE TABLE "user" (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, emailVerified INTEGER NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
+    CREATE TABLE launch_invites (tokenHash TEXT PRIMARY KEY, email TEXT NOT NULL, phone TEXT, userId TEXT NOT NULL, expires INTEGER NOT NULL, consumed INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
+  `);
+  oldAuth.prepare('INSERT INTO "user" VALUES (?, ?, ?, 1, ?, ?)').run("u_old_1", "OldOne", "old1@example.com", daysAgo(5), daysAgo(5));
+  oldAuth.prepare("INSERT INTO launch_invites VALUES (?, ?, NULL, ?, ?, NULL, 0)").run("h_old_active", "old2@example.com", "u_old_2", snapMs + 3 * 864e5);
+  oldAuth.close();
+  writeSnapshotManifest(legacyColsDir, snapIso, ["bojin.db", "auth.sqlite"]);
+
+  const sOldCols = collectDailySummary({
+    dataDir,
+    nowMs,
+    snapshotDir: legacyColsDir,
+    noJournal: true,
+    noSystemd: true,
+    env: {}
+  });
+  assert.equal(sOldCols.cohortFunnel.invitations.createdAtColumnPresent, false);
+  assert.equal(sOldCols.cohortFunnel.invitations.invitesIssuedWithTimestamp, 0);
+  assert.equal(sOldCols.cohortFunnel.invitations.legacyInvitesWithoutTimestamp, 1);
+
+  // 4. Verify createInvitations idempotently migrates legacy launch_invites to add created_at and populates it on issue()
+  const migrateDb = new DatabaseSync(":memory:");
+  migrateDb.exec("CREATE TABLE launch_invites (tokenHash TEXT PRIMARY KEY, email TEXT NOT NULL, userId TEXT NOT NULL, expires INTEGER NOT NULL, consumed INTEGER, revoked INTEGER NOT NULL DEFAULT 0);");
+  const invSvc = createInvitations(migrateDb);
+  const issued = invSvc.issue("new.timestamped@example.com");
+  const issuedRow = migrateDb.prepare("SELECT created_at FROM launch_invites WHERE email = ?").get(issued.email);
+  assert.ok(Number.isSafeInteger(issuedRow.created_at) && issuedRow.created_at > 0);
+  migrateDb.close();
+
+  // 5. Legacy snapshot without auth.sqlite degrades gracefully
   const legacyDir = path.join(root, "legacy-no-auth");
   fs.mkdirSync(legacyDir, { recursive: true });
   fs.copyFileSync(path.join(snapDir, "bojin.db"), path.join(legacyDir, "bojin.db"));
@@ -1611,6 +1678,7 @@ test("daily summary computes strictly non-PII 7-day beta cohort funnel & capacit
   });
   assert.equal(sLegacy.cohortFunnel.snapshotAvailable, true);
   assert.equal(sLegacy.cohortFunnel.authDbPresent, false);
+  assert.equal(sLegacy.cohortFunnel.invitations, null);
   assert.equal(sLegacy.cohortFunnel.funnel, null);
   assert.equal(sLegacy.cohortFunnel.capacity.spotsUsed, null);
   assert.equal(sLegacy.cohortFunnel.capacity.pendingInviteRequests, 1);

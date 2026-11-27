@@ -22,7 +22,7 @@ const {
 
 const USAGE = [
   "Usage: node scripts/invite-requests-admin.js",
-  "  [list [--status pending|invited|dismissed|all] [--limit N] [--env-file <path>] [--json]]",
+  "  [list [--status pending|sending|sending_uncertain|invited|dismissed|all] [--limit N] [--env-file <path>] [--json]]",
   "  | show <id> [--env-file <path>] [--json]",
   "  | mark <id> --status invited|dismissed|pending [--note <short-reason>] [--env-file <path>] [--json]",
   "  | fulfill <id> [--env-file <path>] [--max-spots N] [--json]",
@@ -31,7 +31,7 @@ const USAGE = [
   "  | prune [--days N] [--env-file <path>] [--json]"
 ].join(" ");
 
-const LIST_STATUSES = new Set(["pending", "invited", "dismissed", "all"]);
+const LIST_STATUSES = new Set(["pending", "sending", "sending_uncertain", "invited", "dismissed", "all"]);
 const COMMANDS = new Set(["list", "show", "mark", "fulfill", "fulfill-pending", "delete", "prune"]);
 
 function parseContactTarget(raw) {
@@ -231,7 +231,9 @@ function formatFulfillText(res) {
   const lines = [
     `Spots:         ${res.spotsUsed} / ${res.maxSpots}${res.capReached ? " [CAP REACHED]" : ""}`,
     `Emailed:       ${res.emailedCount}${res.emailedIds.length ? ` (${res.emailedIds.map(escapeTerminalText).join(", ")})` : ""}`,
+    `Resolved:      ${res.resolvedCount || 0}${res.resolvedIds && res.resolvedIds.length ? ` (${res.resolvedIds.map(r => `${escapeTerminalText(r.id)}:${escapeTerminalText(r.code)}`).join(", ")})` : ""}`,
     `Failed:        ${res.failedCount}${res.failedIds && res.failedIds.length ? ` (${res.failedIds.map(f => `${escapeTerminalText(f.id)}:${escapeTerminalText(f.code)}`).join(", ")})` : ""}`,
+    `Uncertain:     ${res.uncertainCount || 0}${res.uncertainIds && res.uncertainIds.length ? ` (${res.uncertainIds.map(escapeTerminalText).join(", ")})` : ""}`,
     `Phone pending: ${res.phonePendingCount}${res.phonePendingIds.length ? ` (${res.phonePendingIds.map(escapeTerminalText).join(", ")})` : ""}`
   ];
   return lines.join("\n");
@@ -273,8 +275,12 @@ async function main() {
         capReached: spotsUsed >= opts.maxSpots,
         emailedCount: 0,
         emailedIds: [],
+        resolvedCount: 0,
+        resolvedIds: [],
         failedCount: 0,
         failedIds: [],
+        uncertainCount: 0,
+        uncertainIds: [],
         phonePendingCount: 0,
         phonePendingIds: []
       };
