@@ -644,8 +644,11 @@ const I18N = {
     "today.restBody":"步数目标 8000–10000，饭后散步最好。睡够 7–9 小时，比多练一次更能保住肌肉。",
     "today.rehab":"康复 10 分钟", "today.nextWorkout":"下一练是 {title}。",
     "cardio.title":"有氧运动",
-    "cardio.hint":"记录有氧用于复盘与恢复参考，不额外增加当日饮食热量目标",
+    "cardio.hint":"按体重估算净消耗并计入「记录 → 热量收支」；为防运动消耗高估抵消缺口，当日饮食目标保持稳定（长期变化由 7 日均重校准）",
     "cardio.openBtn":"+ 记录有氧", "cardio.addMoreBtn":"+ 再记一项",
+    "cardio.kcalEst":"约 {kcal} kcal",
+    "cardio.estPreview":"预计净消耗：约 {kcal} kcal",
+    "cardio.estPreviewEmpty":"预计净消耗：–",
     "cardio.typeLabel":"有氧项目", "cardio.typeGroupAria":"选择有氧项目",
     "cardio.type.incline_walk":"坡度快走", "cardio.type.run":"慢跑/跑步机",
     "cardio.type.bike":"骑行/单车", "cardio.type.stairmaster":"爬楼机",
@@ -839,8 +842,9 @@ const I18N = {
     "log.balReadGap":" 两者差得多，常见原因是有些吃的没记、份量估少了，或者消耗估算不准；多记几周就能看出你真实的消耗。",
     "log.balReadNone":"最近 7 天还没有记全三顿的日子，记全后才算平均（只记了一两顿的日子会显得缺口很大）。",
     "log.balKpiAvg":"7 日平均 kcal", "log.balKpiPlan":"计划每天", "log.balKpiTdee":"估算消耗", "log.balKpiDays":"记全天数",
-    "log.balFoot":"收支 = 当天各餐估算热量 − 估算消耗（TDEE，按身高体重年龄和步数算，误差约 10%）。现在的阶段是{stage}，目标是{range}。浅色柱是只记了一两顿的日子，不算进平均；今天还没过完，也不算。",
+    "log.balFoot":"收支 = 当天各餐估算热量 − 估算消耗（基础 TDEE 按身高体重年龄和步数算，加上已记录有氧的估算净消耗，快走/跑步/跳绳按 60% 计入以避免与步数重复计算，误差约 10%）。现在的阶段是{stage}，目标是{range}。浅色柱是只记了一两顿的日子，不算进平均；今天还没过完，也不算。",
     "log.balBarTitle":"{date} 吃 {kcal} − 消耗 {tdee} = {bal} kcal{flag}",
+    "log.balBarTitleCardio":"{date} 吃 {kcal} − 消耗 {tdee}（基础 {base} + 有氧 {cardio}）= {bal} kcal{flag}",
     "log.balFlagPartial":"（没记全）", "log.balFlagToday":"（今天）",
     "log.balChartAria":"近两周每日热量收支",
     "log.balLegend":"柱子向上是吃得比消耗多（盈余），向下是少（缺口）。{plan}", "log.balLegendPlan":"虚线是计划的收支。",
@@ -1124,8 +1128,11 @@ const I18N = {
     "today.restBody":"Aim for 8,000–10,000 steps (post-meal walks work great). Getting 7–9 hours of sleep preserves muscle better than an extra session.",
     "today.rehab":"10-min Mobility", "today.nextWorkout":"Next session: {title}.",
     "cardio.title":"Cardio",
-    "cardio.hint":"Logged for coaching & recovery context; doesn't increase daily calorie targets",
+    "cardio.hint":"Estimates net burn and adds it to Calorie Balance; daily meal targets stay steady so progress isn't offset (calibrated via 7-day avg weight)",
     "cardio.openBtn":"+ Log cardio", "cardio.addMoreBtn":"+ Add cardio",
+    "cardio.kcalEst":"~{kcal} kcal",
+    "cardio.estPreview":"Est. net burn: ~{kcal} kcal",
+    "cardio.estPreviewEmpty":"Est. net burn: –",
     "cardio.typeLabel":"Activity", "cardio.typeGroupAria":"Choose cardio activity",
     "cardio.type.incline_walk":"Incline Walk", "cardio.type.run":"Run / Treadmill",
     "cardio.type.bike":"Cycling / Bike", "cardio.type.stairmaster":"StairMaster",
@@ -1319,8 +1326,9 @@ const I18N = {
     "log.balReadGap":" A noticeable gap usually comes from unlogged bites, portion estimates, or TDEE variance — a few more weeks of logs will reveal your true maintenance.",
     "log.balReadNone":"No days with 3+ estimated meals in the last 7 days yet (partial days are excluded so deficits aren't overstated).",
     "log.balKpiAvg":"7-day avg kcal", "log.balKpiPlan":"Planned/day", "log.balKpiTdee":"Est. TDEE", "log.balKpiDays":"Full days",
-    "log.balFoot":"Balance = daily meal kcal − estimated TDEE (from stats & steps, ±10%). Current phase: {stage} (goal: {range}). Faded bars are partial days or today and aren't averaged.",
+    "log.balFoot":"Balance = daily meal kcal − estimated expenditure (base TDEE from stats & steps + logged cardio net burn; step-based cardio counts at 60% to avoid double-counting steps, ±10%). Current phase: {stage} (goal: {range}). Faded bars are partial days or today and aren't averaged.",
     "log.balBarTitle":"{date}: {kcal} in − {tdee} TDEE = {bal} kcal{flag}",
+    "log.balBarTitleCardio":"{date}: {kcal} in − {tdee} out ({base} base + {cardio} cardio) = {bal} kcal{flag}",
     "log.balFlagPartial":" (partial)", "log.balFlagToday":" (today)",
     "log.balChartAria":"14-day daily calorie balance",
     "log.balLegend":"Upward bars = surplus, downward = deficit. {plan}", "log.balLegendPlan":"Dashed line = planned balance.",
@@ -1943,10 +1951,35 @@ const CARDIO_MAX_MIN = 600;
 const CARDIO_MAX_NAME = 40;
 const CARDIO_MAX_NOTE = 120;
 const CARDIO_MAX_ID = 64;
-function clipText(s, max){
+const CARDIO_WEIGHT_MIN = 30;
+const CARDIO_WEIGHT_MAX = 250;
+const CARDIO_WEIGHT_FALLBACK = 70;
+const CARDIO_NET_METS = {
+  incline_walk: { low: 3.3, mod: 4.3, high: 5.5 },
+  run:          { low: 5.5, mod: 7.3, high: 9.5 },
+  bike:         { low: 3.5, mod: 5.8, high: 8.0 },
+  stairmaster:  { low: 4.5, mod: 6.5, high: 8.5 },
+  elliptical:   { low: 3.5, mod: 4.5, high: 6.5 },
+  row:          { low: 3.8, mod: 6.0, high: 8.5 },
+  swim:         { low: 4.5, mod: 6.5, high: 8.8 },
+  jump_rope:    { low: 6.5, mod: 8.8, high: 10.8 },
+  hiit:         { low: 5.0, mod: 7.0, high: 9.0 },
+  other:        { low: 3.0, mod: 4.8, high: 7.0 }
+};
+const STEP_CARDIO_TYPES = new Set(["incline_walk", "run", "jump_rope"]);
+const STEP_CARDIO_FACTOR = 0.6;
+function trimCardioBoundary(raw){
+  let s = raw.trim();
+  while (s && (/\s$/.test(s) || /[\uD800-\uDBFF]$/.test(s))) s = s.replace(/[\uD800-\uDBFF]$/, "").trim();
+  return s;
+}
+function cleanCardioBoundedText(s, max){
   return typeof s === "string"
-    ? Array.from(s.trim()).slice(0, max).join("").replace(/[\uD800-\uDBFF]+$/, "").trim()
+    ? trimCardioBoundary(Array.from(s.trim()).slice(0, max).join(""))
     : "";
+}
+function clipText(s, max){
+  return cleanCardioBoundedText(s, max);
 }
 function parseCardioMinutes(raw){
   if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= CARDIO_MAX_MIN ? raw : null;
@@ -1959,9 +1992,7 @@ function parseCardioMinutes(raw){
   return null;
 }
 function normCardioId(rawId){
-  return typeof rawId === "string"
-    ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("").replace(/[\uD800-\uDBFF]+$/, "").trim()
-    : "";
+  return cleanCardioBoundedText(rawId, CARDIO_MAX_ID);
 }
 function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
   const rawBase = normCardioId(rawId);
@@ -1975,7 +2006,7 @@ function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
   for (let n = 2; ; n++) {
     const suffix = "-" + n;
     const maxBase = Math.max(1, CARDIO_MAX_ID - suffix.length);
-    const prefix = baseChars.slice(0, maxBase).join("").replace(/[\uD800-\uDBFF]+$/, "").trim() || "c";
+    const prefix = trimCardioBoundary(baseChars.slice(0, maxBase).join("")) || "c";
     const cand = prefix + suffix;
     if (!seen.has(cand)) {
       seen.add(cand);
@@ -2051,10 +2082,55 @@ function cardioIntensityLabel(k, lang = getLang()){
   const key = "cardio.int." + k;
   return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : k);
 }
-function formatCardioDailyItem(c, lang = getLang()){
+function posFiniteWeight(v){
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = numOr(v);
+  return n != null && Number.isFinite(n) && n > 0 ? n : null;
+}
+function cardioWeightFor(date = S.date){
+  const day = date && S.days ? S.days[date] : null;
+  const w = posFiniteWeight(day?.checkin?.weight)
+    ?? posFiniteWeight(day?.targets?.w)
+    ?? (S.profile ? posFiniteWeight(targets().w) : null)
+    ?? CARDIO_WEIGHT_FALLBACK;
+  return Math.min(CARDIO_WEIGHT_MAX, Math.max(CARDIO_WEIGHT_MIN, w));
+}
+function cardioSessionKcal(entry, date = S.date){
+  if (!entry || typeof entry !== "object") return null;
+  const type = typeof entry.type === "string" && CARDIO_TYPE_SET.has(entry.type) ? entry.type : null;
+  if (!type) return null;
+  const mins = parseCardioMinutes(entry.minutes);
+  if (mins == null) return null;
+  const intensity = typeof entry.intensity === "string" && CARDIO_INTENSITY_SET.has(entry.intensity) ? entry.intensity : "low";
+  const netMet = CARDIO_NET_METS[type]?.[intensity];
+  if (!Number.isFinite(netMet) || netMet <= 0) return null;
+  return Math.max(1, Math.round(netMet * cardioWeightFor(date) * (mins / 60)));
+}
+function cardioBalanceKcal(entry, date = S.date){
+  const raw = cardioSessionKcal(entry, date);
+  if (raw == null) return 0;
+  return STEP_CARDIO_TYPES.has(entry.type) ? Math.max(1, Math.round(raw * STEP_CARDIO_FACTOR)) : raw;
+}
+function dayCardioBalanceKcal(date = S.date){
+  const list = sanitizeCardioList(S.days?.[date]?.cardio);
+  let total = 0;
+  for (const item of list) total += cardioBalanceKcal(item, date);
+  return total;
+}
+function cardioPreviewText(dr, date = S.date){
+  const kcal = dr ? cardioSessionKcal(dr, date) : null;
+  return kcal != null ? t("cardio.estPreview", {kcal}) : t("cardio.estPreviewEmpty");
+}
+function formatCardioDailyItem(c, lang = getLang(), date = S.date){
   const name = cardioLabel(c, lang);
   const intLbl = cardioIntensityLabel(c.intensity, lang);
-  return lang === "en" ? `${name} ${c.minutes}m (${intLbl})` : `${name} ${c.minutes}分钟（${intLbl}）`;
+  const kcal = cardioSessionKcal(c, date);
+  if (lang === "en") {
+    const meta = kcal != null ? `${intLbl} · ~${kcal} kcal` : intLbl;
+    return `${name} ${c.minutes}m (${meta})`;
+  }
+  const meta = kcal != null ? `${intLbl} · 约${kcal}kcal` : intLbl;
+  return `${name} ${c.minutes}分钟（${meta}）`;
 }
 function openCardioDraft(date = S.date, entry = null){
   S.cardioDraft = S.cardioDraft || {};
@@ -3045,12 +3121,14 @@ function cardioCard(date, day){
   const listHtml = list.length ? `<div class="cardio-list">${list.map(item => {
     const name = cardioLabel(item);
     const intCls = item.intensity === "high" ? "warn" : (item.intensity === "mod" ? "on" : "");
+    const kcal = cardioSessionKcal(item, date);
     return `<div class="cardio-item" data-cardio-id="${esc(item.id)}">
       <div class="row between">
         <div class="row" style="gap:6px;min-width:0">
           <b>${esc(name)}</b>
           <span class="num">${esc(t("cardio.minDisplay", {n: item.minutes}))}</span>
           <span class="chip ${intCls}">${esc(cardioIntensityLabel(item.intensity))}</span>
+          ${kcal != null ? `<span class="small muted num">${esc(t("cardio.kcalEst", {kcal}))}</span>` : ""}
         </div>
         <div class="row" style="gap:6px;flex:none">
           <button type="button" class="btn small" data-act="cardio-edit" data-v="${esc(item.id)}" aria-label="${esc(t("cardio.editAria", {name, min: item.minutes}))}"${busy?" disabled":""}>${esc(t("cardio.edit"))}</button>
@@ -3080,6 +3158,7 @@ function cardioCard(date, day){
       <div class="row" role="group" aria-label="${esc(t("cardio.intGroupAria"))}">${CARDIO_INTENSITIES.map(k =>
         `<button type="button" class="chip ${dr.intensity===k?"on":""}" aria-pressed="${dr.intensity===k}" data-act="cardio-int" data-v="${k}"${busy?" disabled":""}>${esc(cardioIntensityLabel(k))}</button>`
       ).join("")}</div>
+      <p id="cardio-est-preview" class="small muted num">${esc(cardioPreviewText(dr, date))}</p>
       <label for="cardio-note">${esc(t("cardio.noteLabel"))}<input id="cardio-note" data-cardio="note" type="text" maxlength="${CARDIO_MAX_NOTE}" autocomplete="off" value="${esc(dr.note || "")}" placeholder="${esc(t("cardio.notePh"))}"${busy?" disabled":""}></label>
       ${errText ? `<p class="tip bad" id="cardio-err" role="alert">${esc(errText)}</p>` : ""}
       <div class="row">
@@ -4055,9 +4134,9 @@ function balanceSeries(span=14){
   for (let i = span-1; i >= 0; i--) {
     const date = addDays(td, -i), m = dayMacros(date);
     if (!m.est) { out.push({date, none:true}); continue; }
-    const tdee = dayTdee(date);
+    const baseTdee = dayTdee(date), cardioKcal = dayCardioBalanceKcal(date), tdee = baseTdee + cardioKcal;
     // 估算过的餐少于 3 顿，多半没记全：画出来但不算进平均
-    out.push({date, kcal:m.kcal, tdee, bal:m.kcal - tdee, partial: m.est < 3 && date !== td, today: date === td});
+    out.push({date, kcal:m.kcal, baseTdee, cardioKcal, tdee, bal:m.kcal - tdee, partial: m.est < 3 && date !== td, today: date === td});
   }
   return out;
 }
@@ -4097,7 +4176,10 @@ function balanceChart(ser, planBal){
     const y0 = y(0), y1 = y(d.bal), top = Math.min(y0,y1), h = Math.max(1, Math.abs(y1-y0));
     const col = d.bal >= 0 ? "var(--warn)" : "var(--accent)";
     const flag = d.partial ? t("log.balFlagPartial") : d.today ? t("log.balFlagToday") : "";
-    return `<rect x="${(x(i)+bw*0.18).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${col}" opacity="${d.partial||d.today?0.35:1}"><title>${esc(t("log.balBarTitle", {date:d.date, kcal:d.kcal, tdee:d.tdee, bal:(d.bal>0?"+":"")+d.bal, flag}))}</title></rect>`; }).join("");
+    const title = d.cardioKcal > 0
+      ? t("log.balBarTitleCardio", {date:d.date, kcal:d.kcal, tdee:d.tdee, base:d.baseTdee, cardio:d.cardioKcal, bal:(d.bal>0?"+":"")+d.bal, flag})
+      : t("log.balBarTitle", {date:d.date, kcal:d.kcal, tdee:d.tdee, bal:(d.bal>0?"+":"")+d.bal, flag});
+    return `<rect x="${(x(i)+bw*0.18).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${col}" opacity="${d.partial||d.today?0.35:1}"><title>${esc(title)}</title></rect>`; }).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t("log.balChartAria"))}">
     <g fill="var(--muted)" font-size="10" font-family="Barlow Condensed, sans-serif">
       <text x="2" y="${y(0)+3}">0</text>${hi-pad > 60 ? `<text x="2" y="${y(hi-pad)+3}">+${Math.round(hi-pad)}</text>` : ""}${lo+pad < -60 ? `<text x="2" y="${y(lo+pad)+3}">${Math.round(lo+pad)}</text>` : ""}
@@ -4111,10 +4193,10 @@ function balanceText(lang = getLang()){
   const full = balanceSeries(14).filter(d => !d.none && !d.partial && !d.today);
   if (lang === "en") {
     if (!full.length) return "No days with 3+ estimated meals in the last 14 days";
-    return `Across ${full.length} fully logged day(s) in the last 14 days, avg ${Math.round(mean(full.map(d => d.bal)))} kcal/day (intake − est. TDEE; negative = deficit)`;
+    return `Across ${full.length} fully logged day(s) in the last 14 days, avg ${Math.round(mean(full.map(d => d.bal)))} kcal/day (intake − est. expenditure incl. net cardio; negative = deficit)`;
   }
   if (!full.length) return "最近 14 天没有记全三顿的日子";
-  return `最近 14 天记全的 ${full.length} 天，平均每天 ${Math.round(mean(full.map(d => d.bal)))} kcal（吃进 − 估算TDEE，负数是缺口）`;
+  return `最近 14 天记全的 ${full.length} 天，平均每天 ${Math.round(mean(full.map(d => d.bal)))} kcal（吃进 − 估算消耗含已记有氧，负数是缺口）`;
 }
 function rateColor(r){ const st = stageOf(S.profile); if (st === "cut") return r <= -0.5 && r >= -1 ? "var(--good)" : "var(--warn)"; if (st === "bulk") return r > 0 && r < 0.3 ? "var(--good)" : "var(--warn)"; return Math.abs(r) < 0.8 ? "var(--good)" : "var(--warn)"; }
 function chart(cs){
@@ -4141,7 +4223,7 @@ function dayRow(d){
   if (w?.done) tags.push(`<span class="chip on">${esc(progLabel(w.key))}${w.feel?" · "+esc(feelLabel(w.feel)):""}</span>`);
   if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${esc(w.pain==="pain"?t("log.painHard"):t("log.painMild"))}</span>`);
   if (cardio.length) {
-    const summary = cardio.map(c => formatCardioDailyItem(c)).join(getLang() === "en" ? ", " : "、");
+    const summary = cardio.map(c => formatCardioDailyItem(c, getLang(), d.date)).join(getLang() === "en" ? ", " : "、");
     tags.push(`<span class="chip">${esc(t("log.cardioChip", {summary}))}</span>`);
   }
   if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:fmtMacro("kcal", m.kcal) || "0", p:fmtMacro("protein", m.protein) || "0"}):""}))}</span>`);
@@ -4442,7 +4524,7 @@ function dataDigest(lang = getLang()){
         s += `| Workout ${wTitle} feel:${feelEn[w.feel]||"unlogged"} pain:${w.pain==="pain"?"clear("+(w.painArea||"")+")":w.pain==="mild"?"mild("+(w.painArea||"")+")":"none"} ` + (w.exercises||[]).map(e => `${exDisp(e.name)} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("; ") + (w.note?` note:${w.note}`:"");
       }
       if (cardio.length) {
-        s += ` | Cardio: ` + cardio.map(x => `${cardioLabel(x, "en")} ${x.minutes}m (${cardioIntensityLabel(x.intensity, "en")})${x.note ? " [" + x.note + "]" : ""}`).join("; ");
+        s += ` | Cardio: ` + cardio.map(x => `${formatCardioDailyItem(x, "en", date)}${x.note ? " [" + x.note + "]" : ""}`).join("; ");
       }
       if (m.n) s += ` | Meals ${m.n}` + (m.est ? ` est ${m.kcal}kcal P${m.protein}g C${m.carbs}g F${m.fat}g` : "") + ": " + d.meals.map(x => `${I18N.en["mealType."+x.type]||x.type}:${(x.text||"").slice(0,40)}`).join("; ");
       lines.push(s);
@@ -4467,7 +4549,7 @@ ${lines.join("\n") || "(no logs yet)"}`;
     if (c.weight) s += `体重${c.weight} `; if (c.steps) s += `步数${c.steps} `; if (c.sleep) s += `睡眠${c.sleep}h `; if (c.bf) s += `体脂${c.bf}% `; if (c.waist) s += `腰围${c.waist} `;
     if (w?.done) s += `| 训练 ${PROGRAM[w.key]?.title} 感受:${FEEL[w.feel]||"未填"} 疼痛:${w.pain==="pain"?"明显("+(w.painArea||"")+")":w.pain==="mild"?"轻微("+(w.painArea||"")+")":"无"} ` + (w.exercises||[]).map(e => `${e.name} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("；") + (w.note?` 备注:${w.note}`:"");
     if (cardio.length) {
-      s += ` | 有氧：` + cardio.map(x => `${cardioLabel(x, "zh")} ${x.minutes}分钟（${cardioIntensityLabel(x.intensity, "zh")}）${x.note ? " 备注:" + x.note : ""}`).join("；");
+      s += ` | 有氧：` + cardio.map(x => `${formatCardioDailyItem(x, "zh", date)}${x.note ? " 备注:" + x.note : ""}`).join("；");
     }
     if (m.n) s += ` | 饮食${m.n}餐` + (m.est ? ` 估算${m.kcal}kcal 蛋白${m.protein}g 碳水${m.carbs}g 脂肪${m.fat}g` : "") + "：" + d.meals.map(x => `${x.type}:${(x.text||"").slice(0,40)}`).join("；");
     lines.push(s);
@@ -5953,6 +6035,8 @@ document.addEventListener("input", ev => {
           btn.classList?.toggle?.("on", on);
           btn.setAttribute?.("aria-pressed", String(on));
         });
+        const prevEl = $("#cardio-est-preview");
+        if (prevEl) prevEl.textContent = cardioPreviewText(dr, S.date);
       }
     }
   }
