@@ -1014,19 +1014,30 @@ test('P2 regression: sanitizer deduplicates colliding cardio IDs (raw, trimmed, 
 
   // Two-pass explicit ID reservation: generated suffixes and fallback IDs never steal a later retained session's explicit ID
   const mk = (id, note) => ({ ...(id !== undefined ? { id } : {}), type: 'run', minutes: 20, intensity: 'low', note });
+  const prefix63 = 'a'.repeat(63);
   env.ctx.__cases = {
     dupThenExplicit: [mk('foo', 'a'), mk('foo', 'b'), mk('foo-2', 'c')],
     explicitThenDup: [mk('foo-2', 'c'), mk('foo', 'a'), mk('foo', 'b')],
     missingThenExplicitC0: [mk(undefined, 'no-id'), mk('c0', 'explicit-c0')],
     truncAndExplicitSuffix: [mk(longBase + 'X', 'l1'), mk(longBase + 'Y', 'l2'), mk('a'.repeat(62) + '-2', 'explicit-suf')],
-    invalidDoesNotReserve: [mk('foo', 'a'), mk('foo', 'b'), { id: 'foo-2', type: 'run', minutes: 0, intensity: 'low' }]
+    invalidDoesNotReserve: [mk('foo', 'a'), mk('foo', 'b'), { id: 'foo-2', type: 'run', minutes: 0, intensity: 'low' }],
+    trailingSpaceBoundary: [mk(prefix63 + ' b', 'trunc-space'), mk(prefix63, 'exact-63')],
+    whitespaceBoundaries: [
+      mk(' '.repeat(63) + 'b', 'leading-spaces'),
+      mk('x' + ' '.repeat(63) + 'y', 'inner-spaces-trunc'),
+      mk('a'.repeat(61) + ' b', 'space-at-62-first'),
+      mk('a'.repeat(61) + ' b', 'space-at-62-dup'),
+      mk('z'.repeat(63) + '\uD800', 'lone-surrogate')
+    ]
   };
   const res = vm.runInContext(`({
     dupThenExplicit: sanitizeCardioList(__cases.dupThenExplicit),
     explicitThenDup: sanitizeCardioList(__cases.explicitThenDup),
     missingThenExplicitC0: sanitizeCardioList(__cases.missingThenExplicitC0),
     truncAndExplicitSuffix: sanitizeCardioList(__cases.truncAndExplicitSuffix),
-    invalidDoesNotReserve: sanitizeCardioList(__cases.invalidDoesNotReserve)
+    invalidDoesNotReserve: sanitizeCardioList(__cases.invalidDoesNotReserve),
+    trailingSpaceBoundary: sanitizeCardioList(__cases.trailingSpaceBoundary),
+    whitespaceBoundaries: sanitizeCardioList(__cases.whitespaceBoundaries)
   })`, env.ctx);
 
   assert.deepEqual(Array.from(res.dupThenExplicit, x => x.id), ['foo', 'foo-3', 'foo-2']);
@@ -1042,11 +1053,25 @@ test('P2 regression: sanitizer deduplicates colliding cardio IDs (raw, trimmed, 
     assert.ok(item.id.length <= 64, `ID exceeds 64 chars: ${item.id.length}`);
   }
   assert.deepEqual(Array.from(res.invalidDoesNotReserve, x => x.id), ['foo', 'foo-2']);
-  // Verify idempotency on all reserved outputs
+  // Trailing-space truncation boundary preserves explicit prefix63 on second item and stays strictly idempotent
+  assert.deepEqual(Array.from(res.trailingSpaceBoundary, x => x.id), ['a'.repeat(62) + '-2', prefix63]);
+  assert.deepEqual(Array.from(res.trailingSpaceBoundary, x => x.note), ['trunc-space', 'exact-63']);
+  // Whitespace-padded and lone-surrogate truncation boundaries stay trimmed, valid, and strictly idempotent
+  assert.deepEqual(
+    Array.from(res.whitespaceBoundaries, x => x.id),
+    ['b', 'x', 'a'.repeat(61) + ' b', 'a'.repeat(61) + '-2', 'z'.repeat(63)]
+  );
+  for (const item of res.whitespaceBoundaries) {
+    assert.equal(item.id, item.id.trim(), `ID must not have leading/trailing whitespace: ${JSON.stringify(item.id)}`);
+    assert.ok(item.id.length <= 64, `ID exceeds 64 chars: ${item.id.length}`);
+    assert.equal(/[\uD800-\uDBFF]$/.test(item.id), false, 'ID must not end with lone high surrogate');
+  }
+  // Verify strict full-object idempotency across two passes on all cases
   for (const [name, list] of Object.entries(res)) {
     env.ctx.__check = list;
-    const reRun = Array.from(vm.runInContext('sanitizeCardioList(__check).map(x => x.id)', env.ctx));
-    assert.deepEqual(reRun, Array.from(list, x => x.id), `two-pass reservation must be idempotent for ${name}`);
+    const oncePlain = JSON.parse(JSON.stringify(list));
+    const twicePlain = JSON.parse(JSON.stringify(vm.runInContext('sanitizeCardioList(__check)', env.ctx)));
+    assert.deepStrictEqual(twicePlain, oncePlain, `full sanitizeCardioList output must be strictly idempotent for ${name}`);
   }
 });
 

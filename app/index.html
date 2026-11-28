@@ -1943,7 +1943,11 @@ const CARDIO_MAX_MIN = 600;
 const CARDIO_MAX_NAME = 40;
 const CARDIO_MAX_NOTE = 120;
 const CARDIO_MAX_ID = 64;
-function clipText(s, max){ return typeof s === "string" ? Array.from(s.trim()).slice(0, max).join("") : ""; }
+function clipText(s, max){
+  return typeof s === "string"
+    ? Array.from(s.trim()).slice(0, max).join("").replace(/[\uD800-\uDBFF]+$/, "").trim()
+    : "";
+}
 function parseCardioMinutes(raw){
   if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= CARDIO_MAX_MIN ? raw : null;
   if (typeof raw === "string") {
@@ -1955,7 +1959,9 @@ function parseCardioMinutes(raw){
   return null;
 }
 function normCardioId(rawId){
-  return typeof rawId === "string" ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
+  return typeof rawId === "string"
+    ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("").replace(/[\uD800-\uDBFF]+$/, "").trim()
+    : "";
 }
 function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
   const rawBase = normCardioId(rawId);
@@ -1968,7 +1974,9 @@ function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
   const baseChars = Array.from(base);
   for (let n = 2; ; n++) {
     const suffix = "-" + n;
-    const cand = baseChars.slice(0, Math.max(1, CARDIO_MAX_ID - suffix.length)).join("") + suffix;
+    const maxBase = Math.max(1, CARDIO_MAX_ID - suffix.length);
+    const prefix = baseChars.slice(0, maxBase).join("").replace(/[\uD800-\uDBFF]+$/, "").trim() || "c";
+    const cand = prefix + suffix;
     if (!seen.has(cand)) {
       seen.add(cand);
       return cand;
@@ -2004,10 +2012,22 @@ function sanitizeCardioList(list){
     const raw = list[i];
     const fields = sanitizeCardioFields(raw);
     if (!fields) continue;
+    const trimmedId = typeof raw.id === "string" ? raw.id.trim() : "";
     const explicitId = normCardioId(raw.id);
-    const ownsExplicit = !!explicitId && !reservedIds.has(explicitId);
-    if (ownsExplicit) reservedIds.add(explicitId);
-    retained.push({ fields, explicitId, ownsExplicit, fallbackId: "c" + i });
+    const isExact = !!explicitId && trimmedId === explicitId;
+    retained.push({ fields, explicitId, isExact, ownsExplicit: false, fallbackId: "c" + i });
+  }
+  for (const item of retained) {
+    if (item.isExact && !reservedIds.has(item.explicitId)) {
+      item.ownsExplicit = true;
+      reservedIds.add(item.explicitId);
+    }
+  }
+  for (const item of retained) {
+    if (!item.ownsExplicit && item.explicitId && !reservedIds.has(item.explicitId)) {
+      item.ownsExplicit = true;
+      reservedIds.add(item.explicitId);
+    }
   }
   return retained.map(item => {
     const id = item.ownsExplicit ? item.explicitId : uniqueCardioId(item.explicitId, item.fallbackId, reservedIds);
