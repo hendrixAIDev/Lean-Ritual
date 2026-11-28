@@ -2319,7 +2319,7 @@ async function updateDay(date, fn, opt = {}){
   } catch (e) { console.warn("day write failed", e); if (!opt.silent) saveErr(e); throw e; }
 }
 let profileSeq = 0;
-async function updateProfile(fn){
+async function updateProfile(fn, opt = {}){
   const seq = ++profileSeq;
   const prevAdjLen = (S.profile?.adjustLog || []).length;
   try {
@@ -2331,7 +2331,7 @@ async function updateProfile(fn){
       render();
     }
     return next;
-  } catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
+  } catch (e) { console.warn("profile write failed", e); if (!opt.silent) saveErr(e); throw e; }
 }
 /* 训练记录另存一份只增不改的备份：即使某天的记录被覆盖，也能从这里恢复 */
 function backupWorkout(date, w){
@@ -2403,7 +2403,16 @@ async function loadAll(){
     await restoreWorkouts();
     const fb = await S.store.list("feedback", {order:"createdAt", limit:200});
     S.feedback = fb.map(d => d.data).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
-    S.guideVeteranAutoHide = !!(S.profile && S.profile.guideDismissed === undefined && quickstartDoneCount() === 4);
+    const pendingGuide = getGuidePending();
+    if (S.profile && pendingGuide) {
+      const desired = pendingGuide === "dismissed";
+      if (S.profile.guideDismissed === desired) {
+        setGuidePending("");
+      } else if (S.cloud && S.store && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+        flushPendingGuideIntent(pendingGuide);
+      }
+    }
+    S.guideVeteranAutoHide = !!(S.profile && S.profile.guideDismissed === undefined && getGuidePending() !== "open" && quickstartDoneCount() === 4);
   } catch (e) { console.error(e); S.loadError = true; }
 }
 
@@ -2765,7 +2774,14 @@ async function submitSetup(form){
     updatedAt:new Date().toISOString()};
   const today = todayStr();
   const chosenLang = validLang(S.explicitLang) || readPendingLang();
-  const apply = p => { Object.assign(p, fields); if (chosenLang) p.lang = chosenLang; if (!prev.startDate && typeof p.guideDismissed !== "boolean") p.guideDismissed = false; p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION; };
+  const pendingGuide = prev.startDate ? getGuidePending() : "";
+  const apply = p => {
+    Object.assign(p, fields);
+    if (chosenLang) p.lang = chosenLang;
+    if (!prev.startDate && typeof p.guideDismissed !== "boolean") p.guideDismissed = false;
+    else if (pendingGuide) p.guideDismissed = pendingGuide === "dismissed";
+    p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION;
+  };
   S.busy.setup = true; if (btn) btn.disabled = true;
   try {
     let h = null;
@@ -2775,7 +2791,8 @@ async function submitSetup(form){
       await write("profileHistory/" + h.id, h);
     }
     await updateProfile(apply);
-    if (!prev.startDate) { lsDel("bj-guide-dismissed"); S.guideVeteranAutoHide = false; S.guideCollapsed = false; }
+    if (!prev.startDate) { setGuidePending(""); S.guideVeteranAutoHide = false; S.guideCollapsed = false; }
+    else if (pendingGuide && getGuidePending() === pendingGuide) { setGuidePending(""); }
     if (chosenLang) clearPendingLang();
     if (h) { S.profileHistory = [h, ...(S.profileHistory||[])]; resetPage("profileHistory"); }
     S.editing = false; S.tab = "today";
@@ -3258,11 +3275,61 @@ function cardioCard(date, day){
   </section>`;
 }
 
+const GUIDE_PENDING_KEY = "bj-guide-pending";
+const CHECKIN_FIELDS = ["weight", "steps", "sleep", "bf", "waist"];
+function getGuidePending(){
+  const v = lsGet(GUIDE_PENDING_KEY, "");
+  return v === "dismissed" || v === "open" ? v : "";
+}
+function setGuidePending(val){
+  if (val === "dismissed" || val === "open") lsSet(GUIDE_PENDING_KEY, val);
+  else lsDel(GUIDE_PENDING_KEY);
+}
+function flushPendingGuideIntent(intent){
+  if (intent !== "dismissed" && intent !== "open") return Promise.resolve();
+  const desired = intent === "dismissed";
+  return updateProfile(p => { p.guideDismissed = desired; }, { silent: true })
+    .then(() => { if (getGuidePending() === intent) setGuidePending(""); })
+    .catch(() => {});
+}
+function isFiniteNumVal(v){
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "string") {
+    const s = v.trim();
+    return s !== "" && Number.isFinite(Number(s));
+  }
+  return false;
+}
+function hasSavedCheckin(d){
+  const c = d?.checkin;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+  return CHECKIN_FIELDS.some(k => isFiniteNumVal(c[k]));
+}
+function isSavedMealEntry(m){
+  if (!m || typeof m !== "object" || Array.isArray(m)) return false;
+  if (typeof m.text === "string" && m.text.trim() !== "") return true;
+  if (typeof m.name === "string" && m.name.trim() !== "") return true;
+  const est = m.est && typeof m.est === "object" && !Array.isArray(m.est) ? m.est : null;
+  if (est && ["kcal", "protein", "carbs", "fat"].some(k => isFiniteNumVal(est[k]))) return true;
+  if (["kcal", "protein", "carbs", "fat"].some(k => isFiniteNumVal(m[k]))) return true;
+  if (est && Array.isArray(est.items) && est.items.some(x => x && typeof x.name === "string" && x.name.trim() !== "")) return true;
+  if (safeBlobId(m.photo) || safeImage(m.thumb)) return true;
+  if (moreOf(m).some(p => safeBlobId(p.id) || safeImage(p.thumb))) return true;
+  return false;
+}
+function hasSavedMeal(d){
+  return Array.isArray(d?.meals) && d.meals.some(isSavedMealEntry);
+}
+function hasSavedWorkoutOrCardio(d){
+  const w = d?.workout;
+  if (w && typeof w === "object" && !Array.isArray(w) && w.done === true) return true;
+  return Array.isArray(d?.cardio) && sanitizeCardioList(d.cardio).length > 0;
+}
 function quickstartSteps(){
   const days = Object.values(S.days || {});
-  const hasCheckin = days.some(d => d?.checkin && typeof d.checkin === "object" && !Array.isArray(d.checkin));
-  const hasMeal = days.some(d => Array.isArray(d?.meals) && d.meals.length > 0);
-  const hasWorkout = days.some(d => !!d?.workout?.done || (Array.isArray(d?.cardio) && d.cardio.length > 0));
+  const hasCheckin = days.some(hasSavedCheckin);
+  const hasMeal = days.some(hasSavedMeal);
+  const hasWorkout = days.some(hasSavedWorkoutOrCardio);
   return [
     { key: "plan", done: true },
     { key: "checkin", done: hasCheckin, act: "qs-go-checkin" },
@@ -3275,12 +3342,12 @@ function quickstartDoneCount(){
 }
 function isQuickstartVisible(){
   if (!S.profile) return false;
+  const pending = getGuidePending();
+  if (pending === "dismissed") return false;
+  if (pending === "open") return true;
   if (S.profile.guideDismissed === true) return false;
-  if (S.profile.guideDismissed === undefined) {
-    if (lsGet("bj-guide-dismissed", "") === "1") return false;
-    if (S.guideVeteranAutoHide) return false;
-  }
-  return true;
+  if (S.profile.guideDismissed === false) return true;
+  return !S.guideVeteranAutoHide;
 }
 function isStandaloneDisplay(){
   try {
@@ -5642,7 +5709,7 @@ document.addEventListener("click", async ev => {
     case "qs-dismiss": {
       if (!S.profile) break;
       syncCardioInputsFromDom(S.date);
-      lsSet("bj-guide-dismissed", "1");
+      setGuidePending("dismissed");
       S.profile.guideDismissed = true;
       S.guideCollapsed = false;
       render();
@@ -5652,12 +5719,13 @@ document.addEventListener("click", async ev => {
       announce(msg);
       try {
         await updateProfile(p => { p.guideDismissed = true; });
+        if (getGuidePending() === "dismissed") setGuidePending("");
       } catch {}
       break;
     }
     case "qs-reopen": {
       if (!S.profile) break;
-      lsDel("bj-guide-dismissed");
+      setGuidePending("open");
       S.guideVeteranAutoHide = false;
       S.guideCollapsed = false;
       S.profile.guideDismissed = false;
@@ -5668,6 +5736,7 @@ document.addEventListener("click", async ev => {
       focusEl($("#qs-heading") || $("#qs-toggle"));
       try {
         await updateProfile(p => { p.guideDismissed = false; });
+        if (getGuidePending() === "open") setGuidePending("");
         if (S.tab === "today") focusEl($("#qs-heading") || $("#qs-toggle"));
       } catch {}
       break;
@@ -5685,7 +5754,7 @@ document.addEventListener("click", async ev => {
       syncCardioInputsFromDom(S.date);
       S.ed = null; S.adopt = null; S.undoConflict = null;
       const td = todayStr();
-      if (S.date !== td && !(Array.isArray(S.days?.[S.date]?.meals) && S.days[S.date].meals.length > 0)) S.date = td;
+      if (S.date !== td && !hasSavedMeal(S.days?.[S.date])) S.date = td;
       S.tab = "food";
       lsSet("bj-tab", "food");
       render();

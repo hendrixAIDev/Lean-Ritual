@@ -38,13 +38,27 @@ function makeMemoryStore(initialDocs = {}) {
   const docs = new Map(Object.entries(initialDocs).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]));
   const clone = v => (v == null ? v : JSON.parse(JSON.stringify(v)));
   const writes = [];
-  return {
+  const store = {
     docs,
     writes,
+    failProfileWrites: false,
     async get(p) { return docs.has(p) ? clone(docs.get(p)) : null; },
-    async set(p, d) { writes.push({ op: 'set', path: p }); docs.set(p, clone(d)); },
+    async set(p, d) {
+      if (store.failProfileWrites && p === 'app/profile') {
+        const err = new Error('network');
+        err.code = 'network';
+        throw err;
+      }
+      writes.push({ op: 'set', path: p });
+      docs.set(p, clone(d));
+    },
     async del(p) { writes.push({ op: 'del', path: p }); docs.delete(p); },
     async commit(changes) {
+      if (store.failProfileWrites && changes.some(ch => ch.path === 'app/profile' && ch.after !== undefined)) {
+        const err = new Error('network');
+        err.code = 'network';
+        throw err;
+      }
       for (const ch of changes) {
         const cur = docs.has(ch.path) ? docs.get(ch.path) : null;
         if (JSON.stringify(cur) !== JSON.stringify(ch.before ?? null)) {
@@ -69,6 +83,7 @@ function makeMemoryStore(initialDocs = {}) {
       return out;
     }
   };
+  return store;
 }
 
 function mountEnv({
@@ -395,7 +410,7 @@ test('2. Persistence across reload, cloud+local dismissal, and Me reopen flow', 
   assert.equal(vm.runInContext('isQuickstartVisible()', s2.ctx), false);
   assert.doesNotMatch(s2.appEl.innerHTML, /id="quickstart-card"/);
   assert.equal((await sharedStore.get('app/profile')).guideDismissed, true);
-  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-dismissed'), '"1"');
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), null, 'pending intent cleared after successful cloud sync');
   assert.ok(s2.toasts.some(m => m.includes('已收起新手指引')), 'dismiss toast should be shown');
   assert.ok(s2.announcements.some(m => m.includes('已收起新手指引')), 'dismiss announcement should be spoken');
 
@@ -411,12 +426,13 @@ test('2. Persistence across reload, cloud+local dismissal, and Me reopen flow', 
   assert.match(s3.appEl.innerHTML, /data-act="qs-reopen"/);
   assert.match(s3.appEl.innerHTML, /重新打开新手指引/);
 
-  // Click reopen: clears local flag, sets guideDismissed=false in cloud, jumps to Today, focuses #qs-heading
+  // Click reopen: sets guideDismissed=false in cloud, clears pending after sync, jumps to Today, focuses #qs-heading
   s3.focused.length = 0;
   await s3.click('qs-reopen');
   assert.equal(vm.runInContext('S.tab', s3.ctx), 'today');
   assert.equal(vm.runInContext('isQuickstartVisible()', s3.ctx), true);
   assert.equal((await sharedStore.get('app/profile')).guideDismissed, false);
+  assert.equal(s3.localStorage.getItem('bj-user:u1:bj-guide-pending'), null);
   assert.match(s3.appEl.innerHTML, /id="quickstart-card"/);
   assert.ok(s3.focused.includes('#qs-heading'), `expected focus on #qs-heading, got ${JSON.stringify(s3.focused)}`);
   assert.ok(s3.scrollToCalls.some(([x, y]) => x === 0 && y === 0), 'reopen should scroll to top');
@@ -426,20 +442,6 @@ test('2. Persistence across reload, cloud+local dismissal, and Me reopen flow', 
   await s4.loadAndRender();
   assert.equal(vm.runInContext('isQuickstartVisible()', s4.ctx), true);
   assert.match(s4.appEl.innerHTML, /id="quickstart-card"/);
-
-  // User-scoped local fallback hides card when cloud profile still has guideDismissed=undefined
-  const fallbackStore = makeMemoryStore({
-    'app/profile': {
-      sex: 'm', age: 28, height: 176, weight: 72, bf: 15, steps: 9500,
-      exp: 'new', stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
-      startDate: '2026-11-19', injuries: [], supps: []
-    }
-  });
-  const fallbackLs = makeStorage({ 'bj-lang': 'zh', 'bj-user:u1:bj-guide-dismissed': '"1"' });
-  const s5 = mountEnv({ store: fallbackStore, localStorage: fallbackLs });
-  await s5.loadAndRender();
-  assert.equal(vm.runInContext('isQuickstartVisible()', s5.ctx), false, 'local fallback hides card when cloud guideDismissed is undefined');
-  assert.doesNotMatch(s5.appEl.innerHTML, /id="quickstart-card"/);
 });
 
 test('3a. Live auto-progression 1/4 -> 2/4 (checkin) -> 3/4 (meal) -> 4/4 celebration (strength workout)', async () => {
@@ -695,12 +697,205 @@ test('7. Editing profile preserves guideDismissed; dismiss/reopen never pollutes
   assert.equal(tri.badNull, undefined);
   assert.equal(tri.hasBadKey, false);
 
-  // Logout clears user-scoped localStorage fallback & memory flags
+  // Logout clears user-scoped pending localStorage intent & memory flags
+  env.store.failProfileWrites = true;
   await env.click('qs-dismiss');
+  env.store.failProfileWrites = false;
   vm.runInContext('S.guideCollapsed = true; S.guideVeteranAutoHide = true;', env.ctx);
-  assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-dismissed'), '"1"');
+  assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"');
   await env.click('logout');
-  assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-dismissed'), null, 'logout must clear user-scoped guide dismissal');
+  assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-pending'), null, 'logout must clear user-scoped guide pending intent');
   assert.equal(vm.runInContext('S.guideCollapsed', env.ctx), false);
   assert.equal(vm.runInContext('S.guideVeteranAutoHide', env.ctx), false);
+});
+
+test('8. Failed cloud writes preserve pending dismiss and reopen choices across reloads and flush when writes recover', async () => {
+  const sharedStore = makeMemoryStore();
+  const sharedLs = makeStorage({ 'bj-lang': 'zh' });
+
+  // 8a. Brand-new account (cloud guideDismissed: false) -> failed qs-dismiss -> reload keeps hidden -> recovery flushes to cloud
+  const s1 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s1.submitForm(BASE_SETUP_DATA);
+  assert.equal((await sharedStore.get('app/profile')).guideDismissed, false);
+
+  sharedStore.failProfileWrites = true;
+  await s1.click('qs-dismiss');
+  assert.equal(vm.runInContext('isQuickstartVisible()', s1.ctx), false, 'UI stays dismissed despite failed write');
+  assert.doesNotMatch(s1.appEl.innerHTML, /id="quickstart-card"/);
+  assert.equal((await sharedStore.get('app/profile')).guideDismissed, false, 'cloud still has stale false');
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"');
+
+  // Reload while cloud still has guideDismissed: false AND writes still fail
+  const s2 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s2.loadAndRender();
+  await new Promise(r => setImmediate(r));
+  assert.equal(vm.runInContext('isQuickstartVisible()', s2.ctx), false, 'pending dismiss must override explicit cloud guideDismissed=false on reload');
+  assert.doesNotMatch(s2.appEl.innerHTML, /id="quickstart-card"/);
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"', 'pending flag stays until cloud write succeeds');
+
+  // Writes recover -> reload flushes guideDismissed: true to cloud and clears pending key
+  sharedStore.failProfileWrites = false;
+  const s3 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s3.loadAndRender();
+  await new Promise(r => setImmediate(r));
+  assert.equal(vm.runInContext('isQuickstartVisible()', s3.ctx), false);
+  assert.equal((await sharedStore.get('app/profile')).guideDismissed, true, 'background flush persisted dismiss to cloud');
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), null, 'pending flag cleared once flush succeeded');
+
+  // Fresh device (empty localStorage) now sees cloud guideDismissed: true
+  const s3Fresh = mountEnv({ store: sharedStore, localStorage: makeStorage({ 'bj-lang': 'zh' }) });
+  await s3Fresh.loadAndRender();
+  assert.equal(vm.runInContext('isQuickstartVisible()', s3Fresh.ctx), false);
+
+  // 8b. Dismissed account (cloud guideDismissed: true) -> failed qs-reopen -> reload keeps open -> recovery flushes to cloud
+  sharedStore.failProfileWrites = true;
+  await s3.click('tab', 'me');
+  assert.match(s3.appEl.innerHTML, /data-act="qs-reopen"/);
+  await s3.click('qs-reopen');
+  assert.equal(vm.runInContext('S.tab', s3.ctx), 'today');
+  assert.equal(vm.runInContext('isQuickstartVisible()', s3.ctx), true, 'UI stays open despite failed reopen write');
+  assert.match(s3.appEl.innerHTML, /id="quickstart-card"/);
+  assert.equal((await sharedStore.get('app/profile')).guideDismissed, true, 'cloud still has stale true');
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"open"');
+
+  // Reload while cloud still has guideDismissed: true AND writes still fail
+  const s4 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s4.loadAndRender();
+  await new Promise(r => setImmediate(r));
+  assert.equal(vm.runInContext('isQuickstartVisible()', s4.ctx), true, 'pending open must override explicit cloud guideDismissed=true on reload');
+  assert.match(s4.appEl.innerHTML, /id="quickstart-card"/);
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"open"');
+
+  // Writes recover -> reload flushes guideDismissed: false to cloud and clears pending key
+  sharedStore.failProfileWrites = false;
+  const s5 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s5.loadAndRender();
+  await new Promise(r => setImmediate(r));
+  assert.equal(vm.runInContext('isQuickstartVisible()', s5.ctx), true);
+  assert.equal((await sharedStore.get('app/profile')).guideDismissed, false, 'background flush persisted reopen to cloud');
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), null, 'pending flag cleared once reopen flush succeeded');
+
+  // Fresh device now sees cloud guideDismissed: false
+  const s5Fresh = mountEnv({ store: sharedStore, localStorage: makeStorage({ 'bj-lang': 'zh' }) });
+  await s5Fresh.loadAndRender();
+  assert.equal(vm.runInContext('isQuickstartVisible()', s5Fresh.ctx), true);
+  assert.match(s5Fresh.appEl.innerHTML, /id="quickstart-card"/);
+
+  // 8c. If cloud already matches pending intent at loadAll(), clears pending key with zero extra profile writes
+  sharedLs.setItem('bj-user:u1:bj-guide-pending', '"open"');
+  const writesBefore = sharedStore.writes.length;
+  const s6 = mountEnv({ store: sharedStore, localStorage: sharedLs });
+  await s6.loadAndRender();
+  await new Promise(r => setImmediate(r));
+  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), null);
+  assert.equal(sharedStore.writes.length, writesBefore, 'no redundant write when cloud already matches pending intent');
+});
+
+test('9. Strict record validation ignores empty/malformed checkin, meal, workout, and cardio entries while supporting valid partial records', async () => {
+  // Unmarked pre-existing account with empty/malformed records must stay at 1/4 and NOT auto-hide
+  const malformedDocs = {
+    'app/profile': {
+      sex: 'm', age: 29, height: 176, weight: 72, bf: 15, steps: 9500,
+      exp: 'new', stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
+      startDate: '2026-11-01', injuries: [], supps: []
+    },
+    'days/2026-11-18': {
+      date: '2026-11-18',
+      checkin: {},
+      meals: [{}],
+      workout: { done: 'false' },
+      cardio: [{}]
+    },
+    'days/2026-11-19': {
+      date: '2026-11-19',
+      checkin: { weight: '', steps: null, sleep: '   ', bf: true, waist: NaN, foo: 'bar' },
+      meals: [null, 'bad', [], { name: '   ', text: '' }, { photo: '../evil', thumb: 'javascript:alert(1)', est: {} }],
+      workout: { done: 1 },
+      cardio: [{ type: 'unknown', minutes: 20 }, { type: 'other', minutes: 15, customName: '   ' }]
+    }
+  };
+  const env = mountEnv({ lang: 'zh', initialDocs: malformedDocs });
+  await env.loadAndRender();
+
+  assert.equal(vm.runInContext('quickstartDoneCount()', env.ctx), 1, 'empty/malformed records must not increment onboarding completion');
+  assert.equal(vm.runInContext('S.guideVeteranAutoHide', env.ctx), false, 'malformed records must not trigger veteran auto-hide');
+  assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), true);
+  assert.match(env.appEl.innerHTML, /1 \/ 4/);
+
+  // Unit-check each validator predicate directly across valid & invalid cases
+  const checks = vm.runInContext(`({
+    // Check-in: reject invalid, accept partial valid (sleep-only, steps-only, waist-only, bf-only, weight-only)
+    cEmpty: hasSavedCheckin({ checkin: {} }),
+    cArr: hasSavedCheckin({ checkin: [] }),
+    cNull: hasSavedCheckin({ checkin: null }),
+    cJunk: hasSavedCheckin({ checkin: { weight: "", steps: null, foo: "bar" } }),
+    cBoolInf: hasSavedCheckin({ checkin: { weight: true, steps: Infinity } }),
+    cSleepOnly: hasSavedCheckin({ checkin: { sleep: 7.5 } }),
+    cStepsOnly: hasSavedCheckin({ checkin: { steps: 8000 } }),
+    cWaistOnly: hasSavedCheckin({ checkin: { waist: 79.5 } }),
+    cBfOnly: hasSavedCheckin({ checkin: { bf: 14.2 } }),
+    cWeightStr: hasSavedCheckin({ checkin: { weight: "71.4" } }),
+
+    // Meals: reject empty/malformed, accept text, name, est macros, top-level macros, safe photo/thumb
+    mEmptyObj: hasSavedMeal({ meals: [{}] }),
+    mNullBad: hasSavedMeal({ meals: [null, "bad", []] }),
+    mBlank: hasSavedMeal({ meals: [{ name: "   ", text: "" }] }),
+    mBadMedia: hasSavedMeal({ meals: [{ photo: "../bad", thumb: "javascript:alert(1)", est: { kcal: "" } }] }),
+    mText: hasSavedMeal({ meals: [{ id: "m1", text: "鸡胸肉" }] }),
+    mName: hasSavedMeal({ meals: [{ name: "Oats" }] }),
+    mEstMacro: hasSavedMeal({ meals: [{ text: "", est: { kcal: 500 } }] }),
+    mTopMacro: hasSavedMeal({ meals: [{ protein: 35 }] }),
+    mPhotoOnly: hasSavedMeal({ meals: [{ text: "", photo: "blob_abc123" }] }),
+    mThumbOnly: hasSavedMeal({ meals: [{ text: "", thumb: "data:image/jpeg;base64,AA==" }] }),
+
+    // Workout / Cardio: strict boolean done === true OR valid sanitized cardio
+    wStrFalse: hasSavedWorkoutOrCardio({ workout: { done: "false" } }),
+    wStrTrue: hasSavedWorkoutOrCardio({ workout: { done: "true" } }),
+    wNum1: hasSavedWorkoutOrCardio({ workout: { done: 1 } }),
+    wZero: hasSavedWorkoutOrCardio({ workout: { done: 0 } }),
+    wEmpty: hasSavedWorkoutOrCardio({ workout: {} }),
+    wBadCardio: hasSavedWorkoutOrCardio({ cardio: [{ type: "bad", minutes: 30 }] }),
+    wTrue: hasSavedWorkoutOrCardio({ workout: { done: true, exercises: [] } }),
+    wValidCardio: hasSavedWorkoutOrCardio({ cardio: [{ type: "run", minutes: 20, intensity: "mod" }] })
+  })`, env.ctx);
+
+  assert.equal(checks.cEmpty, false);
+  assert.equal(checks.cArr, false);
+  assert.equal(checks.cNull, false);
+  assert.equal(checks.cJunk, false);
+  assert.equal(checks.cBoolInf, false);
+  assert.equal(checks.cSleepOnly, true);
+  assert.equal(checks.cStepsOnly, true);
+  assert.equal(checks.cWaistOnly, true);
+  assert.equal(checks.cBfOnly, true);
+  assert.equal(checks.cWeightStr, true);
+
+  assert.equal(checks.mEmptyObj, false);
+  assert.equal(checks.mNullBad, false);
+  assert.equal(checks.mBlank, false);
+  assert.equal(checks.mBadMedia, false);
+  assert.equal(checks.mText, true);
+  assert.equal(checks.mName, true);
+  assert.equal(checks.mEstMacro, true);
+  assert.equal(checks.mTopMacro, true);
+  assert.equal(checks.mPhotoOnly, true);
+  assert.equal(checks.mThumbOnly, true);
+
+  assert.equal(checks.wStrFalse, false);
+  assert.equal(checks.wStrTrue, false);
+  assert.equal(checks.wNum1, false);
+  assert.equal(checks.wZero, false);
+  assert.equal(checks.wEmpty, false);
+  assert.equal(checks.wBadCardio, false);
+  assert.equal(checks.wTrue, true);
+  assert.equal(checks.wValidCardio, true);
+
+  // Step-by-step live progression using valid partial check-in (sleep-only), photo-only meal, and boolean workout.done=true
+  vm.runInContext(`S.days["2026-11-20"] = { date: "2026-11-20", checkin: { sleep: 7.5 }, meals: [] }; render();`, env.ctx);
+  assert.equal(vm.runInContext('quickstartDoneCount()', env.ctx), 2);
+  vm.runInContext(`S.days["2026-11-20"].meals.push({ id: "m-photo", text: "", photo: "blob_xyz99" }); render();`, env.ctx);
+  assert.equal(vm.runInContext('quickstartDoneCount()', env.ctx), 3);
+  vm.runInContext(`S.days["2026-11-20"].workout = { key: "push", done: true, exercises: [] }; render();`, env.ctx);
+  assert.equal(vm.runInContext('quickstartDoneCount()', env.ctx), 4);
+  assert.match(env.appEl.innerHTML, /4 \/ 4/);
 });
