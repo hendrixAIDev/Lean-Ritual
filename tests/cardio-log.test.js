@@ -134,6 +134,7 @@ function mountCardioEnv({
   // Track live DOM input mirrors parsed from appEl.innerHTML, with overrides set by test typing
   const liveInputs = new Map();
   const minChipButtons = new Map();
+  let previewEl = null;
   const valEl = { id: 'rest-timer-val', textContent: '' };
   const slotEl = {
     id: 'rest-timer-slot',
@@ -186,6 +187,8 @@ function mountCardioEnv({
         getAttribute(k) { return attrs[k]; }
       });
     }
+    const prevMatch = src.match(/<p[^>]*id="cardio-est-preview"[^>]*>([^<]*)<\/p>/);
+    previewEl = prevMatch ? { id: 'cardio-est-preview', textContent: unescHtml(prevMatch[1]) } : null;
     const slotMatch = src.match(/<div id="rest-timer-slot"[^>]*>([\s\S]*?)<\/div>\s*(?=<div|<section|<p|$)/);
     if (slotMatch) slotEl.innerHTML = slotMatch[1];
   }
@@ -208,6 +211,7 @@ function mountCardioEnv({
       if (sel === '#tabs') return tabsEl;
       if (sel === '#toast') return toastEl;
       if (sel === '#sr-status') return srEl;
+      if (sel === '#cardio-est-preview') return previewEl;
       if (sel.startsWith('#') && liveInputs.has(sel.slice(1))) return liveInputs.get(sel.slice(1));
       if (sel === '#cardio-open-btn' && appHtmlVal.includes('id="cardio-open-btn"')) {
         return { id: 'cardio-open-btn', focus() { document.activeElement = this; } };
@@ -222,6 +226,7 @@ function mountCardioEnv({
       if (id === 'rest-timer-slot') return slotEl;
       if (id === 'rest-timer-val') return slotEl.innerHTML.includes('id="rest-timer-val"') ? valEl : null;
       if (id === 'sr-status') return srEl;
+      if (id === 'cardio-est-preview') return previewEl;
       if (liveInputs.has(id)) return liveInputs.get(id);
       return null;
     }
@@ -295,6 +300,7 @@ function mountCardioEnv({
   return {
     ctx, store, appEl, toastEl, srEl, document, localStorage, sessionStorage,
     toasts, announcements, liveInputs, minChipButtons,
+    getPreviewEl: () => previewEl,
     getAiCalls: () => aiCalls,
     bootLoad, click, typeInput, setTime, advanceMs
   };
@@ -387,7 +393,7 @@ test('logging, editing, and deleting cardio on both workout and rest days with z
   const htmlClosed = env.appEl.innerHTML;
   assert.ok(htmlClosed.includes('id="cardio-card"'));
   assert.ok(htmlClosed.includes('有氧运动'));
-  assert.ok(htmlClosed.includes('不额外增加当日饮食热量目标'));
+  assert.ok(htmlClosed.includes('按体重估算净消耗并计入「记录 → 热量收支」；为防运动消耗高估抵消缺口，当日饮食目标保持稳定（长期变化由 7 日均重校准）'));
   assert.ok(htmlClosed.includes('aria-expanded="false"'));
   assert.ok(!htmlClosed.includes('id="cardio-form"'));
   assert.ok(htmlClosed.indexOf('data-act="save-workout"') < htmlClosed.indexOf('id="cardio-card"'));
@@ -424,13 +430,16 @@ test('logging, editing, and deleting cardio on both workout and rest days with z
   assert.equal('customName' in workoutDay.cardio[0], false);
   assert.equal(env.toasts.at(-1), '已保存有氧记录');
   assert.equal(env.announcements.at(-1), '已保存有氧记录');
+  assert.ok(env.appEl.innerHTML.includes('约 79 kcal'), 'saved row displays estimated net burn in zh');
   assert.equal(env.getAiCalls(), 0, 'zero AI calls on cardio save');
 
   // Language switch zh -> en translates standard modality automatically without changing stored canonical key
   await env.click('lang', 'en');
+  assert.ok(env.appEl.innerHTML.includes('Estimates net burn and adds it to Calorie Balance; daily meal targets stay steady so progress isn&#39;t offset (calibrated via 7-day avg weight)'));
   assert.ok(env.appEl.innerHTML.includes('Incline Walk'));
   assert.ok(env.appEl.innerHTML.includes('20 min'));
   assert.ok(env.appEl.innerHTML.includes('Low'));
+  assert.ok(env.appEl.innerHTML.includes('~79 kcal'), 'saved row displays estimated net burn in en');
   assert.ok(env.appEl.innerHTML.includes('+ Add cardio'));
   assert.equal(vm.runInContext('S.days["2026-11-20"].cardio[0].type', env.ctx), 'incline_walk');
 
@@ -609,28 +618,28 @@ test('Record Daily Breakdown (cardio-only rest days + pagination) and 14-day AI 
   // Record tab -> Daily Breakdown (zh): cardio-only rest day appears on page 1, pagination shows 12 total (10/page)
   await env.click('tab', 'log');
   const logZh = env.appEl.innerHTML;
-  assert.ok(logZh.includes('有氧：坡度快走 20分钟（低强度）、间歇有氧 (HIIT) 15分钟（高强度/间歇）'), `expected zh cardio chip in daily breakdown, got: ${logZh.slice(0, 600)}`);
+  assert.ok(logZh.includes('有氧：坡度快走 20分钟（低强度 · 约79kcal）、间歇有氧 (HIIT) 15分钟（高强度/间歇 · 约161kcal）'), `expected zh cardio chip in daily breakdown, got: ${logZh.slice(0, 600)}`);
   assert.ok(logZh.includes('1 / 2 · 共 12 条'), 'pagination reflects 12 days including cardio-only day');
   assert.equal((logZh.match(/class="day"/g) || []).length, 10);
 
   // Switch to English -> Daily Breakdown translates cleanly with zero CJK leakage
   await env.click('lang', 'en');
   const logEn = env.appEl.innerHTML;
-  assert.ok(logEn.includes('Cardio: Incline Walk 20m (Low), Intervals (HIIT) 15m (High / Intervals)'));
+  assert.ok(logEn.includes('Cardio: Incline Walk 20m (Low · ~79 kcal), Intervals (HIIT) 15m (High / Intervals · ~161 kcal)'));
   assert.ok(logEn.includes('1 / 2 · 12 total'));
   // Strip any stored Chinese meal text from non-cardio checks; verify cardio chip itself has zero CJK
   const cardioChipEn = logEn.match(/<span class="chip">Cardio:[^<]+<\/span>/);
   assert.ok(cardioChipEn, 'English cardio chip rendered');
   assert.equal(CJK_RE.test(cardioChipEn[0]), false, `English cardio chip must have zero CJK: ${cardioChipEn[0]}`);
 
-  // 14-day AI Coach Review prompts in BOTH zh and en include cardio modality, minutes, intensity, and note
+  // 14-day AI Coach Review prompts in BOTH zh and en include cardio modality, minutes, intensity, ~kcal, and note
   const promptZh = vm.runInContext('buildFeedbackPrompt("", "zh")', env.ctx);
   assert.ok(promptZh.includes('2026-11-21：'));
-  assert.ok(promptZh.includes('有氧：坡度快走 20分钟（低强度） 备注:坡度 12；间歇有氧 (HIIT) 15分钟（高强度/间歇）'));
+  assert.ok(promptZh.includes('有氧：坡度快走 20分钟（低强度 · 约79kcal） 备注:坡度 12；间歇有氧 (HIIT) 15分钟（高强度/间歇 · 约161kcal）'));
 
   const promptEn = vm.runInContext('buildFeedbackPrompt("", "en")', env.ctx);
   assert.ok(promptEn.includes('2026-11-21:'));
-  assert.ok(promptEn.includes('Cardio: Incline Walk 20m (Low) [坡度 12]; Intervals (HIIT) 15m (High / Intervals)'));
+  assert.ok(promptEn.includes('Cardio: Incline Walk 20m (Low · ~79 kcal) [坡度 12]; Intervals (HIIT) 15m (High / Intervals · ~161 kcal)'));
 });
 
 test('sanitizer bounds validation and full server cloud sync + export/import round-trip preservation of day.cardio', async t => {
@@ -798,32 +807,40 @@ test('headless Chromium E2E: log, edit, reload persistence, language toggle, dai
   await page.locator('button[type="submit"]').click();
   await page.locator('nav#tabs').waitFor({ state: 'visible' });
 
-  // Log incline_walk 30m with note
+  // Log incline_walk 30m with note & verify live preview updates on chip click and typing without losing focus
   await page.locator('#cardio-open-btn').click();
+  assert.equal(await page.locator('#cardio-est-preview').textContent(), '预计净消耗：约 79 kcal');
+  await page.locator('#cardio-minutes').focus();
+  await page.locator('#cardio-minutes').fill('45');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'cardio-minutes', 'typing into #cardio-minutes keeps focus');
+  assert.equal(await page.locator('#cardio-est-preview').textContent(), '预计净消耗：约 178 kcal');
   await page.locator('#cardio-note').fill('坡度 12 速度 5');
   await page.locator('[data-act="cardio-min"][data-v="30"]').click();
+  assert.equal(await page.locator('#cardio-est-preview').textContent(), '预计净消耗：约 119 kcal');
   assert.equal(await page.locator('#cardio-note').inputValue(), '坡度 12 速度 5', 'note preserved after duration chip click');
   await page.locator('[data-act="cardio-save"]').click();
   await page.locator('.cardio-item').waitFor({ state: 'visible' });
   assert.ok((await page.locator('#cardio-card').textContent()).includes('坡度快走'));
   assert.ok((await page.locator('#cardio-card').textContent()).includes('30 分钟'));
+  assert.ok((await page.locator('#cardio-card').textContent()).includes('约 119 kcal'));
 
   // Reload page -> persisted from cloud
   await page.reload();
   await page.locator('.cardio-item').waitFor({ state: 'visible' });
   assert.ok((await page.locator('#cardio-card').textContent()).includes('坡度 12 速度 5'));
+  assert.ok((await page.locator('#cardio-card').textContent()).includes('约 119 kcal'));
 
-  // Switch to Record tab -> Daily Breakdown shows cardio
+  // Switch to Record tab -> Daily Breakdown shows cardio with ~kcal
   await page.locator('nav#tabs [data-act="tab"][data-v="log"]').click();
   const logText = await page.locator('#app').textContent();
-  assert.ok(logText.includes('有氧：坡度快走 30分钟（低强度）'));
+  assert.ok(logText.includes('有氧：坡度快走 30分钟（低强度 · 约119kcal）'));
 
-  // Switch language to English -> Daily Breakdown translates standard modality
+  // Switch language to English -> Daily Breakdown translates standard modality with ~kcal
   await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
   await page.locator('[data-act="lang"][data-v="en"]').click();
   await page.locator('nav#tabs [data-act="tab"][data-v="log"]').click();
   const logEnText = await page.locator('#app').textContent();
-  assert.ok(logEnText.includes('Cardio: Incline Walk 30m (Low)'));
+  assert.ok(logEnText.includes('Cardio: Incline Walk 30m (Low · ~119 kcal)'));
 
   await ctx.close();
 });
@@ -1138,4 +1155,292 @@ test('fallback localStorage-backed store (non-commit get/set path) and bj-wbacku
   await env.click('cardio-del', cid);
   await env.bootLoad();
   assert.equal(vm.runInContext('"cardio" in S.days["2026-11-20"]', env.ctx), false);
+});
+
+test('deterministic net METs math across all modalities/intensities/durations and date-anchored weight with [30, 250] clamping', async () => {
+  const env = mountCardioEnv({
+    lang: 'zh',
+    fixedIso: '2026-11-20T18:00:00Z',
+    profile: { weight: 70 },
+    days: {
+      // Dated >7 days before today so avgWeight(today) stays null and targets().w reflects profile.weight cleanly
+      '2026-11-06': { date: '2026-11-06', meals: [], checkin: { weight: 80 }, targets: { kcal: 2100, protein: 160, carbs: 210, fat: 60, st: 'cut', w: 76, tdee: 2500 } },
+      '2026-11-05': { date: '2026-11-05', meals: [], targets: { kcal: 2100, protein: 160, carbs: 210, fat: 60, st: 'cut', w: 75, tdee: 2500 } },
+      '2026-11-04': { date: '2026-11-04', meals: [] },
+      '2026-11-03': { date: '2026-11-03', meals: [], checkin: { weight: 20 } },
+      '2026-11-02': { date: '2026-11-02', meals: [], checkin: { weight: 320 } },
+      '2026-11-01': { date: '2026-11-01', meals: [], checkin: { weight: 0 }, targets: { w: -10 } }
+    }
+  });
+  await env.bootLoad();
+
+  // 1. Date-anchored weight precedence & clamping
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-06")', env.ctx), 80, 'same-day checkin weight takes precedence over targets.w');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-05")', env.ctx), 75, 'snapshotted day.targets.w used when checkin weight absent');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 70, 'falls back to targets().w when neither day weight exists');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-03")', env.ctx), 30, 'clamps low positive weight to 30 kg');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-02")', env.ctx), 250, 'clamps high positive weight to 250 kg');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-01")', env.ctx), 70, 'ignores non-positive checkin/snapshot weights');
+
+  // Historical logs stay anchored when profile weight changes later
+  vm.runInContext('S.profile.weight = 64;', env.ctx);
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-06")', env.ctx), 80, 'checkin-anchored historical day does not drift');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-05")', env.ctx), 75, 'snapshot-anchored historical day does not drift');
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 64, 'unanchored day follows current targets().w');
+
+  // Invalid/extreme profile weights never produce <= 0 or NaN
+  vm.runInContext('S.profile.weight = 0;', env.ctx);
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 70, 'zero profile weight falls back to 70 kg');
+  vm.runInContext('S.profile.weight = -15;', env.ctx);
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 70, 'negative profile weight falls back to 70 kg');
+  vm.runInContext('S.profile.weight = 18;', env.ctx);
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 30, 'low profile weight clamps to 30 kg');
+  vm.runInContext('S.profile.weight = 400;', env.ctx);
+  assert.equal(vm.runInContext('cardioWeightFor("2026-11-04")', env.ctx), 250, 'high profile weight clamps to 250 kg');
+  vm.runInContext('S.profile.weight = 70;', env.ctx);
+
+  // 2. Exact net METs math across all 10 modalities x 3 intensities at 70 kg, 30 min
+  const expectedMets = {
+    incline_walk: { low: 3.3, mod: 4.3, high: 5.5 },
+    run:          { low: 5.5, mod: 7.3, high: 9.5 },
+    bike:         { low: 3.5, mod: 5.8, high: 8.0 },
+    stairmaster:  { low: 4.5, mod: 6.5, high: 8.5 },
+    elliptical:   { low: 3.5, mod: 4.5, high: 6.5 },
+    row:          { low: 3.8, mod: 6.0, high: 8.5 },
+    swim:         { low: 4.5, mod: 6.5, high: 8.8 },
+    jump_rope:    { low: 6.5, mod: 8.8, high: 10.8 },
+    hiit:         { low: 5.0, mod: 7.0, high: 9.0 },
+    other:        { low: 3.0, mod: 4.8, high: 7.0 }
+  };
+  for (const [type, ints] of Object.entries(expectedMets)) {
+    for (const [intensity, netMet] of Object.entries(ints)) {
+      const expected = Math.max(1, Math.round(netMet * 70 * (30 / 60)));
+      const actual = vm.runInContext(
+        `cardioSessionKcal({ type: ${JSON.stringify(type)}, intensity: ${JSON.stringify(intensity)}, minutes: 30 }, "2026-11-04")`,
+        env.ctx
+      );
+      assert.equal(actual, expected, `${type}/${intensity} 30m at 70kg`);
+    }
+  }
+
+  // Exact spec example: bike mod 30 min @ 70 kg = 203 kcal; @ 80 kg = 232 kcal; 1 min floor >= 1; invalid mins -> null
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "bike", intensity: "mod", minutes: 30 }, "2026-11-04")', env.ctx), 203);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "bike", intensity: "mod", minutes: 30 }, "2026-11-06")', env.ctx), 232);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "other", intensity: "low", minutes: 1 }, "2026-11-03")', env.ctx), 2);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "bike", intensity: "mod", minutes: 0 }, "2026-11-04")', env.ctx), null);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "bike", intensity: "mod", minutes: 601 }, "2026-11-04")', env.ctx), null);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "bike", intensity: "mod", minutes: 20.5 }, "2026-11-04")', env.ctx), null);
+  assert.equal(vm.runInContext('cardioSessionKcal({ type: "unknown", intensity: "mod", minutes: 30 }, "2026-11-04")', env.ctx), null);
+});
+
+test('live #cardio-est-preview updates on chip clicks AND #cardio-minutes typing without full render or losing focus', async () => {
+  const env = mountCardioEnv({ lang: 'zh', fixedIso: '2026-11-20T18:00:00Z', profile: { weight: 70 } });
+  await env.bootLoad();
+
+  await env.click('cardio-open');
+  // Default: incline_walk 20m low @ 70kg -> 3.3 * 70 * 20/60 = 77
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：约 77 kcal');
+
+  // Switch modality to bike -> 3.5 * 70 * 20/60 = 82
+  await env.click('cardio-type', 'bike');
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：约 82 kcal');
+
+  // Switch duration chip to 30 and intensity to mod -> 5.8 * 70 * 30/60 = 203
+  await env.click('cardio-min', '30');
+  await env.click('cardio-int', 'mod');
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：约 203 kcal');
+
+  // Typing directly into #cardio-minutes updates #cardio-est-preview in-place without calling render() or losing focus
+  const htmlBeforeType = env.appEl.innerHTML;
+  const minInputBefore = env.liveInputs.get('cardio-minutes');
+  env.document.activeElement = minInputBefore;
+  env.typeInput('cardio-minutes', '45');
+  assert.equal(env.appEl.innerHTML, htmlBeforeType, 'typing minutes must not trigger full render()');
+  assert.equal(env.document.activeElement, minInputBefore, 'typing minutes must preserve focus on #cardio-minutes');
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：约 305 kcal', '5.8 * 70 * 45/60 = 304.5 -> 305');
+
+  // Invalid / empty minutes shows empty placeholder cleanly without throwing
+  env.typeInput('cardio-minutes', '');
+  assert.equal(env.document.activeElement, minInputBefore);
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：–');
+  env.typeInput('cardio-minutes', '20.5');
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：–');
+  env.typeInput('cardio-minutes', '60');
+  assert.equal(env.getPreviewEl()?.textContent, '预计净消耗：约 406 kcal', '5.8 * 70 * 60/60 = 406');
+
+  // English preview copy
+  await env.click('lang', 'en');
+  assert.equal(env.getPreviewEl()?.textContent, 'Est. net burn: ~406 kcal');
+  env.typeInput('cardio-minutes', '0');
+  assert.equal(env.getPreviewEl()?.textContent, 'Est. net burn: –');
+  assert.equal(env.getAiCalls(), 0, 'zero AI calls during live cardio preview');
+});
+
+test('Calorie Balance integrates step-deduplicated cardio expenditure with SVG title breakdown while keeping eating targets 100% fixed', async () => {
+  const mkMeals = kcal => [
+    { id: 'm1', type: '早餐', text: '燕麦', est: { kcal: Math.round(kcal * 0.3), protein: 35, carbs: 50, fat: 12, by: 'manual' } },
+    { id: 'm2', type: '午餐', text: '鸡胸饭', est: { kcal: Math.round(kcal * 0.35), protein: 50, carbs: 60, fat: 14, by: 'manual' } },
+    { id: 'm3', type: '晚餐', text: '牛肉饭', est: { kcal: kcal - Math.round(kcal * 0.3) - Math.round(kcal * 0.35), protein: 45, carbs: 55, fat: 16, by: 'manual' } }
+  ];
+  const baseSnap = { kcal: 1850, protein: 154, carbs: 196, fat: 49, st: 'cut', w: 70, tdee: 2400 };
+  const env = mountCardioEnv({
+    lang: 'zh',
+    fixedIso: '2026-11-20T18:00:00Z',
+    profile: { weight: 70, bf: 15, steps: 8000, stage: 'cut' },
+    days: {
+      // Non-step cardio day (bike 30m mod @ 70kg -> 203 kcal, 100% = 203)
+      '2026-11-16': {
+        date: '2026-11-16',
+        checkin: { weight: 70 },
+        targets: { ...baseSnap },
+        meals: mkMeals(2000),
+        cardio: [{ id: 'b1', type: 'bike', minutes: 30, intensity: 'mod' }]
+      },
+      // Non-step swim + row day (swim 30m mod -> 228 + row 20m high -> 198 = 426, 100% = 426)
+      '2026-11-17': {
+        date: '2026-11-17',
+        checkin: { weight: 70 },
+        targets: { ...baseSnap },
+        meals: mkMeals(2000),
+        cardio: [
+          { id: 's1', type: 'swim', minutes: 30, intensity: 'mod' },
+          { id: 'r1', type: 'row', minutes: 20, intensity: 'high' }
+        ]
+      },
+      // Step-based cardio day (incline_walk 30m low -> raw 116 * 0.6 = 70; run 30m mod -> raw 256 * 0.6 = 154; jump_rope 15m high -> raw 189 * 0.6 = 113; sum = 337)
+      '2026-11-18': {
+        date: '2026-11-18',
+        checkin: { weight: 70 },
+        targets: { ...baseSnap },
+        meals: mkMeals(2000),
+        cardio: [
+          { id: 'w1', type: 'incline_walk', minutes: 30, intensity: 'low' },
+          { id: 'rn1', type: 'run', minutes: 30, intensity: 'mod' },
+          { id: 'jr1', type: 'jump_rope', minutes: 15, intensity: 'high' }
+        ]
+      },
+      // No-cardio baseline day
+      '2026-11-19': {
+        date: '2026-11-19',
+        checkin: { weight: 70 },
+        targets: { ...baseSnap },
+        meals: mkMeals(2000)
+      }
+    }
+  });
+  await env.bootLoad();
+
+  const tgBefore = vm.runInContext('targets()', env.ctx);
+  const dtBefore = vm.runInContext('dayTargets("2026-11-19")', env.ctx);
+  const ser = vm.runInContext('balanceSeries(14)', env.ctx);
+  const byDate = Object.fromEntries(ser.map(d => [d.date, d]));
+
+  // Non-step bike: 100% of 203
+  assert.equal(byDate['2026-11-16'].baseTdee, 2400);
+  assert.equal(byDate['2026-11-16'].cardioKcal, 203);
+  assert.equal(byDate['2026-11-16'].tdee, 2603);
+  assert.equal(byDate['2026-11-16'].bal, 2000 - 2603);
+
+  // Non-step swim + row: 100% of (228 + 198 = 426)
+  assert.equal(byDate['2026-11-17'].baseTdee, 2400);
+  assert.equal(byDate['2026-11-17'].cardioKcal, 426);
+  assert.equal(byDate['2026-11-17'].tdee, 2826);
+  assert.equal(byDate['2026-11-17'].bal, 2000 - 2826);
+
+  // Step-based incline_walk + run + jump_rope: 0.6x each (70 + 154 + 113 = 337)
+  assert.equal(vm.runInContext('cardioSessionKcal(S.days["2026-11-18"].cardio[0], "2026-11-18")', env.ctx), 116);
+  assert.equal(vm.runInContext('cardioSessionKcal(S.days["2026-11-18"].cardio[1], "2026-11-18")', env.ctx), 256);
+  assert.equal(vm.runInContext('cardioSessionKcal(S.days["2026-11-18"].cardio[2], "2026-11-18")', env.ctx), 189);
+  assert.equal(byDate['2026-11-18'].cardioKcal, Math.round(116 * 0.6) + Math.round(256 * 0.6) + Math.round(189 * 0.6));
+  assert.equal(byDate['2026-11-18'].tdee, 2400 + 337);
+  assert.equal(byDate['2026-11-18'].bal, 2000 - 2737);
+
+  // No-cardio day: cardioKcal = 0, bal = -400
+  assert.equal(byDate['2026-11-19'].cardioKcal, 0);
+  assert.equal(byDate['2026-11-19'].tdee, 2400);
+  assert.equal(byDate['2026-11-19'].bal, -400);
+
+  // Render Record tab (zh) and verify SVG <title> breakdown, stable base TDEE KPI, and updated balFoot
+  await env.click('tab', 'log');
+  const logZh = env.appEl.innerHTML;
+  assert.ok(logZh.includes('2026-11-16 吃 2000 − 消耗 2603（基础 2400 + 有氧 203）= -603 kcal'), 'zh cardio bar tooltip includes base + cardio breakdown');
+  assert.ok(logZh.includes('2026-11-18 吃 2000 − 消耗 2737（基础 2400 + 有氧 337）= -737 kcal'), 'zh step-deduplicated bar tooltip');
+  assert.ok(logZh.includes('2026-11-19 吃 2000 − 消耗 2400 = -400 kcal'), 'zh non-cardio bar keeps clean tooltip');
+  assert.ok(logZh.includes('快走/跑步/跳绳按 60% 计入以避免与步数重复计算'), 'zh balFoot explains step deduplication');
+  // 7-day average reflects cardio: Math.round(mean(-603, -826, -737, -400)) = Math.round(-641.5) = -641
+  assert.ok(logZh.includes('>-641</span>'), '7-day avg KPI reflects cardio expenditure');
+  // Base TDEE KPI stays at tg.tdee (stable baseline)
+  assert.ok(logZh.includes(`>${tgBefore.tdee}</span>`), 'Est. TDEE KPI stays at stable base TDEE');
+
+  // Switch to English and verify en SVG <title> breakdown, balFoot, and zero CJK in balance card
+  await env.click('lang', 'en');
+  const logEn = env.appEl.innerHTML;
+  assert.ok(logEn.includes('2026-11-16: 2000 in − 2603 out (2400 base + 203 cardio) = -603 kcal'), 'en cardio bar tooltip');
+  assert.ok(logEn.includes('2026-11-19: 2000 in − 2400 TDEE = -400 kcal'), 'en non-cardio bar tooltip');
+  assert.ok(logEn.includes('step-based cardio counts at 60% to avoid double-counting steps'), 'en balFoot explains step deduplication');
+
+  // Add cardio onto 2026-11-19 via UI -> balance shifts by exact cardio kcal, while targets() & dayTargets() stay 100% identical!
+  await env.click('tab', 'today');
+  vm.runInContext('S.date = "2026-11-19"; render();', env.ctx);
+  await env.click('cardio-open');
+  await env.click('cardio-type', 'bike');
+  await env.click('cardio-min', '30');
+  await env.click('cardio-int', 'mod');
+  await env.click('cardio-save');
+
+  assert.deepEqual(vm.runInContext('targets()', env.ctx), tgBefore, 'targets() must stay 100% identical after adding cardio');
+  assert.deepEqual(vm.runInContext('dayTargets("2026-11-19")', env.ctx), dtBefore, 'dayTargets() must stay 100% identical after adding cardio');
+  const afterDay = vm.runInContext('balanceSeries(14).find(d => d.date === "2026-11-19")', env.ctx);
+  assert.equal(afterDay.cardioKcal, 203);
+  assert.equal(afterDay.tdee, 2603);
+  assert.equal(afterDay.bal, -603);
+  assert.equal(env.getAiCalls(), 0, 'zero AI calls');
+});
+
+test('mixed lone-surrogate + whitespace truncation boundaries are strictly idempotent across ID, customName, note, and colliding suffix', () => {
+  const env = mountCardioEnv({ lang: 'zh' });
+  const mixedId = 'a'.repeat(62) + '\uD800 b';
+  const altId = 'a'.repeat(58) + '\uD800 \uD800 \uD800 b';
+  const mixedName = 'n'.repeat(38) + '\uD800 b';
+  const mixedNote = 'x'.repeat(118) + '\uD800 b';
+  const collidingMixed = 'k'.repeat(60) + '\uD800 b'; // length 63 -> valid; -2 suffix slices right after "\uD800 "
+
+  env.ctx.__mixed = { mixedId, altId, mixedName, mixedNote, collidingMixed };
+  const out = vm.runInContext(`({
+    id1: normCardioId(__mixed.mixedId),
+    id1Twice: normCardioId(normCardioId(__mixed.mixedId)),
+    alt1: normCardioId(__mixed.altId),
+    alt1Twice: normCardioId(normCardioId(__mixed.altId)),
+    name1: cleanCardioBoundedText(__mixed.mixedName, CARDIO_MAX_NAME),
+    name1Twice: cleanCardioBoundedText(cleanCardioBoundedText(__mixed.mixedName, CARDIO_MAX_NAME), CARDIO_MAX_NAME),
+    note1: cleanCardioBoundedText(__mixed.mixedNote, CARDIO_MAX_NOTE),
+    note1Twice: cleanCardioBoundedText(cleanCardioBoundedText(__mixed.mixedNote, CARDIO_MAX_NOTE), CARDIO_MAX_NOTE),
+    listOnce: sanitizeCardioList([
+      { id: __mixed.mixedId, type: "other", customName: __mixed.mixedName, minutes: 20, intensity: "low", note: __mixed.mixedNote },
+      { id: __mixed.collidingMixed, type: "bike", minutes: 30, intensity: "mod" },
+      { id: __mixed.collidingMixed, type: "swim", minutes: 25, intensity: "mod" }
+    ])
+  })`, env.ctx);
+
+  assert.equal(out.id1, 'a'.repeat(62));
+  assert.equal(out.id1Twice, out.id1);
+  assert.equal(out.alt1, 'a'.repeat(58));
+  assert.equal(out.alt1Twice, out.alt1);
+  assert.equal(out.name1, 'n'.repeat(38));
+  assert.equal(out.name1Twice, out.name1);
+  assert.equal(out.note1, 'x'.repeat(118));
+  assert.equal(out.note1Twice, out.note1);
+  assert.equal(out.listOnce[0].id, 'a'.repeat(62));
+  assert.equal(out.listOnce[0].customName, 'n'.repeat(38));
+  assert.equal(out.listOnce[0].note, 'x'.repeat(118));
+  assert.equal(out.listOnce[1].id, collidingMixed);
+  assert.equal(out.listOnce[2].id, 'k'.repeat(60) + '-2');
+  for (const item of out.listOnce) {
+    assert.equal(/[\uD800-\uDBFF]$/.test(item.id), false);
+    assert.equal(/\s$/.test(item.id), false);
+  }
+  env.ctx.__once = out.listOnce;
+  const oncePlain = JSON.parse(JSON.stringify(out.listOnce));
+  const twicePlain = JSON.parse(JSON.stringify(vm.runInContext('sanitizeCardioList(__once)', env.ctx)));
+  assert.deepStrictEqual(twicePlain, oncePlain, 'sanitizeCardioList must be 100% idempotent on mixed surrogate/whitespace boundaries');
 });
