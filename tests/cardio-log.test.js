@@ -590,17 +590,18 @@ test('Record Daily Breakdown (cardio-only rest days + pagination) and 14-day AI 
   await env.click('cardio-min', '15');
   await env.click('cardio-save');
 
-  // Verify calorie/macro targets and energy balance are 100% unchanged
+  // Verify calorie/macro targets, snapshot absence, and energy balance are 100% unchanged
   const after = vm.runInContext(`({
     targets: targets(),
     dayTargets: dayTargets("2026-11-21"),
+    hasTargetsProp: Object.prototype.hasOwnProperty.call(S.days["2026-11-21"], "targets"),
     dayMacros: dayMacros("2026-11-21"),
     dayTdee: dayTdee("2026-11-21"),
     balance: balanceSeries(14)
   })`, env.ctx);
-  const pickMacroTargets = x => ({ kcal: x.kcal, protein: x.protein, carbs: x.carbs, fat: x.fat, tdee: x.tdee, st: x.st });
+  assert.equal(after.hasTargetsProp, false, 'logging cardio must not stamp a day.targets snapshot');
   assert.deepEqual(after.targets, before.targets, 'targets() must not change after logging cardio');
-  assert.deepEqual(pickMacroTargets(after.dayTargets), pickMacroTargets(before.dayTargets), 'dayTargets() macros & TDEE must not change after logging cardio');
+  assert.deepEqual(after.dayTargets, before.dayTargets, 'dayTargets() must remain identical after logging cardio');
   assert.deepEqual(after.dayMacros, before.dayMacros, 'dayMacros() must not change after logging cardio');
   assert.equal(after.dayTdee, before.dayTdee, 'dayTdee() must not change after logging cardio');
   assert.deepEqual(after.balance, before.balance, 'balanceSeries() must not change after logging cardio');
@@ -825,4 +826,254 @@ test('headless Chromium E2E: log, edit, reload persistence, language toggle, dai
   assert.ok(logEnText.includes('Cardio: Incline Walk 30m (Low)'));
 
   await ctx.close();
+});
+
+test('P1 regression: cardio add, edit, and delete preserve exact day.targets snapshot value AND absence on today and historical days', async () => {
+  // Case A: Existing snapshot differing from current profile targets (including on todayStr())
+  const customSnap = { kcal: 2450, protein: 185, carbs: 270, fat: 68, st: 'bulk', w: 76.2, tdee: 2280 };
+  const envA = mountCardioEnv({
+    lang: 'zh',
+    fixedIso: '2026-11-20T18:00:00Z',
+    days: {
+      '2026-11-20': { date: '2026-11-20', meals: [], targets: { ...customSnap } }
+    }
+  });
+  await envA.bootLoad();
+  const liveTargets = vm.runInContext('targets()', envA.ctx);
+  assert.notEqual(liveTargets.kcal, customSnap.kcal, 'precondition: current profile targets differ from stored snapshot');
+
+  // Add cardio on today -> stored snapshot must remain exact
+  await envA.click('cardio-open');
+  await envA.click('cardio-type', 'run');
+  await envA.click('cardio-min', '20');
+  await envA.click('cardio-save');
+  assert.deepEqual(vm.runInContext('S.days["2026-11-20"].targets', envA.ctx), customSnap, 'add preserves today snapshot in memory');
+  assert.deepEqual(envA.store.docs.get('days/2026-11-20').targets, customSnap, 'add preserves today snapshot in store');
+
+  // Edit cardio on today -> stored snapshot must remain exact
+  const addedId = vm.runInContext('S.days["2026-11-20"].cardio[0].id', envA.ctx);
+  await envA.click('cardio-edit', addedId);
+  await envA.click('cardio-min', '45');
+  await envA.click('cardio-save');
+  assert.deepEqual(vm.runInContext('S.days["2026-11-20"].targets', envA.ctx), customSnap, 'edit preserves today snapshot in memory');
+  assert.deepEqual(envA.store.docs.get('days/2026-11-20').targets, customSnap, 'edit preserves today snapshot in store');
+
+  // Delete cardio on today -> stored snapshot must remain exact
+  await envA.click('cardio-del', addedId);
+  assert.deepEqual(vm.runInContext('S.days["2026-11-20"].targets', envA.ctx), customSnap, 'delete preserves today snapshot in memory');
+  assert.deepEqual(envA.store.docs.get('days/2026-11-20').targets, customSnap, 'delete preserves today snapshot in store');
+
+  // Case B: Historical day and today WITHOUT day.targets snapshot -> absence preserved across add, edit, delete
+  const envB = mountCardioEnv({
+    lang: 'zh',
+    fixedIso: '2026-11-20T18:00:00Z',
+    days: {
+      '2026-11-18': { date: '2026-11-18', meals: [], checkin: { weight: 72.1 } },
+      '2026-11-20': { date: '2026-11-20', meals: [] }
+    }
+  });
+  await envB.bootLoad();
+
+  for (const date of ['2026-11-18', '2026-11-20']) {
+    vm.runInContext(`S.date = ${JSON.stringify(date)}; render();`, envB.ctx);
+
+    await envB.click('cardio-open');
+    await envB.click('cardio-type', 'bike');
+    await envB.click('cardio-min', '30');
+    await envB.click('cardio-save');
+    assert.equal(Object.prototype.hasOwnProperty.call(vm.runInContext(`S.days[${JSON.stringify(date)}]`, envB.ctx), 'targets'), false, `${date} add keeps targets absent in memory`);
+    assert.equal(Object.prototype.hasOwnProperty.call(envB.store.docs.get('days/' + date), 'targets'), false, `${date} add keeps targets absent in store`);
+
+    const cid = vm.runInContext(`S.days[${JSON.stringify(date)}].cardio[0].id`, envB.ctx);
+    await envB.click('cardio-edit', cid);
+    await envB.click('cardio-min', '45');
+    await envB.click('cardio-save');
+    assert.equal(Object.prototype.hasOwnProperty.call(envB.store.docs.get('days/' + date), 'targets'), false, `${date} edit keeps targets absent in store`);
+
+    // Profile change still dynamically flows through dayTargets() because no snapshot was stamped
+    const beforeKcal = vm.runInContext(`dayTargets(${JSON.stringify(date)}).kcal`, envB.ctx);
+    vm.runInContext('S.profile.kcalAdjust = -200;', envB.ctx);
+    const afterKcal = vm.runInContext(`dayTargets(${JSON.stringify(date)}).kcal`, envB.ctx);
+    assert.equal(afterKcal, beforeKcal - 200, `${date} dayTargets still follows profile dynamically`);
+    vm.runInContext('S.profile.kcalAdjust = 0;', envB.ctx);
+
+    await envB.click('cardio-del', cid);
+    assert.equal(Object.prototype.hasOwnProperty.call(envB.store.docs.get('days/' + date), 'targets'), false, `${date} delete keeps targets absent in store`);
+  }
+});
+
+test('P1 regression: adversarial non-primitive JSON cardio fields never throw during loadAll hydration or rendering', async () => {
+  const malformedDay = JSON.parse(JSON.stringify({
+    date: '2026-11-20',
+    meals: [],
+    cardio: [
+      { id: { toString: 1 }, type: 'run', minutes: 20, intensity: 'low', customName: { toString: 1 }, note: { toString: [], valueOf: null } },
+      { id: 'drop-other-obj', type: 'other', minutes: 30, intensity: 'mod', customName: { toString: 1 }, note: 'bad other' },
+      { type: { toString: 1 }, minutes: 20, intensity: 'low' },
+      { id: 'drop-min-obj', type: 'bike', minutes: { toString: 1 }, intensity: { valueOf: null } },
+      null,
+      ['not', 'an', 'object'],
+      { id: 'good-sibling', type: 'swim', minutes: 25, intensity: { toString: 1 }, note: 'Pool laps' }
+    ]
+  }));
+  const siblingDay = {
+    date: '2026-11-19',
+    meals: [],
+    cardio: [{ id: 'prev-1', type: 'incline_walk', minutes: 20, intensity: 'low', note: 'Steady' }]
+  };
+  const env = mountCardioEnv({
+    lang: 'zh',
+    fixedIso: '2026-11-20T18:00:00Z',
+    days: { '2026-11-20': malformedDay, '2026-11-19': siblingDay }
+  });
+
+  await env.bootLoad();
+  assert.equal(vm.runInContext('!!S.loadError', env.ctx), false, 'loadAll must hydrate cleanly without throwing');
+
+  const hydratedToday = vm.runInContext('S.days["2026-11-20"].cardio', env.ctx);
+  assert.equal(hydratedToday.length, 2, 'keeps both valid sessions and drops malformed ones');
+  assert.equal(hydratedToday[0].id, 'c0');
+  assert.equal(hydratedToday[0].type, 'run');
+  assert.equal(hydratedToday[0].minutes, 20);
+  assert.equal(hydratedToday[0].intensity, 'low');
+  assert.equal('note' in hydratedToday[0], false, 'non-string note treated as empty and omitted');
+  assert.equal('customName' in hydratedToday[0], false);
+
+  assert.equal(hydratedToday[1].id, 'good-sibling');
+  assert.equal(hydratedToday[1].type, 'swim');
+  assert.equal(hydratedToday[1].minutes, 25);
+  assert.equal(hydratedToday[1].intensity, 'low', 'non-string intensity safely falls back to low');
+  assert.equal(hydratedToday[1].note, 'Pool laps');
+
+  assert.equal(vm.runInContext('S.days["2026-11-19"].cardio.length', env.ctx), 1, 'sibling day preserved intact');
+  assert.doesNotThrow(() => vm.runInContext('viewToday(); viewLog(); buildFeedbackPrompt("", "zh"); buildFeedbackPrompt("", "en");', env.ctx));
+});
+
+test('P2 regression: sanitizer deduplicates colliding cardio IDs (raw, trimmed, 64-char truncated, fallback) and edit/delete affect only target item', async () => {
+  const longBase = 'a'.repeat(64);
+  const env = mountCardioEnv({
+    lang: 'en',
+    fixedIso: '2026-11-20T18:00:00Z',
+    days: {
+      '2026-11-20': {
+        date: '2026-11-20',
+        meals: [],
+        cardio: [
+          { id: 'dup', type: 'run', minutes: 20, intensity: 'low', note: 'first' },
+          { id: '  dup  ', type: 'bike', minutes: 30, intensity: 'mod', note: 'second' },
+          { id: longBase + 'X', type: 'row', minutes: 15, intensity: 'low', note: 'long-1' },
+          { id: longBase + 'Y', type: 'swim', minutes: 25, intensity: 'mod', note: 'long-2' },
+          { id: 'c5', type: 'elliptical', minutes: 18, intensity: 'low', note: 'explicit-c5' },
+          { type: 'jump_rope', minutes: 12, intensity: 'high', note: 'fallback-c5' }
+        ]
+      }
+    }
+  });
+  await env.bootLoad();
+
+  const items = vm.runInContext('S.days["2026-11-20"].cardio', env.ctx);
+  assert.equal(items.length, 6, 'all 6 valid sessions preserved');
+  const ids = items.map(x => x.id);
+  assert.equal(new Set(ids).size, 6, `all normalized IDs must be unique: ${JSON.stringify(ids)}`);
+  for (const id of ids) assert.ok(id.length <= 64, `normalized ID exceeds 64 chars: ${id.length}`);
+  assert.equal(ids[0], 'dup');
+  assert.equal(ids[1], 'dup-2');
+  assert.equal(ids[2], longBase);
+  assert.equal(ids[3], 'a'.repeat(62) + '-2');
+  assert.equal(ids[4], 'c5');
+  assert.equal(ids[5], 'c5-2');
+
+  // Normalization is idempotent
+  const twice = Array.from(vm.runInContext('sanitizeCardioList(S.days["2026-11-20"].cardio).map(x => x.id)', env.ctx));
+  assert.deepEqual(twice, Array.from(ids));
+
+  // Edit only the second colliding item ('dup-2') -> first item ('dup') untouched
+  await env.click('cardio-edit', 'dup-2');
+  assert.equal(env.liveInputs.get('cardio-minutes').value, '30');
+  assert.equal(env.liveInputs.get('cardio-note').value, 'second');
+  await env.click('cardio-min', '45');
+  env.typeInput('cardio-note', 'second-edited');
+  await env.click('cardio-save');
+
+  const afterEdit = vm.runInContext('S.days["2026-11-20"].cardio', env.ctx);
+  assert.equal(afterEdit.length, 6);
+  assert.equal(afterEdit[0].id, 'dup');
+  assert.equal(afterEdit[0].minutes, 20);
+  assert.equal(afterEdit[0].note, 'first');
+  assert.equal(afterEdit[1].id, 'dup-2');
+  assert.equal(afterEdit[1].minutes, 45);
+  assert.equal(afterEdit[1].note, 'second-edited');
+
+  // Delete only 'dup-2' -> only that single item removed; 'dup' and remaining 4 survive round-trip reload
+  await env.click('cardio-del', 'dup-2');
+  await env.bootLoad();
+  const afterReload = vm.runInContext('S.days["2026-11-20"].cardio', env.ctx);
+  assert.equal(afterReload.length, 5);
+  assert.deepEqual(Array.from(afterReload, x => x.id), ['dup', longBase, 'a'.repeat(62) + '-2', 'c5', 'c5-2']);
+  assert.equal(afterReload[0].note, 'first');
+});
+
+test('fallback localStorage-backed store (non-commit get/set path) and bj-wbackup local restoration preserve day.cardio across reloads', async () => {
+  const env = mountCardioEnv({ lang: 'zh', fixedIso: '2026-11-20T18:00:00Z' });
+  // Build a localStorage-backed store adapter WITHOUT .commit to exercise the non-commit mutate() fallback path
+  const localPrefix = 'fallback-cache:';
+  const lsBackedStore = {
+    async get(p) {
+      const raw = env.localStorage.getItem(localPrefix + p);
+      return raw ? JSON.parse(raw) : null;
+    },
+    async set(p, d) {
+      env.localStorage.setItem(localPrefix + p, JSON.stringify(d));
+    },
+    async del(p) {
+      env.localStorage.removeItem(localPrefix + p);
+    },
+    async list(col) {
+      const pfx = localPrefix + col + '/';
+      const out = [];
+      for (const k of Object.keys(env.localStorage.dump())) {
+        if (k.startsWith(pfx)) {
+          out.push({ id: k.slice(pfx.length), data: JSON.parse(env.localStorage.getItem(k)) });
+        }
+      }
+      return out;
+    }
+  };
+  await lsBackedStore.set('app/profile', env.store.docs.get('app/profile'));
+  env.ctx.__lsStore = lsBackedStore;
+  vm.runInContext('S.store = __lsStore; S.cloud = false;', env.ctx);
+  await env.bootLoad();
+
+  // Add cardio via non-commit fallback store
+  await env.click('cardio-open');
+  await env.click('cardio-type', 'stairmaster');
+  await env.click('cardio-min', '20');
+  await env.click('cardio-int', 'mod');
+  env.typeInput('cardio-note', '本地缓存回退测试');
+  await env.click('cardio-save');
+
+  // Seed a local workout backup in bj-wbackup for the same day, then reload via loadAll() (runs restoreWorkouts)
+  vm.runInContext(`lsSet("bj-wbackup", { "2026-11-20": { key: "push", slot: "eve", done: true, savedAt: "2026-11-20T19:00:00Z", exercises: [{ name: "上斜杠铃卧推", sets: [{ w: 60, r: 8 }] }] } });`, env.ctx);
+  await env.bootLoad();
+
+  const reloaded = vm.runInContext('S.days["2026-11-20"]', env.ctx);
+  assert.equal(reloaded.workout?.done, true, 'workout restored from localStorage bj-wbackup');
+  assert.equal(reloaded.cardio.length, 1, 'cardio preserved across localStorage fallback reload and workout restore');
+  assert.equal(reloaded.cardio[0].type, 'stairmaster');
+  assert.equal(reloaded.cardio[0].minutes, 20);
+  assert.equal(reloaded.cardio[0].intensity, 'mod');
+  assert.equal(reloaded.cardio[0].note, '本地缓存回退测试');
+
+  // Edit & reload via non-commit fallback store
+  const cid = reloaded.cardio[0].id;
+  await env.click('cardio-edit', cid);
+  await env.click('cardio-min', '30');
+  await env.click('cardio-save');
+  await env.bootLoad();
+  assert.equal(vm.runInContext('S.days["2026-11-20"].cardio[0].minutes', env.ctx), 30);
+
+  // Delete & reload via non-commit fallback store
+  await env.click('cardio-del', cid);
+  await env.bootLoad();
+  assert.equal(vm.runInContext('"cardio" in S.days["2026-11-20"]', env.ctx), false);
 });

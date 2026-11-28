@@ -1942,7 +1942,8 @@ const CARDIO_MAX_PER_DAY = 20;
 const CARDIO_MAX_MIN = 600;
 const CARDIO_MAX_NAME = 40;
 const CARDIO_MAX_NOTE = 120;
-function clipText(s, max){ return Array.from(String(s ?? "").trim()).slice(0, max).join(""); }
+const CARDIO_MAX_ID = 64;
+function clipText(s, max){ return typeof s === "string" ? Array.from(s.trim()).slice(0, max).join("") : ""; }
 function parseCardioMinutes(raw){
   if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= CARDIO_MAX_MIN ? raw : null;
   if (typeof raw === "string") {
@@ -1953,8 +1954,26 @@ function parseCardioMinutes(raw){
   }
   return null;
 }
-function sanitizeCardioEntry(raw, fallbackId = ""){
-  if (!raw || typeof raw !== "object") return null;
+function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
+  const rawBase = typeof rawId === "string" ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
+  const fb = typeof fallbackId === "string" ? Array.from(fallbackId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
+  const base = rawBase || fb || uid();
+  if (!seen.has(base)) {
+    seen.add(base);
+    return base;
+  }
+  const baseChars = Array.from(base);
+  for (let n = 2; ; n++) {
+    const suffix = "-" + n;
+    const cand = baseChars.slice(0, Math.max(1, CARDIO_MAX_ID - suffix.length)).join("") + suffix;
+    if (!seen.has(cand)) {
+      seen.add(cand);
+      return cand;
+    }
+  }
+}
+function sanitizeCardioEntry(raw, fallbackId = "", seen = null){
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const type = typeof raw.type === "string" && CARDIO_TYPE_SET.has(raw.type) ? raw.type : null;
   if (!type) return null;
   const minutes = parseCardioMinutes(raw.minutes);
@@ -1963,7 +1982,7 @@ function sanitizeCardioEntry(raw, fallbackId = ""){
   const customName = type === "other" ? clipText(raw.customName, CARDIO_MAX_NAME) : "";
   if (type === "other" && !customName) return null;
   const note = clipText(raw.note, CARDIO_MAX_NOTE);
-  const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 64) : (fallbackId || uid());
+  const id = uniqueCardioId(raw.id, fallbackId, seen || new Set());
   const out = { id, type, minutes, intensity };
   if (type === "other") out.customName = customName;
   if (note) out.note = note;
@@ -1972,26 +1991,29 @@ function sanitizeCardioEntry(raw, fallbackId = ""){
 function sanitizeCardioList(list){
   if (!Array.isArray(list)) return [];
   const out = [];
+  const seen = new Set();
   for (let i = 0; i < list.length && out.length < CARDIO_MAX_PER_DAY; i++) {
-    const clean = sanitizeCardioEntry(list[i], "c" + i);
+    const clean = sanitizeCardioEntry(list[i], "c" + i, seen);
     if (clean) out.push(clean);
   }
   return out;
 }
 function cardioTypeLabel(type, lang = getLang()){
+  if (typeof type !== "string") return "";
   const dict = I18N[lang] || I18N.zh;
   const key = "cardio.type." + type;
-  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : String(type || ""));
+  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : type);
 }
 function cardioLabel(entry, lang = getLang()){
-  if (!entry) return "";
-  if (entry.type === "other") return String(entry.customName || "").trim() || cardioTypeLabel("other", lang);
+  if (!entry || typeof entry !== "object") return "";
+  if (entry.type === "other") return (typeof entry.customName === "string" && entry.customName.trim()) || cardioTypeLabel("other", lang);
   return cardioTypeLabel(entry.type, lang);
 }
 function cardioIntensityLabel(k, lang = getLang()){
+  if (typeof k !== "string") return "";
   const dict = I18N[lang] || I18N.zh;
   const key = "cardio.int." + k;
-  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : String(k || ""));
+  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : k);
 }
 function formatCardioDailyItem(c, lang = getLang()){
   const name = cardioLabel(c, lang);
@@ -2097,7 +2119,7 @@ async function updateDay(date, fn, opt = {}){
   const seq = (daySeq[date] = (daySeq[date] || 0) + 1);
   const isNewDay = !hasOwn(S.days, date);
   try {
-    const next = await mutate("days/" + date, cur => { const d = migrateDay(cur || {date, meals:[]}); fn(d); stampTargets(d); return d; });
+    const next = await mutate("days/" + date, cur => { const d = migrateDay(cur || {date, meals:[]}); fn(d); if (opt.stampTargets !== false) stampTargets(d); return d; });
     if (seq === daySeq[date]) {
       if (isNewDay) resetPage("daily");
       S.days[date] = migrateDay(next);
@@ -5543,6 +5565,8 @@ document.addEventListener("click", async ev => {
             if (idx >= 0) {
               list[idx] = entry;
             } else if (list.length < CARDIO_MAX_PER_DAY) {
+              const used = new Set(list.map(x => x.id));
+              entry.id = uniqueCardioId(entry.id, "c" + list.length, used);
               list.push(entry);
               savedMode = "saved";
             } else {
@@ -5551,10 +5575,12 @@ document.addEventListener("click", async ev => {
             }
           } else {
             if (list.length >= CARDIO_MAX_PER_DAY) { hitMax = true; return; }
+            const used = new Set(list.map(x => x.id));
+            entry.id = uniqueCardioId(entry.id, "c" + list.length, used);
             list.push(entry);
           }
           day.cardio = list;
-        }, { quiet: true });
+        }, { quiet: true, stampTargets: false });
         if (hitMax) {
           if (S.cardioDraft?.[date]) S.cardioDraft[date].err = "cardio.errMax";
           S.busy.cardio = false;
@@ -5585,7 +5611,7 @@ document.addEventListener("click", async ev => {
           const next = sanitizeCardioList(day.cardio).filter(x => x.id !== v);
           if (next.length) day.cardio = next;
           else delete day.cardio;
-        }, { quiet: true });
+        }, { quiet: true, stampTargets: false });
         if (S.cardioDraft?.[date]?.editId === v) delete S.cardioDraft[date];
         S.busy.cardio = false;
         render();
