@@ -676,3 +676,142 @@ test("SMTP logging records only local Message-ID and metadata, redacts addresses
   assert.equal(extractDomain("not-an-email"), "unknown");
   assert.equal(extractDomain("user@163.com\r\nX-Inject: 1"), "unknown");
 });
+
+test("createMailer.sendInvitationEmail sends exact zh/en beta invite copy with sanitized {name} greeting, empty fallback, origin guard, Reply-To, and metadata-only logs", async t => {
+  const nodemailer = require("nodemailer");
+  const smtpEnv = {
+    MAIL_MODE: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "465",
+    SMTP_USER: "resend",
+    SMTP_PASS: "re_test_key",
+    MAIL_FROM: "Lean Ritual <noreply@leanritual.app>",
+    MAIL_REPLY_TO: "Lean Ritual Support <support@leanritual.app>",
+  };
+  const secretToken = "inv_tok_super_secret_9876543210";
+  const secretEmail = "beta.applicant@163.com";
+  const inviteUrl = `https://leanritual.app/login.html?invite=${secretToken}&email=${encodeURIComponent(secretEmail)}`;
+
+  // 1a. Exact [zh] copy with {name}
+  const zhRendered = renderEmail({ kind: "invite", url: inviteUrl, lang: "zh", name: "小明", replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(zhRendered.lang, "zh");
+  assert.equal(zhRendered.subject, "你的薄肌日课内测邀请");
+  assert.equal(zhRendered.text, [
+    "你好 小明，",
+    "感谢申请薄肌日课内测！这是你的专属邀请链接（7 天内有效，只能使用一次）：",
+    inviteUrl,
+    "打开链接即可注册。用的时候遇到问题或有想要的功能，App 里可以直接反馈，每条我们都会看。",
+    "温馨提示：计划和 AI 建议仅供参考，不是医疗建议；有伤病或慢性病请先咨询医生。",
+    "祝训练顺利！",
+    "Jay · 薄肌日课",
+  ].join("\n"));
+  assert.ok(zhRendered.html.includes("你好 小明，"));
+  assert.ok(zhRendered.html.includes("Jay · 薄肌日课"));
+  assert.doesNotMatch(zhRendered.html, /<(img|svg|script|iframe|form|style)\b/i);
+  assert.equal([...zhRendered.html.matchAll(/<a\b[^>]*\bhref="https?:\/\/[^"]*"/gi)].length, 1);
+
+  // 1b. [zh] empty / control-only name fallback uses "你好，" (no stray space)
+  for (const emptyName of [undefined, null, "", "   ", "\r\n\t\x00\u202E"]) {
+    const zhEmpty = renderEmail({ kind: "invite", url: inviteUrl, lang: "zh", name: emptyName, replyTo: smtpEnv.MAIL_REPLY_TO });
+    assert.equal(zhEmpty.text.split("\n")[0], "你好，");
+    assert.ok(zhEmpty.html.includes(">你好，</h1>"));
+  }
+
+  // 1c. Exact [en] copy with {name}, zero CJK, and empty-name fallback ("Hi,")
+  const enRendered = renderEmail({ kind: "invite", url: inviteUrl, lang: "en", name: "Alex", replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(enRendered.lang, "en");
+  assert.equal(enRendered.subject, "Your Lean Ritual beta invite");
+  assert.equal(enRendered.text, [
+    "Hi Alex,",
+    "Thanks for requesting an invite to the Lean Ritual beta! Here's your personal invite link (valid for 7 days, single use):",
+    inviteUrl,
+    "Open it to sign up. If anything breaks or you'd like a feature, send feedback right in the app; we read every message.",
+    "Plans and AI suggestions are for reference only, not medical advice. If you have an injury or a medical condition, check with your doctor first.",
+    "Happy training!",
+    "Jay · Lean Ritual",
+  ].join("\n"));
+  assert.doesNotMatch(enRendered.subject, CJK_RE);
+  assert.doesNotMatch(enRendered.text, CJK_RE);
+  assert.doesNotMatch(enRendered.html, CJK_RE);
+  assert.doesNotMatch(enRendered.html, /<(img|svg|script|iframe|form|style)\b/i);
+  assert.equal([...enRendered.html.matchAll(/<a\b[^>]*\bhref="https?:\/\/[^"]*"/gi)].length, 1);
+  for (const foundUrl of [...extractHttpUrls(enRendered.text), ...extractHttpUrls(enRendered.html)]) {
+    assert.equal(new URL(foundUrl).hostname, "leanritual.app");
+  }
+  const enEmpty = renderEmail({ kind: "invite", url: inviteUrl, lang: "en", name: "   ", replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(enEmpty.text.split("\n")[0], "Hi,");
+  assert.ok(enEmpty.html.includes(">Hi,</h1>"));
+
+  // 1d. HTML-special, newline, bidi, and overly long names are sanitized and HTML-escaped
+  const hostileName = '  <b>Alex</b>\r\nBcc:evil@x.com\u202E & "Friends"  ';
+  const enHostile = renderEmail({ kind: "invite", url: inviteUrl, lang: "en", name: hostileName, replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(enHostile.text.split("\n")[0], 'Hi <b>Alex</b> Bcc:evil@x.com & "Friends",');
+  assert.ok(!enHostile.text.includes("\u202E"));
+  assert.ok(enHostile.html.includes("&lt;b&gt;Alex&lt;/b&gt; Bcc:evil@x.com &amp; &quot;Friends&quot;,"));
+  assert.ok(!enHostile.html.includes("<b>Alex</b>"));
+
+  const longName = "A".repeat(120);
+  const enLong = renderEmail({ kind: "invite", url: inviteUrl, lang: "en", name: longName, replyTo: smtpEnv.MAIL_REPLY_TO });
+  assert.equal(enLong.text.split("\n")[0], `Hi ${"A".repeat(60)},`);
+
+  // 2. SMTP stream transport verifies multipart/alternative MIME headers, Reply-To, Message-ID, and metadata-only log
+  const logs = [];
+  const streamTransport = nodemailer.createTransport({ streamTransport: true, buffer: true });
+  const mailer = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    transport: streamTransport,
+    log: line => logs.push(line),
+  });
+  const info = await mailer.sendInvitationEmail({ to: secretEmail, url: inviteUrl, lang: "zh", name: "SecretApplicantName" });
+  const raw = info.message.toString("utf8");
+  assert.match(raw, /^From: Lean Ritual <noreply@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Reply-To: Lean Ritual Support <support@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Message-ID: <[0-9a-f-]+@leanritual\.app>\r?$/m);
+  assert.match(raw, /^Content-Type: multipart\/alternative;/m);
+  assert.match(raw, /^Content-Type: text\/plain; charset=utf-8\r?$/m);
+  assert.match(raw, /^Content-Type: text\/html; charset=utf-8\r?$/m);
+  assert.doesNotMatch(raw, /^List-Unsubscribe:/im);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /^mail status=sent type=invite recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none$/);
+  assert.ok(!logs[0].includes("SecretApplicantName"));
+  assert.ok(!logs[0].includes("beta.applicant"));
+  assert.ok(!logs[0].includes(secretEmail));
+  assert.ok(!logs[0].includes(secretToken));
+  assert.ok(!logs[0].includes("https://"));
+
+  // 3. Origin validation & invalid recipient fail closed without invoking transport and without leaking secrets
+  let sendCalls = 0;
+  const errLogs = [];
+  const guardedMailer = createMailer(smtpEnv, {
+    baseURL: "https://leanritual.app",
+    transport: { async sendMail() { sendCalls++; return { response: "250 OK" }; } },
+    log: line => errLogs.push(line),
+  });
+  await assert.rejects(
+    () => guardedMailer.sendInvitationEmail({ to: secretEmail, url: "https://evil.example/login.html?invite=abc", lang: "en", name: "Alex" }),
+    err => err.code === "INVALID_ACTION_URL" && !err.message.includes("evil.example") && !err.message.includes(secretEmail)
+  );
+  await assert.rejects(
+    () => guardedMailer.sendInvitationEmail({ to: "not-an-email", url: inviteUrl, lang: "en", name: "Alex" }),
+    err => err.code === "INVALID_RECIPIENT" && !err.message.includes("not-an-email")
+  );
+  assert.equal(sendCalls, 0);
+  assert.equal(errLogs.length, 2);
+  assert.match(errLogs[0], /^mail status=error type=invite recipient_domain=163\.com message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none error_code=INVALID_ACTION_URL$/);
+  assert.match(errLogs[1], /^mail status=error type=invite recipient_domain=unknown message_id=<[0-9a-f-]+@leanritual\.app> smtp_code=none error_code=INVALID_RECIPIENT$/);
+
+  // 4. File mode (localhost dev) writes private 0600 JSON with rendered invite content and sanitized name
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-invite-mail-file-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const fileMailer = createMailer({ MAIL_MODE: "file" }, { dataDir, baseURL: "http://127.0.0.1:8080" });
+  const localInviteUrl = "http://127.0.0.1:8080/login.html?invite=local_tok_1&email=dev%40example.com";
+  await fileMailer.sendInvitationEmail({ to: "dev@example.com", url: localInviteUrl, lang: "en", name: "Dev\nUser" });
+  const files = readMailFiles(dataDir);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].kind, "invite");
+  assert.equal(files[0].lang, "en");
+  assert.equal(files[0].url, localInviteUrl);
+  assert.equal(files[0].subject, "Your Lean Ritual beta invite");
+  assert.equal(files[0].text.split("\n")[0], "Hi Dev User,");
+  assert.ok(files[0].html.includes("Hi Dev User,"));
+});
