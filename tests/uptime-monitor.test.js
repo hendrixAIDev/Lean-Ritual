@@ -8,14 +8,23 @@ const { pathToFileURL } = require('node:url');
 
 const ROOT = path.resolve(__dirname, '..');
 const WORKER_PATH = path.join(ROOT, 'ops', 'uptime-monitor', 'worker.js');
+const MONITOR_PATH = path.join(ROOT, 'ops', 'uptime-monitor', 'monitor.js');
 const WRANGLER_TOML_PATH = path.join(ROOT, 'ops', 'uptime-monitor', 'wrangler.toml');
 
-let modPromise;
+let workerModPromise;
 function loadWorkerModule() {
-  if (!modPromise) {
-    modPromise = import(pathToFileURL(WORKER_PATH).href);
+  if (!workerModPromise) {
+    workerModPromise = import(pathToFileURL(WORKER_PATH).href);
   }
-  return modPromise;
+  return workerModPromise;
+}
+
+let monitorModPromise;
+function loadMonitorModule() {
+  if (!monitorModPromise) {
+    monitorModPromise = import(pathToFileURL(MONITOR_PATH).href);
+  }
+  return monitorModPromise;
 }
 
 function createMemoryKV(initial = {}) {
@@ -62,7 +71,7 @@ const SECRET_TOPIC = 'super-secret-ntfy-topic-9f8e7d6c5b4a';
 const SECRET_ALERT_URL = `https://ntfy.sh/${SECRET_TOPIC}`;
 
 test('healthy check (200 ok:true revision) sends zero alerts and avoids redundant KV writes', async () => {
-  const { runCheck, STATE_KEY, USER_AGENT } = await loadWorkerModule();
+  const { runCheck, STATE_KEY, USER_AGENT } = await loadMonitorModule();
   const kv = createMemoryKV();
   const logger = createSilentLogger();
   const probeRequests = [];
@@ -119,7 +128,7 @@ test('healthy check (200 ok:true revision) sends zero alerts and avoids redundan
 });
 
 test('transient first-attempt blip that succeeds on immediate retry sends zero alerts', async () => {
-  const { runCheck } = await loadWorkerModule();
+  const { runCheck } = await loadMonitorModule();
   const kv = createMemoryKV();
   const logger = createSilentLogger();
   const sleeps = [];
@@ -162,7 +171,7 @@ test('transient first-attempt blip that succeeds on immediate retry sends zero a
 });
 
 test('confirmed UP -> DOWN -> cooldown suppression -> 6h reminder -> DOWN -> UP recovery lifecycle', async () => {
-  const { runCheck, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, STATE_KEY } = await loadMonitorModule();
   const kv = createMemoryKV();
   const logger = createSilentLogger();
   const alerts = [];
@@ -269,7 +278,7 @@ test('confirmed UP -> DOWN -> cooldown suppression -> 6h reminder -> DOWN -> UP 
 });
 
 test('failure modes: malformed JSON, non-JSON Content-Type, ok:false, missing revision, HTTP 502, and timeout', async () => {
-  const { runCheck } = await loadWorkerModule();
+  const { runCheck } = await loadMonitorModule();
 
   const cases = [
     {
@@ -344,7 +353,7 @@ test('failure modes: malformed JSON, non-JSON Content-Type, ok:false, missing re
 });
 
 test('real AbortSignal timeout triggers timeout failure cleanly', async () => {
-  const { probeOnce } = await loadWorkerModule();
+  const { probeOnce } = await loadMonitorModule();
 
   const slowFetch = (_url, { signal }) =>
     new Promise((_resolve, reject) => {
@@ -362,7 +371,7 @@ test('real AbortSignal timeout triggers timeout failure cleanly', async () => {
 });
 
 test('fallback without STATE_KV still sends failure alerts cleanly and zero alerts when up', async () => {
-  const { runCheck } = await loadWorkerModule();
+  const { runCheck } = await loadMonitorModule();
   const logger = createSilentLogger();
   const alerts = [];
   let shouldFail = false;
@@ -396,7 +405,7 @@ test('fallback without STATE_KV still sends failure alerts cleanly and zero aler
 });
 
 test('ALERT_URL validation and zero secret/URL leaks on alert delivery failures', async () => {
-  const { runCheck, sendAlert, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, sendAlert, STATE_KEY } = await loadMonitorModule();
 
   // 1. Non-HTTPS ALERT_URL must be refused without logging the URL
   const insecureUrl = 'http://ntfy.sh/insecure-secret-topic-12345';
@@ -457,7 +466,7 @@ test('ALERT_URL validation and zero secret/URL leaks on alert delivery failures'
 });
 
 test('corrupt or throwing STATE_KV does not silence outage alerts, and formatDuration handles all ranges', async () => {
-  const { runCheck, formatDuration, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, formatDuration, STATE_KEY } = await loadMonitorModule();
 
   assert.equal(formatDuration(45_000), '45s');
   assert.equal(formatDuration(12 * 60_000), '12m');
@@ -489,7 +498,7 @@ test('corrupt or throwing STATE_KV does not silence outage alerts, and formatDur
 });
 
 test('failed [RECOVERED] webhook stays pending with frozen outage duration and retries on subsequent healthy ticks', async () => {
-  const { runCheck, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, STATE_KEY } = await loadMonitorModule();
   const downSince = '2026-11-27T10:00:00.000Z';
   const kv = createMemoryKV({
     [STATE_KEY]: JSON.stringify({
@@ -575,7 +584,7 @@ test('failed [RECOVERED] webhook stays pending with frozen outage duration and r
 });
 
 test('failed initial [DOWN] webhook retries immediately on the next unhealthy tick instead of waiting 6h', async () => {
-  const { runCheck, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, STATE_KEY } = await loadMonitorModule();
   const kv = createMemoryKV({
     [STATE_KEY]: JSON.stringify({
       status: 'up',
@@ -633,7 +642,7 @@ test('failed initial [DOWN] webhook retries immediately on the next unhealthy ti
 });
 
 test('transient STATE_KV.get exception does not overwrite stored down state and recovers cleanly once KV returns', async () => {
-  const { runCheck, STATE_KEY } = await loadWorkerModule();
+  const { runCheck, STATE_KEY } = await loadMonitorModule();
   const downSince = '2026-11-27T10:00:00.000Z';
   const backing = createMemoryKV({
     [STATE_KEY]: JSON.stringify({
@@ -713,6 +722,15 @@ test('transient STATE_KV.get exception does not overwrite stored down state and 
   assert.equal(backing.getState(STATE_KEY).status, 'up');
 });
 
+test('worker.js entrypoint exports strictly ["default"] with fetch and scheduled handlers for workerd compatibility', async () => {
+  const workerModule = await loadWorkerModule();
+  assert.deepEqual(Object.keys(workerModule), ['default']);
+  assert.equal(typeof workerModule.default, 'object');
+  assert.notEqual(workerModule.default, null);
+  assert.equal(typeof workerModule.default.fetch, 'function');
+  assert.equal(typeof workerModule.default.scheduled, 'function');
+});
+
 test('HTTP fetch handler returns 404 and triggers zero outbound requests', async () => {
   const { default: worker } = await loadWorkerModule();
   const origFetch = globalThis.fetch;
@@ -736,7 +754,8 @@ test('HTTP fetch handler returns 404 and triggers zero outbound requests', async
 });
 
 test('scheduled handler delegates to runCheck using worker env', async () => {
-  const { default: worker, STATE_KEY } = await loadWorkerModule();
+  const { default: worker } = await loadWorkerModule();
+  const { STATE_KEY } = await loadMonitorModule();
   const kv = createMemoryKV();
   const origFetch = globalThis.fetch;
   let probedUrl = null;
