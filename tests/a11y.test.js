@@ -559,6 +559,9 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
           id: 'td-m1', type: '午餐', text: 'Beef bowl', time: '12:40',
           est: { kcal: 640, protein: 44, carbs: 68, fat: 19, by: 'manual' }
         }];
+        day.cardio = [
+          { id: 'c-a11y-1', type: 'incline_walk', minutes: 20, intensity: 'low', note: 'Incline 12' }
+        ];
       }, { quiet: true });
       const nowMs = Date.now();
       const fb = {
@@ -725,6 +728,33 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       });
       await assertAxeClean(context, page, `${cfg.name}/today-rest-timer-done`);
       await page.locator('#rt-dismiss').click();
+
+      // Today cardio form open (including "other" custom input) + 44x44 tap target checks
+      await page.locator('#cardio-open-btn').click();
+      await page.locator('[data-act="cardio-type"][data-v="other"]').click();
+      await page.locator('#cardio-custom-name').waitFor({ state: 'visible' });
+      await assertAxeClean(context, page, `${cfg.name}/today-cardio-open`);
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const cardioSizes = await page.evaluate(() => {
+          const check = sel => {
+            const r = document.querySelector(sel).getBoundingClientRect();
+            return { w: Math.round(r.width), h: Math.round(r.height) };
+          };
+          return {
+            openBtn: check('#cardio-open-btn'),
+            typeChip: check('[data-act="cardio-type"]'),
+            minChip: check('[data-act="cardio-min"]'),
+            intChip: check('[data-act="cardio-int"]'),
+            saveBtn: check('[data-act="cardio-save"]'),
+            editBtn: check('[data-act="cardio-edit"]'),
+            delBtn: check('[data-act="cardio-del"]')
+          };
+        });
+        for (const [k, s] of Object.entries(cardioSizes)) {
+          assert.ok(s.w >= 44 && s.h >= 44, `cardio ${k} >= 44x44: ${JSON.stringify(s)}`);
+        }
+      }
+      await page.locator('#cardio-form [data-act="cardio-cancel"]').click();
 
       // Food (manual mode + meal shortcuts + label calculator)
       await page.locator('nav#tabs [data-act="tab"][data-v="food"]').click();
