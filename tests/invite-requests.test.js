@@ -860,10 +860,14 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
     "MAIL_FROM=Lean Ritual <noreply@leanritual.app>",
     'MAIL_REPLY_TO="Lean Ritual Support <support@leanritual.app>"',
     "SMTP_PASS=re_secret#with#hashes$and$(not_evaled)",
+    'MAIL_FROM_QUOTED_INTERIOR=Lean "Ritual" <noreply@leanritual.app>',
+    "IT_S_LITERAL=it's",
     'SMTP_PASS_IQ=prefix"suffix"',
     "SMTP_PASS_SQ_INT=a'b'c",
     'SMTP_PASS_MIXED=unmatched"quote\'here',
-    "SMTP_PASS_BS=foo\\bar",
+    "SMTP_PASS_ESC=foo\\bar",
+    "SMTP_PASS_BS=foo\\\\bar",
+    'SMTP_PASS_ESQ=foo\\"bar',
     'SMTP_PASS_DQ="re_abc\\ndef\\t123\\"quote\\\\slash\\$dollar\\`tick"',
     "SINGLE_QUOTED='literal \\n value <keep>'",
     'ESCAPED_TRAIL="foo\\\\"',
@@ -875,18 +879,23 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
     'line two\\nliteral"',
     "MULTILINE_SQ='single 1",
     "single 2 \\keep'",
-    "EMPTY_VAL="
+    "EMPTY_VAL=",
+    "TRAILING_EOF_BS=abc\\"
   ].join("\n"));
 
   assert.equal(parsed.DATA_DIR, "/var/lib/bojin");
   assert.equal(parsed.MAIL_MODE, "smtp");
   assert.equal(parsed.MAIL_FROM, "Lean Ritual <noreply@leanritual.app>");
+  assert.equal(parsed.MAIL_FROM_QUOTED_INTERIOR, 'Lean "Ritual" <noreply@leanritual.app>', "unquoted values must preserve interior double quotes literally");
+  assert.equal(parsed.IT_S_LITERAL, "it's", "unquoted values must preserve interior apostrophes literally");
   assert.equal(parsed.MAIL_REPLY_TO, "Lean Ritual Support <support@leanritual.app>");
   assert.equal(parsed.SMTP_PASS, "re_secret#with#hashes$and$(not_evaled)");
   assert.equal(parsed.SMTP_PASS_IQ, 'prefix"suffix"', "unquoted values must preserve interior double quotes literally");
   assert.equal(parsed.SMTP_PASS_SQ_INT, "a'b'c", "unquoted values must preserve interior single quotes literally");
   assert.equal(parsed.SMTP_PASS_MIXED, 'unmatched"quote\'here', "unquoted values must preserve unmatched interior quotes literally");
-  assert.equal(parsed.SMTP_PASS_BS, "foo\\bar", "unquoted values must preserve non-continuation backslashes literally");
+  assert.equal(parsed.SMTP_PASS_ESC, "foobar", "POSIX/systemd unquoted backslash escapes ordinary char");
+  assert.equal(parsed.SMTP_PASS_BS, "foo\\bar", "POSIX/systemd unquoted double backslash yields single literal backslash");
+  assert.equal(parsed.SMTP_PASS_ESQ, 'foo"bar', "POSIX/systemd unquoted \\\" yields literal double quote");
   assert.equal(parsed.SMTP_PASS_DQ, 're_abc\\ndef\\t123"quote\\slash$dollar`tick', "systemd preserves \\n and \\t in double quotes while unescaping \", \\, $, `");
   assert.equal(parsed.SINGLE_QUOTED, "literal \\n value <keep>");
   assert.equal(parsed.ESCAPED_TRAIL, "foo\\");
@@ -895,6 +904,7 @@ test("systemd --env-file parser handles MAIL_FROM=<...>, literal backslashes, mu
   assert.equal(parsed.MULTILINE_DQ, "line one\nline two\\nliteral");
   assert.equal(parsed.MULTILINE_SQ, "single 1\nsingle 2 \\keep");
   assert.equal(parsed.EMPTY_VAL, "");
+  assert.equal(parsed.TRAILING_EOF_BS, "abc", "trailing lone backslash at EOF must be handled safely");
 
   const envPath = path.join(dir, "environment");
   fs.writeFileSync(envPath, "DATA_DIR=/from/envfile\nMAIL_FROM=Lean Ritual <noreply@leanritual.app>\nAUTH_BASE_URL=https://leanritual.app\n");
@@ -1796,7 +1806,8 @@ test("pre-SMTP crash orphan recovery via source_request_id/delivery_state vs mid
   authDb.close();
 });
 
-test("legacy invite_requests_pending_contact index migrates cleanly to invite_requests_active_contact", async () => {
+test("legacy invite_requests_pending_contact migration reconciles duplicate active contacts and preserves in-flight rows", async (t) => {
+  // Fixture 1: Legacy schema containing sending + pending and sending_uncertain + sending + pending duplicates
   const bojinDb = openMemoryDb();
   const authDb = openMemoryDb();
   bojinDb.exec(`
@@ -1816,6 +1827,17 @@ test("legacy invite_requests_pending_contact index migrates cleanly to invite_re
     CREATE UNIQUE INDEX invite_requests_pending_contact
       ON invite_requests(contact_kind, contact_value) WHERE status = 'pending';
   `);
+  const ins = bojinDb.prepare(`
+    INSERT INTO invite_requests (id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated)
+    VALUES (?, ?, 'email', ?, 'goal', '', 'en', ?, '', ?, ?)
+  `);
+  // Contact A: one sending + one duplicate pending (permitted under legacy pending-only index)
+  ins.run("req_a_send", "User A", "dup.a@example.com", "sending", "2026-11-27T10:00:00.000Z", "2026-11-27T10:01:00.000Z");
+  ins.run("req_a_pend", "User A", "dup.a@example.com", "pending", "2026-11-27T10:02:00.000Z", "2026-11-27T10:02:00.000Z");
+  // Contact B: one sending_uncertain + one sending + one pending
+  ins.run("req_b_uncertain", "User B", "dup.b@example.com", "sending_uncertain", "2026-11-27T10:00:00.000Z", "2026-11-27T10:01:00.000Z");
+  ins.run("req_b_send", "User B", "dup.b@example.com", "sending", "2026-11-27T10:03:00.000Z", "2026-11-27T10:03:00.000Z");
+  ins.run("req_b_pend", "User B", "dup.b@example.com", "pending", "2026-11-27T10:04:00.000Z", "2026-11-27T10:04:00.000Z");
 
   await fulfillInviteRequests({
     bojinDb,
@@ -1832,6 +1854,109 @@ test("legacy invite_requests_pending_contact index migrates cleanly to invite_re
   assert.ok(idxNames.includes("invite_requests_active_contact"), "new active-contact unique index must exist");
   assert.ok(!idxNames.includes("invite_requests_pending_contact"), "legacy pending-only index must be dropped");
 
+  const rowsById = Object.fromEntries(
+    bojinDb.prepare("SELECT id, status, status_note FROM invite_requests").all().map(r => [r.id, r])
+  );
+  assert.equal(rowsById.req_a_send.status, "sending", "in-flight sending row must be preserved over pending duplicate");
+  assert.equal(rowsById.req_a_pend.status, "dismissed", "duplicate pending row must be dismissed");
+  assert.match(rowsById.req_a_pend.status_note, /req_a_send/);
+
+  assert.equal(rowsById.req_b_uncertain.status, "sending_uncertain", "sending_uncertain must win over sending and pending duplicates");
+  assert.equal(rowsById.req_b_send.status, "dismissed");
+  assert.equal(rowsById.req_b_pend.status, "dismissed");
+  assert.match(rowsById.req_b_send.status_note, /req_b_uncertain/);
+  assert.match(rowsById.req_b_pend.status_note, /req_b_uncertain/);
+
+  // New unique index must actively reject inserting another active row for dup.a@example.com
+  assert.throws(
+    () => ins.run("req_a_new", "User A", "dup.a@example.com", "pending", "2026-11-27T10:05:00.000Z", "2026-11-27T10:05:00.000Z"),
+    /UNIQUE constraint failed/i
+  );
+
   bojinDb.close();
   authDb.close();
+
+  // Fixture 2: File-backed legacy bojin.db with sibling auth.sqlite in-flight source_request_id tie-breaker
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ritual-migrate-dup-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const fileAuthDb = new DatabaseSync(path.join(dir, "auth.sqlite"));
+  const invitations = createInvitations(fileAuthDb);
+  const nowMs = Date.parse("2026-11-27T11:00:00.000Z");
+  const linkedRes = invitations.reserveEmailForFulfillment("tie.sending@example.com", {
+    maxSpots: 50,
+    requestId: "req_tie_linked",
+    nowMs
+  });
+  assert.equal(invitations.markDeliverySending(linkedRes.token).changes, 1);
+  invitations.reserveEmailForFulfillment("tie.reserved@example.com", {
+    maxSpots: 50,
+    requestId: "req_res_linked",
+    nowMs
+  });
+  fileAuthDb.close();
+
+  const fileBojinDb = new DatabaseSync(path.join(dir, "bojin.db"));
+  fileBojinDb.exec(`
+    CREATE TABLE invite_requests (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      contact_kind TEXT NOT NULL,
+      contact_value TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      lang TEXT NOT NULL DEFAULT 'zh',
+      status TEXT NOT NULL DEFAULT 'pending',
+      status_note TEXT NOT NULL DEFAULT '',
+      created TEXT NOT NULL,
+      updated TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX invite_requests_pending_contact
+      ON invite_requests(contact_kind, contact_value) WHERE status = 'pending';
+  `);
+  const insFile = fileBojinDb.prepare(`
+    INSERT INTO invite_requests (id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated)
+    VALUES (?, ?, 'email', ?, 'goal', '', 'en', ?, '', ?, ?)
+  `);
+  // Two sending rows for tie.sending@example.com: req_tie_linked is OLDER but linked to delivery_state='sending' in sibling auth.sqlite!
+  insFile.run("req_tie_linked", "Tie S", "tie.sending@example.com", "sending", "2026-11-27T10:00:00.000Z", "2026-11-27T10:01:00.000Z");
+  insFile.run("req_tie_newer", "Tie S", "tie.sending@example.com", "sending", "2026-11-27T10:02:00.000Z", "2026-11-27T10:05:00.000Z");
+  insFile.run("req_tie_pend", "Tie S", "tie.sending@example.com", "pending", "2026-11-27T10:06:00.000Z", "2026-11-27T10:06:00.000Z");
+  // Two sending rows for tie.reserved@example.com: req_res_linked is OLDER but linked to delivery_state='reserved' in sibling auth.sqlite!
+  insFile.run("req_res_linked", "Tie R", "tie.reserved@example.com", "sending", "2026-11-27T10:00:00.000Z", "2026-11-27T10:01:00.000Z");
+  insFile.run("req_res_newer", "Tie R", "tie.reserved@example.com", "sending", "2026-11-27T10:02:00.000Z", "2026-11-27T10:05:00.000Z");
+
+  // Open via createInviteRequests WITHOUT passing authDb: sibling auth.sqlite is auto-discovered read-only!
+  const svc = createInviteRequests(fileBojinDb);
+  const fileIdxNames = fileBojinDb
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'invite_requests'")
+    .all()
+    .map(r => r.name);
+  assert.ok(fileIdxNames.includes("invite_requests_active_contact"));
+  assert.ok(!fileIdxNames.includes("invite_requests_pending_contact"));
+
+  const fileRows = Object.fromEntries(
+    fileBojinDb.prepare("SELECT id, status, status_note FROM invite_requests").all().map(r => [r.id, r])
+  );
+  assert.equal(fileRows.req_tie_linked.status, "sending", "sibling auth.sqlite sending source_request_id must win over newer unlinked sending row");
+  assert.equal(fileRows.req_tie_newer.status, "dismissed");
+  assert.equal(fileRows.req_tie_pend.status, "dismissed");
+  assert.match(fileRows.req_tie_newer.status_note, /req_tie_linked/);
+
+  assert.equal(fileRows.req_res_linked.status, "sending", "sibling auth.sqlite reserved source_request_id must win over newer unlinked sending row");
+  assert.equal(fileRows.req_res_newer.status, "dismissed");
+  assert.match(fileRows.req_res_newer.status_note, /req_res_linked/);
+
+  // Public repeat submit against preserved sending row must deduplicate cleanly
+  const dupSubmit = await svc.submit({
+    name: "Repeat",
+    contactKind: "email",
+    contactValue: "tie.sending@example.com",
+    goal: "Repeat after migration",
+    lang: "en"
+  }, { ip: "198.51.100.99" });
+  assert.equal(dupSubmit.deduplicated, true);
+  assert.equal(dupSubmit.id, "req_tie_linked");
+
+  fileBojinDb.close();
 });
