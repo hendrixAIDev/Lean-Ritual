@@ -1054,15 +1054,19 @@ test("fulfillInviteRequests: auto-emails zh/en requests, rolls back on SMTP fail
   assert.equal(inv2Rows[0].revoked, 1, "failed SMTP delivery must revoke the newly issued invite token");
   assert.equal(inv2Rows[0].consumed, null);
 
-  // Verify succeeded rows marked invited with auto-emailed note and localized emails sent
+  // Verify succeeded rows marked invited with auto-emailed note and localized emails sent with {name} greeting
   const row1After = bojinDb.prepare("SELECT status, status_note FROM invite_requests WHERE id = ?").get(rEmail1.id);
   assert.equal(row1After.status, "invited");
   assert.equal(row1After.status_note, "auto-emailed invite");
   assert.equal(sentMessages.length, 2);
   assert.equal(sentMessages[0].to, "first.secret@163.com");
-  assert.match(sentMessages[0].subject, /内测邀请/);
+  assert.equal(sentMessages[0].subject, "你的薄肌日课内测邀请");
+  assert.equal(sentMessages[0].text.split("\n")[0], "你好 林保密，");
+  assert.ok(sentMessages[0].html.includes("你好 林保密，"));
   assert.equal(sentMessages[1].to, "third.overcap@example.com");
-  assert.equal(sentMessages[1].subject, "Lean Ritual · Your beta invitation");
+  assert.equal(sentMessages[1].subject, "Your Lean Ritual beta invite");
+  assert.equal(sentMessages[1].text.split("\n")[0], "Hi Third OverCap,");
+  assert.ok(sentMessages[1].html.includes("Hi Third OverCap,"));
 
   // Phone-only row remained untouched pending
   assert.equal(bojinDb.prepare("SELECT status FROM invite_requests WHERE id = ?").get(rPhone.id).status, "pending");
@@ -1201,6 +1205,9 @@ test("CLI scripts/invite-requests-admin.js fulfill-pending & fulfill with --env-
   assert.equal(mail.kind, "invite");
   assert.equal(mail.lang, "en");
   assert.equal(mail.to, "cli.tester@example.com");
+  assert.equal(mail.subject, "Your Lean Ritual beta invite");
+  assert.equal(mail.text.split("\n")[0], "Hi CLI Tester,");
+  assert.ok(mail.html.includes("Hi CLI Tester,"));
   const parsedUrl = new URL(mail.url);
   assert.equal(parsedUrl.origin, "http://127.0.0.1:8080");
   assert.equal(parsedUrl.pathname, "/login.html");
@@ -1959,4 +1966,81 @@ test("legacy invite_requests_pending_contact migration reconciles duplicate acti
   assert.equal(dupSubmit.id, "req_tie_linked");
 
   fileBojinDb.close();
+});
+
+test("fulfillInviteRequests passes sanitized {name} greeting and empty-name fallback through createMailer in zh and en", async () => {
+  const bojinDb = openMemoryDb();
+  const authDb = openMemoryDb();
+  const nowMs = Date.parse("2026-11-28T02:00:00.000Z");
+
+  createInviteRequests(bojinDb, { now: () => nowMs });
+  const ins = bojinDb.prepare(`
+    INSERT INTO invite_requests (id, name, contact_kind, contact_value, goal, note, lang, status, status_note, created, updated)
+    VALUES (?, ?, 'email', ?, 'goal', '', ?, 'pending', '', ?, ?)
+  `);
+  // Row 1: zh with HTML-special + newline + bidi chars in stored name
+  ins.run("req_nm_1", '<img src=x>\r\n小明\u202E', "name.zh@example.com", "zh", "2026-11-28T02:00:01.000Z", "2026-11-28T02:00:01.000Z");
+  // Row 2: zh with blank/whitespace name -> "你好，"
+  ins.run("req_nm_2", "   ", "empty.zh@example.com", "zh", "2026-11-28T02:00:02.000Z", "2026-11-28T02:00:02.000Z");
+  // Row 3: en with HTML-special + newline chars in stored name
+  ins.run("req_nm_3", '<b>Sam</b>\n"O\'Neil"', "name.en@example.com", "en", "2026-11-28T02:00:03.000Z", "2026-11-28T02:00:03.000Z");
+  // Row 4: en with empty name -> "Hi,"
+  ins.run("req_nm_4", "", "empty.en@example.com", "en", "2026-11-28T02:00:04.000Z", "2026-11-28T02:00:04.000Z");
+
+  const sent = [];
+  const mailer = createMailer({
+    MAIL_MODE: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "465",
+    SMTP_USER: "resend",
+    SMTP_PASS: "re_test_key",
+    MAIL_FROM: "Lean Ritual <noreply@leanritual.app>"
+  }, {
+    baseURL: "https://leanritual.app",
+    transport: {
+      async sendMail(opts) {
+        sent.push(opts);
+        return { response: "250 OK" };
+      }
+    },
+    log: () => {}
+  });
+
+  const res = await fulfillInviteRequests({
+    bojinDb,
+    authDb,
+    mailer,
+    baseURL: "https://leanritual.app",
+    maxSpots: 50,
+    now: () => nowMs
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.emailedCount, 4);
+  assert.equal(sent.length, 4);
+
+  // 1. zh with hostile name
+  assert.equal(sent[0].subject, "你的薄肌日课内测邀请");
+  assert.equal(sent[0].text.split("\n")[0], "你好 <img src=x> 小明，");
+  assert.ok(!sent[0].text.includes("\u202E"));
+  assert.ok(sent[0].html.includes("你好 &lt;img src=x&gt; 小明，"));
+  assert.ok(!sent[0].html.includes("<img"));
+
+  // 2. zh empty name fallback
+  assert.equal(sent[1].subject, "你的薄肌日课内测邀请");
+  assert.equal(sent[1].text.split("\n")[0], "你好，");
+  assert.ok(sent[1].html.includes(">你好，</h1>"));
+
+  // 3. en with hostile name
+  assert.equal(sent[2].subject, "Your Lean Ritual beta invite");
+  assert.equal(sent[2].text.split("\n")[0], 'Hi <b>Sam</b> "O\'Neil",');
+  assert.ok(sent[2].html.includes('Hi &lt;b&gt;Sam&lt;/b&gt; &quot;O&#39;Neil&quot;,'));
+  assert.ok(!sent[2].html.includes("<b>Sam</b>"));
+
+  // 4. en empty name fallback
+  assert.equal(sent[3].subject, "Your Lean Ritual beta invite");
+  assert.equal(sent[3].text.split("\n")[0], "Hi,");
+  assert.ok(sent[3].html.includes(">Hi,</h1>"));
+
+  bojinDb.close();
+  authDb.close();
 });
