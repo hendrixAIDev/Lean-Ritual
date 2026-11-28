@@ -688,10 +688,41 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       await page.locator('nav#tabs').waitFor({ state: 'visible' });
       await page.evaluate(async l => { await setLang(l, { persistProfile: false }); }, cfg.lang);
 
-      // Today (workout + open form cues + active/completed rest timer bar + primary 44x44 tap target checks on mobile)
+      // Today (workout + open form cues + Quick Start 4/4 & 1/4 & collapsed + active/completed rest timer bar + primary 44x44 tap target checks on mobile)
       await page.locator('nav#tabs [data-act="tab"][data-v="today"]').click();
+      await page.locator('#quickstart-card').waitFor({ state: 'visible' });
       await page.evaluate(() => { document.querySelector('details.how')?.setAttribute('open', ''); });
       await assertAxeClean(context, page, `${cfg.name}/today`);
+
+      // Quick Start incomplete (1/4) + collapsed state axe & 44x44 checks (without mutating persisted data)
+      await page.evaluate(() => { window.__savedA11yDays = S.days; S.days = {}; S.guideCollapsed = false; render(); });
+      await page.locator('#quickstart-card .qs-steps').waitFor({ state: 'visible' });
+      await assertAxeClean(context, page, `${cfg.name}/today-quickstart-steps`);
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const qsSizes = await page.evaluate(() => {
+          const check = sel => {
+            const r = document.querySelector(sel).getBoundingClientRect();
+            return { w: Math.round(r.width), h: Math.round(r.height) };
+          };
+          return {
+            toggle: check('#qs-toggle'),
+            closeX: check('#qs-dismiss-x'),
+            ctaCheckin: check('[data-act="qs-go-checkin"]'),
+            ctaMeal: check('[data-act="qs-go-meal"]'),
+            ctaWorkout: check('[data-act="qs-go-workout"]'),
+            dismissFoot: check('.qs-foot [data-act="qs-dismiss"]')
+          };
+        });
+        for (const [k, s] of Object.entries(qsSizes)) {
+          assert.ok(s.w >= 44 && s.h >= 44, `quickstart ${k} >= 44x44: ${JSON.stringify(s)}`);
+        }
+      }
+      await page.locator('#qs-toggle').click();
+      assert.equal(await page.locator('#qs-body').count(), 0, 'collapsing Quick Start hides #qs-body');
+      await assertAxeClean(context, page, `${cfg.name}/today-quickstart-collapsed`);
+      await page.locator('#qs-toggle').click();
+      await page.locator('#qs-body').waitFor({ state: 'visible' });
+      await page.evaluate(() => { S.days = window.__savedA11yDays; delete window.__savedA11yDays; render(); });
 
       await page.locator('[data-act="rest-start"]').first().click();
       await page.locator('#rest-timer-bar').waitFor({ state: 'visible' });
@@ -828,11 +859,28 @@ test('headless Chromium axe-core audit: zero serious/critical violations across 
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.v), 'adj-a11y-1', 'Escape restores focus to exact triggering undo-adjust entry');
       await page.locator('#pg-adjust-prev').click();
 
-      // Me (with profile history pagination visible) + tester feedback form + delete-account disclosure + setup edit mode
+      // Me (with profile history pagination visible + Quick Start reopen button when dismissed) + tester feedback form + delete-account disclosure + setup edit mode
       await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
       await page.locator('nav[data-pager="profileHistory"]').waitFor({ state: 'visible' });
       await page.evaluate(() => { document.querySelector('details')?.setAttribute('open', ''); });
       await assertAxeClean(context, page, `${cfg.name}/me`);
+      // Dismiss Quick Start via Today button, verify Me reopen button is axe-clean & >=44x44, then reopen to restore clean state
+      await page.locator('nav#tabs [data-act="tab"][data-v="today"]').click();
+      await page.locator('#quickstart-card .qs-celebrate [data-act="qs-dismiss"]').click();
+      assert.equal(await page.locator('#quickstart-card').count(), 0, 'dismissing Quick Start hides card on Today');
+      await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
+      await page.locator('[data-act="qs-reopen"]').waitFor({ state: 'visible' });
+      await assertAxeClean(context, page, `${cfg.name}/me-qs-reopen`);
+      if (cfg.viewport.width === 390 && cfg.colorScheme === 'light') {
+        const reopenSize = await page.evaluate(() => {
+          const r = document.querySelector('[data-act="qs-reopen"]').getBoundingClientRect();
+          return { w: Math.round(r.width), h: Math.round(r.height) };
+        });
+        assert.ok(reopenSize.w >= 44 && reopenSize.h >= 44, `qs-reopen >= 44x44: ${JSON.stringify(reopenSize)}`);
+      }
+      await page.locator('[data-act="qs-reopen"]').click();
+      await page.locator('#quickstart-card').waitFor({ state: 'visible' });
+      await page.locator('nav#tabs [data-act="tab"][data-v="me"]').click();
       await page.locator('[data-act="ufb-open"]').click();
       await page.locator('#ufb-msg').waitFor({ state: 'visible' });
       await assertAxeClean(context, page, `${cfg.name}/me-feedback`);

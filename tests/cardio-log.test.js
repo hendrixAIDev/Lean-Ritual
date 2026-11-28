@@ -397,7 +397,7 @@ test('logging, editing, and deleting cardio on both workout and rest days with z
   assert.ok(htmlClosed.includes('aria-expanded="false"'));
   assert.ok(!htmlClosed.includes('id="cardio-form"'));
   assert.ok(htmlClosed.indexOf('data-act="save-workout"') < htmlClosed.indexOf('id="cardio-card"'));
-  assert.ok(htmlClosed.indexOf('id="cardio-card"') < htmlClosed.indexOf('今日打卡'));
+  assert.ok(htmlClosed.indexOf('id="cardio-card"') < htmlClosed.indexOf('<h2>今日打卡</h2>'));
 
   // Open form -> default 20 min, low intensity, incline_walk selected -> 2-tap save
   await env.click('cardio-open');

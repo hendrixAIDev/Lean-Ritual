@@ -216,6 +216,26 @@ details.how[open] > *:not(summary){margin-top:6px}
 .cardio-item{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
 .cardio-item:first-child{border-top:none;padding-top:0}
 .cardio-form{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:10px}
+.qs-card{border-color:var(--accent)}
+.qs-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.qs-title-wrap{display:flex;flex-direction:column;gap:2px;min-width:0}
+.qs-head-acts{flex:none;gap:6px;align-items:center}
+.qs-count{font-size:15px;font-weight:600;color:var(--muted);padding-inline:2px}
+.qs-bar{height:8px}
+.qs-body{display:flex;flex-direction:column;gap:10px}
+.qs-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.qs-step{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)}
+.qs-step:first-child{border-top:none;padding-top:0}
+.qs-step-main{display:flex;align-items:flex-start;gap:10px;min-width:0;flex:1 1 180px}
+.qs-badge{flex:none;width:24px;height:24px;border-radius:999px;background:var(--sunk);border:1px solid var(--line);color:var(--ink);font-family:var(--f-num);font-size:13px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+.qs-badge.done{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.qs-step-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.qs-step-title{font-size:14px;font-weight:600;color:var(--ink)}
+.qs-step.is-done .qs-step-title{color:var(--muted);font-weight:500}
+.qs-cta{flex:none;white-space:nowrap;border-color:var(--accent)}
+.qs-tips{display:flex;flex-direction:column;gap:6px}
+.qs-foot{padding-top:6px;border-top:1px solid var(--line)}
+.qs-done-title{font-size:16px;font-weight:700;color:var(--ink)}
 .hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
 .hero .big{font-size:40px;color:var(--accent)}
 @media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
@@ -993,8 +1013,35 @@ const I18N = {
     "me.historyTitle":"资料变更记录",
     "me.historyHint":"每次改资料前都会存一份旧资料。以往的训练和饮食记录不受影响，照当时的计划和目标显示。",
     "me.noChange":"未改动",
-    "me.guideTitle":"依据", "me.guideBody":"所有训练和饮食规则来自《薄肌训练与饮食纲领》。纲领改了之后，这里的规则需要同步更新。",
+    "me.guideTitle":"纲领与帮助", "me.guideBody":"所有训练和饮食规则来自《薄肌训练与饮食纲领》。纲领改了之后，这里的规则需要同步更新。",
     "me.guideLink":"打开纲领 ›",
+    "qs.eyebrow":"新手指引",
+    "qs.title":"新手快速上手",
+    "qs.collapse":"先折叠",
+    "qs.expand":"展开",
+    "qs.dismissAria":"关闭新手快速上手指引",
+    "qs.dismissBtn":"知道了，关闭指引",
+    "qs.progressAria":"新手指引已完成 {done} / {total} 步",
+    "qs.stepDoneSr":"已完成：",
+    "qs.stepTodoSr":"待完成：",
+    "qs.step1Title":"生成专属训练与饮食计划",
+    "qs.step1Sub":"{stage} · {kcal} kcal / 蛋白 {protein} g",
+    "qs.step2Title":"记一次今日打卡（体重 + 步数）",
+    "qs.step2Sub":"每天早上空腹称重最准，系统按 7 日均重校准",
+    "qs.step2Cta":"去打卡 →",
+    "qs.step3Title":"记第一顿饮食",
+    "qs.step3Sub":"支持拍餐盘照片 AI 估算，常吃的饭下次可一键快记",
+    "qs.step3Cta":"去记饮食 →",
+    "qs.step4Title":"记一次训练或有氧",
+    "qs.step4Sub":"器械被占或关节不适可点「换动作」；休息日也能记有氧",
+    "qs.step4Cta":"看今日课表 →",
+    "qs.tipFeedback":"提示：底部「反馈」用于记满几天后的 14 天 AI 教练复盘；遇到 Bug 或建议请到「我的 → 意见反馈」提交。",
+    "qs.tipHomeScreen":"小技巧：在手机浏览器点「分享 → 添加到主屏幕」，下次可像 App 一样全屏一键打开。",
+    "qs.reopenHint":"关闭后随时可在「我的」重新打开",
+    "qs.doneTitle":"上手完成！你已跑通全部核心流程",
+    "qs.doneNote":"接下来只需按日打卡；每满 1–2 周可去「反馈」做一次 AI 教练复盘。",
+    "qs.toastDismissed":"已收起新手指引，随时可在「我的」重新打开",
+    "qs.reopenBtn":"重新打开新手指引",
     "me.cloudYes":"数据保存在这个页面的云端存储里，换设备打开也在。",
     "me.cloudNo":"数据目前只存在这台设备的浏览器里。",
     "toast.saveRetry":"保存失败，稍后再试",
@@ -1477,8 +1524,35 @@ const I18N = {
     "me.historyTitle":"Profile History",
     "me.historyHint":"Previous settings are archived whenever you edit your profile. Past workouts and meals keep the targets from that day.",
     "me.noChange":"No changes",
-    "me.guideTitle":"Methodology", "me.guideBody":"Workouts and nutrition targets follow the Lean Ritual Training & Nutrition Guide.",
+    "me.guideTitle":"Guide & Help", "me.guideBody":"Workouts and nutrition targets follow the Lean Ritual Training & Nutrition Guide.",
     "me.guideLink":"Read the Guide ›",
+    "qs.eyebrow":"Getting Started",
+    "qs.title":"Quick Start",
+    "qs.collapse":"Collapse",
+    "qs.expand":"Expand",
+    "qs.dismissAria":"Dismiss Quick Start guide",
+    "qs.dismissBtn":"Got it, dismiss",
+    "qs.progressAria":"Quick Start progress: {done} of {total} steps completed",
+    "qs.stepDoneSr":"Completed: ",
+    "qs.stepTodoSr":"To do: ",
+    "qs.step1Title":"Build your baseline plan",
+    "qs.step1Sub":"{stage} · {kcal} kcal / {protein}g protein",
+    "qs.step2Title":"Log today's check-in (weight + steps)",
+    "qs.step2Sub":"Morning weigh-ins feed your 7-day trend average",
+    "qs.step2Cta":"Check in →",
+    "qs.step3Title":"Log your first meal",
+    "qs.step3Sub":"Snap a photo for AI macros, then reuse saved meals in 1 tap",
+    "qs.step3Cta":"Log meal →",
+    "qs.step4Title":"Log a workout or cardio session",
+    "qs.step4Sub":"Tap Swap on any exercise if busy or sore; log cardio on rest days too",
+    "qs.step4Cta":"View today's plan →",
+    "qs.tipFeedback":"Tip: Use the Feedback tab for 14-day AI Coach Reviews after logging a few days; report bugs or ideas in Me → Send feedback.",
+    "qs.tipHomeScreen":"Tip: Tap Share → Add to Home Screen in your mobile browser for 1-tap full-screen access.",
+    "qs.reopenHint":"Reopen anytime in Me",
+    "qs.doneTitle":"All set! You've got the daily loop down",
+    "qs.doneNote":"Keep logging at your own pace — run a 14-day AI Coach Review in Feedback after 1–2 weeks.",
+    "qs.toastDismissed":"Quick Start dismissed — reopen anytime in Me",
+    "qs.reopenBtn":"Show Quick Start guide again",
     "me.cloudYes":"Synced to your account cloud storage across devices.",
     "me.cloudNo":"Currently stored only in this browser.",
     "toast.saveRetry":"Save failed. Please try again.",
@@ -1861,11 +1935,13 @@ function announce(msg){
 let storageUser = null;
 const lsGet = (k, d) => { if (!storageUser) return d; try { const v = localStorage.getItem(`bj-user:${storageUser}:${k}`); return v ? JSON.parse(v) : d; } catch { return d; } };
 const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`bj-user:${storageUser}:${k}`, JSON.stringify(v)); } catch {} };
+const lsDel = k => { if (!storageUser) return; try { localStorage.removeItem(`bj-user:${storageUser}:${k}`); } catch {} };
 
 /* ============ 存储 ============ */
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], pages:{}, tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
+  guideCollapsed:false, guideVeteranAutoHide:false,
   drafts:lsGet("bj-drafts",{}), cardioDraft:{}, files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null, restTimer:null, mealShortcuts:[] };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
@@ -1939,7 +2015,9 @@ function write(path, data){
 const SCHEMA_VERSION = 2;
 function migrateProfile(p){
   if (!p) return p;
-  return {kcalAdjust:0, deloadEvery:9, swaps:{}, adjustLog:[], injuries:[], supps:[], trainDays:[1,3,5], slot:"eve", equipment:"gym", ...p, schema:SCHEMA_VERSION};
+  const out = {kcalAdjust:0, deloadEvery:9, swaps:{}, adjustLog:[], injuries:[], supps:[], trainDays:[1,3,5], slot:"eve", equipment:"gym", ...p, schema:SCHEMA_VERSION};
+  if (typeof out.guideDismissed !== "boolean") delete out.guideDismissed;
+  return out;
 }
 const CARDIO_TYPES = ["incline_walk", "run", "bike", "stairmaster", "elliptical", "row", "swim", "jump_rope", "hiit", "other"];
 const CARDIO_TYPE_SET = new Set(CARDIO_TYPES);
@@ -2241,7 +2319,7 @@ async function updateDay(date, fn, opt = {}){
   } catch (e) { console.warn("day write failed", e); if (!opt.silent) saveErr(e); throw e; }
 }
 let profileSeq = 0;
-async function updateProfile(fn){
+async function updateProfile(fn, opt = {}){
   const seq = ++profileSeq;
   const prevAdjLen = (S.profile?.adjustLog || []).length;
   try {
@@ -2253,7 +2331,7 @@ async function updateProfile(fn){
       render();
     }
     return next;
-  } catch (e) { console.warn("profile write failed", e); saveErr(e); throw e; }
+  } catch (e) { console.warn("profile write failed", e); if (!opt.silent) saveErr(e); throw e; }
 }
 /* 训练记录另存一份只增不改的备份：即使某天的记录被覆盖，也能从这里恢复 */
 function backupWorkout(date, w){
@@ -2288,6 +2366,8 @@ const dayTargets = date => S.days[date]?.targets || targets();
 async function loadAll(){
   S.pages = {};
   S.cardioDraft = {};
+  S.guideCollapsed = false;
+  S.guideVeteranAutoHide = false;
   try {
     S.profile = migrateProfile(await S.store.get("app/profile"));
     const pendingLang = urlLangOverride || readPendingLang();
@@ -2323,6 +2403,16 @@ async function loadAll(){
     await restoreWorkouts();
     const fb = await S.store.list("feedback", {order:"createdAt", limit:200});
     S.feedback = fb.map(d => d.data).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+    const pendingGuide = readGuidePending();
+    if (S.profile && pendingGuide && !inFlightGuideOps.has(pendingGuide.id)) {
+      const desired = pendingGuide.state === "dismissed";
+      if (S.profile.guideDismissed === desired) {
+        clearGuidePending(pendingGuide.id);
+      } else if (S.cloud && S.store && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+        flushGuidePending(pendingGuide);
+      }
+    }
+    S.guideVeteranAutoHide = !!(S.profile && S.profile.guideDismissed === undefined && readGuidePending()?.state !== "open" && quickstartDoneCount() === 4);
   } catch (e) { console.error(e); S.loadError = true; }
 }
 
@@ -2684,7 +2774,14 @@ async function submitSetup(form){
     updatedAt:new Date().toISOString()};
   const today = todayStr();
   const chosenLang = validLang(S.explicitLang) || readPendingLang();
-  const apply = p => { Object.assign(p, fields); if (chosenLang) p.lang = chosenLang; p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION; };
+  const pendingGuide = prev.startDate ? readGuidePending() : null;
+  const apply = p => {
+    Object.assign(p, fields);
+    if (chosenLang) p.lang = chosenLang;
+    if (!prev.startDate && typeof p.guideDismissed !== "boolean") p.guideDismissed = false;
+    else if (pendingGuide && readGuidePending()?.id === pendingGuide.id) p.guideDismissed = pendingGuide.state === "dismissed";
+    p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION;
+  };
   S.busy.setup = true; if (btn) btn.disabled = true;
   try {
     let h = null;
@@ -2694,6 +2791,8 @@ async function submitSetup(form){
       await write("profileHistory/" + h.id, h);
     }
     await updateProfile(apply);
+    if (!prev.startDate) { clearGuidePending(); S.guideVeteranAutoHide = false; S.guideCollapsed = false; }
+    else if (pendingGuide) { clearGuidePending(pendingGuide.id); }
     if (chosenLang) clearPendingLang();
     if (h) { S.profileHistory = [h, ...(S.profileHistory||[])]; resetPage("profileHistory"); }
     S.editing = false; S.tab = "today";
@@ -3176,17 +3275,192 @@ function cardioCard(date, day){
   </section>`;
 }
 
+const GUIDE_PENDING_KEY = "bj-guide-pending";
+const CHECKIN_FIELDS = ["weight", "steps", "sleep", "bf", "waist"];
+let guideOpSeq = 0;
+const inFlightGuideOps = new Set();
+function readGuidePending(){
+  const v = lsGet(GUIDE_PENDING_KEY, null);
+  if (v === "dismissed" || v === "open") return { state: v, id: "legacy-" + v };
+  if (v && typeof v === "object" && !Array.isArray(v) && (v.state === "dismissed" || v.state === "open") && typeof v.id === "string" && v.id.trim() !== "") {
+    return { state: v.state, id: v.id };
+  }
+  return null;
+}
+function writeGuidePending(state){
+  if (state !== "dismissed" && state !== "open") { lsDel(GUIDE_PENDING_KEY); return null; }
+  const id = uid() + "-" + (++guideOpSeq);
+  lsSet(GUIDE_PENDING_KEY, { state, id });
+  return id;
+}
+function clearGuidePending(expectedId){
+  if (expectedId == null) { lsDel(GUIDE_PENDING_KEY); return; }
+  if (readGuidePending()?.id === expectedId) lsDel(GUIDE_PENDING_KEY);
+}
+function flushGuidePending(pending){
+  if (!pending || (pending.state !== "dismissed" && pending.state !== "open") || !pending.id) return Promise.resolve();
+  if (inFlightGuideOps.has(pending.id)) return Promise.resolve();
+  const opId = pending.id;
+  const desired = pending.state === "dismissed";
+  inFlightGuideOps.add(opId);
+  return updateProfile(p => {
+    const cur = readGuidePending();
+    if (cur && cur.id === opId) p.guideDismissed = desired;
+  }, { silent: true })
+    .then(() => { clearGuidePending(opId); })
+    .catch(() => {})
+    .finally(() => {
+      inFlightGuideOps.delete(opId);
+      const cur = readGuidePending();
+      if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+    });
+}
+function isFiniteNumVal(v){
+  if (typeof v === "number") return Number.isFinite(v);
+  if (typeof v === "string") {
+    const s = v.trim();
+    return s !== "" && Number.isFinite(Number(s));
+  }
+  return false;
+}
+function hasSavedCheckin(d){
+  const c = d?.checkin;
+  if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+  return CHECKIN_FIELDS.some(k => isFiniteNumVal(c[k]));
+}
+function isSavedMealEntry(m){
+  if (!m || typeof m !== "object" || Array.isArray(m)) return false;
+  if (typeof m.text === "string" && m.text.trim() !== "") return true;
+  if (typeof m.name === "string" && m.name.trim() !== "") return true;
+  const est = m.est && typeof m.est === "object" && !Array.isArray(m.est) ? m.est : null;
+  if (est && ["kcal", "protein", "carbs", "fat"].some(k => isFiniteNumVal(est[k]))) return true;
+  if (["kcal", "protein", "carbs", "fat"].some(k => isFiniteNumVal(m[k]))) return true;
+  if (est && Array.isArray(est.items) && est.items.some(x => x && typeof x.name === "string" && x.name.trim() !== "")) return true;
+  if (safeBlobId(m.photo) || safeImage(m.thumb)) return true;
+  if (moreOf(m).some(p => safeBlobId(p.id) || safeImage(p.thumb))) return true;
+  return false;
+}
+function hasSavedMeal(d){
+  return Array.isArray(d?.meals) && d.meals.some(isSavedMealEntry);
+}
+function hasSavedWorkoutOrCardio(d){
+  const w = d?.workout;
+  if (w && typeof w === "object" && !Array.isArray(w) && w.done === true) return true;
+  return Array.isArray(d?.cardio) && sanitizeCardioList(d.cardio).length > 0;
+}
+function quickstartSteps(){
+  const days = Object.values(S.days || {});
+  const hasCheckin = days.some(hasSavedCheckin);
+  const hasMeal = days.some(hasSavedMeal);
+  const hasWorkout = days.some(hasSavedWorkoutOrCardio);
+  return [
+    { key: "plan", done: true },
+    { key: "checkin", done: hasCheckin, act: "qs-go-checkin" },
+    { key: "meal", done: hasMeal, act: "qs-go-meal" },
+    { key: "workout", done: hasWorkout, act: "qs-go-workout" }
+  ];
+}
+function quickstartDoneCount(){
+  return quickstartSteps().filter(s => s.done).length;
+}
+function isQuickstartVisible(){
+  if (!S.profile) return false;
+  const pending = readGuidePending();
+  if (pending?.state === "dismissed") return false;
+  if (pending?.state === "open") return true;
+  if (S.profile.guideDismissed === true) return false;
+  if (S.profile.guideDismissed === false) return true;
+  return !S.guideVeteranAutoHide;
+}
+function isStandaloneDisplay(){
+  try {
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)")?.matches) return true;
+  } catch {}
+  try {
+    if (typeof navigator !== "undefined" && navigator.standalone === true) return true;
+  } catch {}
+  return false;
+}
+function quickstartCard(tg = targets()){
+  if (!isQuickstartVisible()) return "";
+  const steps = quickstartSteps();
+  const doneCount = steps.filter(s => s.done).length;
+  const allDone = doneCount === 4;
+  const collapsed = !!S.guideCollapsed;
+  const pct = Math.round((doneCount / 4) * 100);
+  const planSub = t("qs.step1Sub", { stage: stageLabel(tg.st), kcal: tg.kcal, protein: tg.protein });
+  const meta = {
+    plan:    { title: t("qs.step1Title"), sub: planSub, showSubWhenDone: true },
+    checkin: { title: t("qs.step2Title"), sub: t("qs.step2Sub"), cta: t("qs.step2Cta") },
+    meal:    { title: t("qs.step3Title"), sub: t("qs.step3Sub"), cta: t("qs.step3Cta") },
+    workout: { title: t("qs.step4Title"), sub: t("qs.step4Sub"), cta: t("qs.step4Cta") }
+  };
+  let bodyHtml = "";
+  if (!collapsed) {
+    if (allDone) {
+      bodyHtml = `<div id="qs-body" class="qs-body qs-celebrate">
+        <h3 class="qs-done-title">${esc(t("qs.doneTitle"))}</h3>
+        <p class="small muted">${esc(t("qs.doneNote"))}</p>
+        <div class="row"><button type="button" class="btn primary" data-act="qs-dismiss">${esc(t("qs.dismissBtn"))}</button></div>
+      </div>`;
+    } else {
+      const stepsHtml = steps.map((s, idx) => {
+        const m = meta[s.key];
+        const showSub = m.sub && (!s.done || m.showSubWhenDone);
+        return `<li class="qs-step${s.done ? " is-done" : ""}" data-qs-step="${s.key}">
+          <div class="qs-step-main">
+            <span class="qs-badge${s.done ? " done" : ""}" aria-hidden="true">${s.done ? "✓" : idx + 1}</span>
+            <div class="qs-step-text">
+              <span class="qs-step-title"><span class="sr">${esc(s.done ? t("qs.stepDoneSr") : t("qs.stepTodoSr"))}</span>${esc(m.title)}</span>
+              ${showSub ? `<span class="small muted">${esc(m.sub)}</span>` : ""}
+            </div>
+          </div>
+          ${!s.done && s.act ? `<button type="button" class="btn small qs-cta" data-act="${s.act}">${esc(m.cta)}</button>` : ""}
+        </li>`;
+      }).join("");
+      const showA2hs = !isStandaloneDisplay();
+      bodyHtml = `<div id="qs-body" class="qs-body">
+        <ol class="qs-steps">${stepsHtml}</ol>
+        <div class="tip qs-tips">
+          <p class="small" id="qs-tip-feedback">${esc(t("qs.tipFeedback"))}</p>
+          ${showA2hs ? `<p class="small" id="qs-tip-a2hs">${esc(t("qs.tipHomeScreen"))}</p>` : ""}
+        </div>
+        <div class="row between qs-foot">
+          <span class="small muted">${esc(t("qs.reopenHint"))}</span>
+          <button type="button" class="btn small" data-act="qs-dismiss">${esc(t("qs.dismissBtn"))}</button>
+        </div>
+      </div>`;
+    }
+  }
+  return `<section class="card qs-card${allDone ? " qs-done" : ""}" id="quickstart-card" aria-labelledby="qs-heading">
+    <div class="qs-head">
+      <div class="qs-title-wrap">
+        <span class="eyebrow">${esc(t("qs.eyebrow"))}</span>
+        <h2 id="qs-heading" tabindex="-1">${esc(t("qs.title"))}</h2>
+      </div>
+      <div class="row qs-head-acts">
+        <span class="num qs-count" aria-hidden="true">${doneCount} / 4</span>
+        <button type="button" id="qs-toggle" class="btn small qs-toggle" data-act="qs-toggle" aria-expanded="${!collapsed}"${!collapsed ? ' aria-controls="qs-body"' : ""}>${esc(collapsed ? t("qs.expand") : t("qs.collapse"))}</button>
+        <button type="button" id="qs-dismiss-x" class="iconbtn qs-close" data-act="qs-dismiss" aria-label="${esc(t("qs.dismissAria"))}"><span aria-hidden="true">×</span></button>
+      </div>
+    </div>
+    <div class="bar qs-bar" role="progressbar" aria-valuemin="0" aria-valuemax="4" aria-valuenow="${doneCount}" aria-label="${esc(t("qs.progressAria", {done: doneCount, total: 4}))}"><i style="width:${pct}%"></i></div>
+    ${bodyHtml}
+  </section>`;
+}
+
 function viewToday(){
   const p = S.profile, date = S.date, plan = planFor(date), day = S.days[date] || {}, tg = targets(), m = dayMacros(date), dt = dayTargets(date);
   const wk = weekIndex(date) + 1;
   const isFuture = date > todayStr();
   let html = `<h1 class="sr">${esc(t("tab.today"))} · ${esc(fmtDate(date))}</h1>` + dateBar();
   html += `<div class="stack">`;
+  html += quickstartCard(tg);
   // 训练卡
   if (plan.key) {
     const d = getDraft(date, plan), done = day.workout?.done;
-    html += `<section class="card">
-      <div class="row between"><div><span class="eyebrow">${esc(t("today.eyebrow", {wk, slot:slotLabel(plan.slot), preview:isFuture?t("today.previewSuffix"):""}))}</span><h2>${esc(progTitle(plan.key))}${plan.deload?esc(t("today.deloadSuffix")):""}</h2></div>
+    html += `<section class="card" id="today-plan-card">
+      <div class="row between"><div><span class="eyebrow">${esc(t("today.eyebrow", {wk, slot:slotLabel(plan.slot), preview:isFuture?t("today.previewSuffix"):""}))}</span><h2 id="today-plan-heading" tabindex="-1">${esc(progTitle(plan.key))}${plan.deload?esc(t("today.deloadSuffix")):""}</h2></div>
       ${done ? `<span class="chip on">${esc(t("today.done"))}</span>` : ""}</div>
       <div class="row">${Object.keys(SLOT).map(k => `<button class="chip ${plan.slot===k?"on":""}" aria-pressed="${plan.slot===k}" data-act="slot" data-v="${k}">${esc(slotLabel(k))}</button>`).join("")}</div>
       <p class="tip">${esc(slotTip(plan.slot))}</p>
@@ -3208,8 +3482,8 @@ function viewToday(){
     </section>`;
   } else {
     const next = nextKey(date);
-    html += `<section class="card">
-      <span class="eyebrow">${esc(t("today.restEyebrow", {wk}))}</span><h2>${esc(t("today.restTitle"))}</h2>
+    html += `<section class="card" id="today-plan-card">
+      <span class="eyebrow">${esc(t("today.restEyebrow", {wk}))}</span><h2 id="today-plan-heading" tabindex="-1">${esc(t("today.restTitle"))}</h2>
       <p>${esc(t("today.restBody"))}</p>
       ${(p.injuries||[]).length ? `<div class="tip"><b>${esc(t("today.rehab"))}</b><ul class="clean">${p.injuries.map(k => `<li>${esc(injLabel(k))}${getLang()==="en"?": ":"："}${esc(mobilityText(k))}</li>`).join("")}</ul></div>` : ""}
       <p class="small muted">${esc(t("today.nextWorkout", {title:progTitle(next)}))}</p>
@@ -5344,7 +5618,7 @@ function viewMe(){
   ${viewTesterFeedback()}
   ${viewAccount()}
   ${viewAI()}
-  <section class="card"><h3>${esc(t("me.guideTitle"))}</h3><p class="small">${esc(t("me.guideBody"))}</p><a class="link" href="${GUIDE_URL}" target="_blank" rel="noopener">${esc(t("me.guideLink"))}</a>
+  <section class="card" id="me-guide-card"><h3>${esc(t("me.guideTitle"))}</h3><p class="small">${esc(t("me.guideBody"))}</p><div class="row"><a class="link" href="${GUIDE_URL}" target="_blank" rel="noopener">${esc(t("me.guideLink"))}</a>${!isQuickstartVisible() ? `<button type="button" class="btn small" data-act="qs-reopen">${esc(t("qs.reopenBtn"))}</button>` : ""}</div>
   <p class="small muted">${esc(S.cloud ? t("me.cloudYes") : t("me.cloudNo"))}</p></section></div>`;
 }
 
@@ -5358,6 +5632,12 @@ document.addEventListener("error", ev => {
   else if (kind === "primary") img.replaceWith(Object.assign(document.createElement("div"), {className:"ph", textContent:t("food.photoUnavailable")}));
 }, true);
 function focusEl(el){ if (!el?.focus) return; try { el.focus({preventScroll:true}); } catch { try { el.focus(); } catch {} } }
+function scrollToEl(el){
+  if (!el?.scrollIntoView) return;
+  const reduce = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)")?.matches;
+  try { el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" }); }
+  catch { try { el.scrollIntoView(); } catch {} }
+}
 function focusAdoptTrigger(k){
   const list = typeof document !== "undefined" && typeof document.querySelectorAll === "function" ? document.querySelectorAll('[data-act="adopt-open"]') : [];
   for (const el of list) if (el.dataset?.key === k) { focusEl(el); return; }
@@ -5442,6 +5722,98 @@ document.addEventListener("click", async ev => {
     }
     case "date": syncCardioInputsFromDom(S.date); S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
     case "goto": syncCardioInputsFromDom(S.date); S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
+    case "qs-toggle": {
+      syncCardioInputsFromDom(S.date);
+      S.guideCollapsed = !S.guideCollapsed;
+      render();
+      focusEl($("#qs-toggle"));
+      break;
+    }
+    case "qs-dismiss": {
+      if (!S.profile) break;
+      syncCardioInputsFromDom(S.date);
+      const opId = writeGuidePending("dismissed");
+      inFlightGuideOps.add(opId);
+      S.profile.guideDismissed = true;
+      S.guideCollapsed = false;
+      render();
+      focusEl($("#today-plan-heading"));
+      const msg = t("qs.toastDismissed");
+      toast(msg);
+      announce(msg);
+      try {
+        await updateProfile(p => {
+          const cur = readGuidePending();
+          if (!cur || cur.id === opId) p.guideDismissed = true;
+        });
+        clearGuidePending(opId);
+      } catch {}
+      finally {
+        inFlightGuideOps.delete(opId);
+        const cur = readGuidePending();
+        if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+      }
+      break;
+    }
+    case "qs-reopen": {
+      if (!S.profile) break;
+      const opId = writeGuidePending("open");
+      inFlightGuideOps.add(opId);
+      S.guideVeteranAutoHide = false;
+      S.guideCollapsed = false;
+      S.profile.guideDismissed = false;
+      S.tab = "today";
+      lsSet("bj-tab", "today");
+      render();
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") window.scrollTo(0, 0);
+      focusEl($("#qs-heading") || $("#qs-toggle"));
+      try {
+        await updateProfile(p => {
+          const cur = readGuidePending();
+          if (!cur || cur.id === opId) p.guideDismissed = false;
+        });
+        clearGuidePending(opId);
+        if (S.tab === "today") focusEl($("#qs-heading") || $("#qs-toggle"));
+      } catch {}
+      finally {
+        inFlightGuideOps.delete(opId);
+        const cur = readGuidePending();
+        if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+      }
+      break;
+    }
+    case "qs-go-checkin": {
+      syncCardioInputsFromDom(S.date);
+      const td = todayStr();
+      if (S.date !== td) { S.date = td; S.ed = null; render(); }
+      const target = $("#c-weight");
+      scrollToEl(target);
+      focusEl(target);
+      break;
+    }
+    case "qs-go-meal": {
+      syncCardioInputsFromDom(S.date);
+      S.ed = null; S.adopt = null; S.undoConflict = null;
+      const td = todayStr();
+      if (S.date !== td && !hasSavedMeal(S.days?.[S.date])) S.date = td;
+      S.tab = "food";
+      lsSet("bj-tab", "food");
+      render();
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") window.scrollTo(0, 0);
+      const target = $("#m-text") || $("#m-name") || $("#mf-kcal");
+      scrollToEl(target);
+      focusEl(target);
+      break;
+    }
+    case "qs-go-workout": {
+      syncCardioInputsFromDom(S.date);
+      const td = todayStr();
+      if (S.date !== td) { S.date = td; S.ed = null; render(); }
+      const card = $("#today-plan-card");
+      scrollToEl(card);
+      focusEl($("#today-plan-heading") || card?.querySelector?.('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])') || card);
+      break;
+    }
     case "edit": S.editing = true; render(); window.scrollTo(0,0); focusEl($("#f-age")); break;
     case "cancel-edit": S.editing = false; render(); focusEl($('[data-act="edit"]')); break;
     case "slot": updateDay(S.date, d => { d.slot = v; }).catch(()=>{}); break;
@@ -5845,6 +6217,9 @@ function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
 let logoutSyncMs = 5000;
 function clearUserLocal(id = S.uid || storageUser){
   S.cardioDraft = {};
+  S.guideCollapsed = false;
+  S.guideVeteranAutoHide = false;
+  inFlightGuideOps.clear();
   if (!id) return;
   resetRestTimerState(id);
   try {
@@ -5992,6 +6367,8 @@ async function logout(btn){
     S.cardioDraft = {};
     S.cfill = {};
     S.pages = {};
+    S.guideCollapsed = false;
+    S.guideVeteranAutoHide = false;
     clearUserLocal(id);
     try { await window.ritual?.logout?.(); } catch {}
     const loc = typeof location !== "undefined" ? location : window?.location;
