@@ -1011,6 +1011,43 @@ test('P2 regression: sanitizer deduplicates colliding cardio IDs (raw, trimmed, 
   assert.equal(afterReload.length, 5);
   assert.deepEqual(Array.from(afterReload, x => x.id), ['dup', longBase, 'a'.repeat(62) + '-2', 'c5', 'c5-2']);
   assert.equal(afterReload[0].note, 'first');
+
+  // Two-pass explicit ID reservation: generated suffixes and fallback IDs never steal a later retained session's explicit ID
+  const mk = (id, note) => ({ ...(id !== undefined ? { id } : {}), type: 'run', minutes: 20, intensity: 'low', note });
+  env.ctx.__cases = {
+    dupThenExplicit: [mk('foo', 'a'), mk('foo', 'b'), mk('foo-2', 'c')],
+    explicitThenDup: [mk('foo-2', 'c'), mk('foo', 'a'), mk('foo', 'b')],
+    missingThenExplicitC0: [mk(undefined, 'no-id'), mk('c0', 'explicit-c0')],
+    truncAndExplicitSuffix: [mk(longBase + 'X', 'l1'), mk(longBase + 'Y', 'l2'), mk('a'.repeat(62) + '-2', 'explicit-suf')],
+    invalidDoesNotReserve: [mk('foo', 'a'), mk('foo', 'b'), { id: 'foo-2', type: 'run', minutes: 0, intensity: 'low' }]
+  };
+  const res = vm.runInContext(`({
+    dupThenExplicit: sanitizeCardioList(__cases.dupThenExplicit),
+    explicitThenDup: sanitizeCardioList(__cases.explicitThenDup),
+    missingThenExplicitC0: sanitizeCardioList(__cases.missingThenExplicitC0),
+    truncAndExplicitSuffix: sanitizeCardioList(__cases.truncAndExplicitSuffix),
+    invalidDoesNotReserve: sanitizeCardioList(__cases.invalidDoesNotReserve)
+  })`, env.ctx);
+
+  assert.deepEqual(Array.from(res.dupThenExplicit, x => x.id), ['foo', 'foo-3', 'foo-2']);
+  assert.deepEqual(Array.from(res.dupThenExplicit, x => x.note), ['a', 'b', 'c']);
+  assert.deepEqual(Array.from(res.explicitThenDup, x => x.id), ['foo-2', 'foo', 'foo-3']);
+  assert.deepEqual(Array.from(res.missingThenExplicitC0, x => x.id), ['c0-2', 'c0']);
+  assert.deepEqual(Array.from(res.missingThenExplicitC0, x => x.note), ['no-id', 'explicit-c0']);
+  assert.deepEqual(
+    Array.from(res.truncAndExplicitSuffix, x => x.id),
+    [longBase, 'a'.repeat(62) + '-3', 'a'.repeat(62) + '-2']
+  );
+  for (const item of res.truncAndExplicitSuffix) {
+    assert.ok(item.id.length <= 64, `ID exceeds 64 chars: ${item.id.length}`);
+  }
+  assert.deepEqual(Array.from(res.invalidDoesNotReserve, x => x.id), ['foo', 'foo-2']);
+  // Verify idempotency on all reserved outputs
+  for (const [name, list] of Object.entries(res)) {
+    env.ctx.__check = list;
+    const reRun = Array.from(vm.runInContext('sanitizeCardioList(__check).map(x => x.id)', env.ctx));
+    assert.deepEqual(reRun, Array.from(list, x => x.id), `two-pass reservation must be idempotent for ${name}`);
+  }
 });
 
 test('fallback localStorage-backed store (non-commit get/set path) and bj-wbackup local restoration preserve day.cardio across reloads', async () => {

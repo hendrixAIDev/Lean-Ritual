@@ -1954,9 +1954,12 @@ function parseCardioMinutes(raw){
   }
   return null;
 }
+function normCardioId(rawId){
+  return typeof rawId === "string" ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
+}
 function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
-  const rawBase = typeof rawId === "string" ? Array.from(rawId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
-  const fb = typeof fallbackId === "string" ? Array.from(fallbackId.trim()).slice(0, CARDIO_MAX_ID).join("") : "";
+  const rawBase = normCardioId(rawId);
+  const fb = normCardioId(fallbackId);
   const base = rawBase || fb || uid();
   if (!seen.has(base)) {
     seen.add(base);
@@ -1972,7 +1975,7 @@ function uniqueCardioId(rawId, fallbackId = "", seen = new Set()){
     }
   }
 }
-function sanitizeCardioEntry(raw, fallbackId = "", seen = null){
+function sanitizeCardioFields(raw){
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const type = typeof raw.type === "string" && CARDIO_TYPE_SET.has(raw.type) ? raw.type : null;
   if (!type) return null;
@@ -1982,21 +1985,34 @@ function sanitizeCardioEntry(raw, fallbackId = "", seen = null){
   const customName = type === "other" ? clipText(raw.customName, CARDIO_MAX_NAME) : "";
   if (type === "other" && !customName) return null;
   const note = clipText(raw.note, CARDIO_MAX_NOTE);
-  const id = uniqueCardioId(raw.id, fallbackId, seen || new Set());
-  const out = { id, type, minutes, intensity };
+  const out = { type, minutes, intensity };
   if (type === "other") out.customName = customName;
   if (note) out.note = note;
   return out;
 }
+function sanitizeCardioEntry(raw, fallbackId = "", seen = null){
+  const fields = sanitizeCardioFields(raw);
+  if (!fields) return null;
+  const id = uniqueCardioId(raw.id, fallbackId, seen || new Set());
+  return { id, ...fields };
+}
 function sanitizeCardioList(list){
   if (!Array.isArray(list)) return [];
-  const out = [];
-  const seen = new Set();
-  for (let i = 0; i < list.length && out.length < CARDIO_MAX_PER_DAY; i++) {
-    const clean = sanitizeCardioEntry(list[i], "c" + i, seen);
-    if (clean) out.push(clean);
+  const retained = [];
+  const reservedIds = new Set();
+  for (let i = 0; i < list.length && retained.length < CARDIO_MAX_PER_DAY; i++) {
+    const raw = list[i];
+    const fields = sanitizeCardioFields(raw);
+    if (!fields) continue;
+    const explicitId = normCardioId(raw.id);
+    const ownsExplicit = !!explicitId && !reservedIds.has(explicitId);
+    if (ownsExplicit) reservedIds.add(explicitId);
+    retained.push({ fields, explicitId, ownsExplicit, fallbackId: "c" + i });
   }
-  return out;
+  return retained.map(item => {
+    const id = item.ownsExplicit ? item.explicitId : uniqueCardioId(item.explicitId, item.fallbackId, reservedIds);
+    return { id, ...item.fields };
+  });
 }
 function cardioTypeLabel(type, lang = getLang()){
   if (typeof type !== "string") return "";
