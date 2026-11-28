@@ -212,6 +212,10 @@ details.how[open] > *:not(summary){margin-top:6px}
 .rest-bar.done .rest-time{color:var(--ink)}
 .rest-controls{display:flex;gap:8px;flex-wrap:wrap}
 .rest-btn{border-color:var(--line);background:var(--surface);color:var(--ink)}
+.cardio-list{display:flex;flex-direction:column;gap:10px}
+.cardio-item{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px}
+.cardio-item:first-child{border-top:none;padding-top:0}
+.cardio-form{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:10px}
 .hero{padding-block:8px 4px;display:flex;flex-direction:column;gap:6px}
 .hero .big{font-size:40px;color:var(--accent)}
 @media (max-width:380px){.kpis{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
@@ -639,6 +643,28 @@ const I18N = {
     "today.restEyebrow":"第 {wk} 周 · 休息日", "today.restTitle":"今天不练力量",
     "today.restBody":"步数目标 8000–10000，饭后散步最好。睡够 7–9 小时，比多练一次更能保住肌肉。",
     "today.rehab":"康复 10 分钟", "today.nextWorkout":"下一练是 {title}。",
+    "cardio.title":"有氧运动",
+    "cardio.hint":"记录有氧用于复盘与恢复参考，不额外增加当日饮食热量目标",
+    "cardio.openBtn":"+ 记录有氧", "cardio.addMoreBtn":"+ 再记一项",
+    "cardio.typeLabel":"有氧项目", "cardio.typeGroupAria":"选择有氧项目",
+    "cardio.type.incline_walk":"坡度快走", "cardio.type.run":"慢跑/跑步机",
+    "cardio.type.bike":"骑行/单车", "cardio.type.stairmaster":"爬楼机",
+    "cardio.type.elliptical":"椭圆机", "cardio.type.row":"划船机",
+    "cardio.type.swim":"游泳", "cardio.type.jump_rope":"跳绳",
+    "cardio.type.hiit":"间歇有氧 (HIIT)", "cardio.type.other":"其他/球类",
+    "cardio.customNameLabel":"项目名称", "cardio.customNamePh":"例如：网球 / 篮球 / 徒步",
+    "cardio.minGroupAria":"快捷时长选择", "cardio.minChip":"{n} 分钟",
+    "cardio.minutesLabel":"时长（分钟）", "cardio.minDisplay":"{n} 分钟",
+    "cardio.intLabel":"强度", "cardio.intGroupAria":"选择有氧强度",
+    "cardio.int.low":"低强度", "cardio.int.mod":"中等", "cardio.int.high":"高强度/间歇",
+    "cardio.noteLabel":"备注（选填）", "cardio.notePh":"例如：坡度 12 速度 5",
+    "cardio.saveBtn":"保存有氧", "cardio.updateBtn":"更新有氧",
+    "cardio.edit":"编辑", "cardio.editAria":"编辑 {name} {min} 分钟", "cardio.delAria":"删除 {name} {min} 分钟",
+    "cardio.maxHint":"单日最多记录 {max} 项有氧",
+    "cardio.errCustomName":"请填写项目名称",
+    "cardio.errMinutes":"时长请填 1 到 600 之间的整数（分钟）",
+    "cardio.errMax":"单日最多记录 {max} 项有氧",
+    "cardio.toastSaved":"已保存有氧记录", "cardio.toastUpdated":"已更新有氧记录", "cardio.toastDeleted":"已删除有氧记录",
     "today.checkinTitle":"今日打卡", "today.checkinLogged":"已记录",
     "today.checkinHint":"体重在晨起空腹、上完厕所后称。计划只看 7 日平均。",
     "today.stepsLabel":"步数", "today.sleepLabel":"昨晚睡了几小时",
@@ -823,6 +849,7 @@ const I18N = {
     "log.weightLegend":"虚线是每日体重，绿线是 7 日均值。",
     "log.painHard":"疼痛", "log.painMild":"不适",
     "log.mealsChip":"{n} 餐{macros}", "log.mealsMacros":" · {kcal} kcal · 蛋白 {p} g",
+    "log.cardioChip":"有氧：{summary}",
     "log.sleepChip":"睡 {h} h", "log.checkinOnly":"只有打卡",
     "ins.weightPrefix":"7 日均重 {w} kg，比上周 {rate}%。",
     "ins.cutSlowTitle":"减脂速度偏慢",
@@ -1096,6 +1123,28 @@ const I18N = {
     "today.restEyebrow":"Week {wk} · Rest day", "today.restTitle":"No Lifting Today",
     "today.restBody":"Aim for 8,000–10,000 steps (post-meal walks work great). Getting 7–9 hours of sleep preserves muscle better than an extra session.",
     "today.rehab":"10-min Mobility", "today.nextWorkout":"Next session: {title}.",
+    "cardio.title":"Cardio",
+    "cardio.hint":"Logged for coaching & recovery context; doesn't increase daily calorie targets",
+    "cardio.openBtn":"+ Log cardio", "cardio.addMoreBtn":"+ Add cardio",
+    "cardio.typeLabel":"Activity", "cardio.typeGroupAria":"Choose cardio activity",
+    "cardio.type.incline_walk":"Incline Walk", "cardio.type.run":"Run / Treadmill",
+    "cardio.type.bike":"Cycling / Bike", "cardio.type.stairmaster":"StairMaster",
+    "cardio.type.elliptical":"Elliptical", "cardio.type.row":"Rowing",
+    "cardio.type.swim":"Swimming", "cardio.type.jump_rope":"Jump Rope",
+    "cardio.type.hiit":"Intervals (HIIT)", "cardio.type.other":"Other / Sports",
+    "cardio.customNameLabel":"Activity name", "cardio.customNamePh":"e.g. Tennis / Basketball / Hiking",
+    "cardio.minGroupAria":"Quick duration options", "cardio.minChip":"{n} min",
+    "cardio.minutesLabel":"Duration (min)", "cardio.minDisplay":"{n} min",
+    "cardio.intLabel":"Intensity", "cardio.intGroupAria":"Choose cardio intensity",
+    "cardio.int.low":"Low", "cardio.int.mod":"Moderate", "cardio.int.high":"High / Intervals",
+    "cardio.noteLabel":"Note (optional)", "cardio.notePh":"e.g. Incline 12, speed 3.2",
+    "cardio.saveBtn":"Save cardio", "cardio.updateBtn":"Update cardio",
+    "cardio.edit":"Edit", "cardio.editAria":"Edit {name} {min} min", "cardio.delAria":"Delete {name} {min} min",
+    "cardio.maxHint":"Up to {max} cardio sessions per day",
+    "cardio.errCustomName":"Please enter an activity name",
+    "cardio.errMinutes":"Enter a whole number of minutes between 1 and 600",
+    "cardio.errMax":"Up to {max} cardio sessions per day",
+    "cardio.toastSaved":"Cardio session saved", "cardio.toastUpdated":"Cardio session updated", "cardio.toastDeleted":"Cardio session deleted",
     "today.checkinTitle":"Daily Check-in", "today.checkinLogged":"Logged",
     "today.checkinHint":"Weigh yourself in the morning after using the bathroom, before eating. Adjustments follow your 7-day average.",
     "today.stepsLabel":"Steps", "today.sleepLabel":"Sleep last night (hrs)",
@@ -1280,6 +1329,7 @@ const I18N = {
     "log.weightLegend":"Dashed: daily weight · Solid: 7-day average.",
     "log.painHard":"Pain", "log.painMild":"Discomfort",
     "log.mealsChip":"{n} meal(s){macros}", "log.mealsMacros":" · {kcal} kcal · P {p} g",
+    "log.cardioChip":"Cardio: {summary}",
     "log.sleepChip":"Sleep {h}h", "log.checkinOnly":"Check-in only",
     "ins.weightPrefix":"7-day avg {w} kg ({rate}% vs last week). ",
     "ins.cutSlowTitle":"Cut pace is slow",
@@ -1808,7 +1858,7 @@ const lsSet = (k, v) => { if (!storageUser) return; try { localStorage.setItem(`
 const S = { ready:false, cloud:false, store:null, assets:null, sample:null, comments:null, canAsk:false, imgOK:false,
   explicitLang: urlLangOverride || readPendingLang() || validLang(rawLsGet("bj-lang")),
   profile:null, days:{}, feedback:[], pages:{}, tab:lsGet("bj-tab","today"), date:todayStr(), editing:false,
-  drafts:lsGet("bj-drafts",{}), files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null, restTimer:null, mealShortcuts:[] };
+  drafts:lsGet("bj-drafts",{}), cardioDraft:{}, files:{}, busy:{}, ai:null, aiBudget:null, confirmDel:null, mealPreview:null, ufb:null, restTimer:null, mealShortcuts:[] };
 applyDocLang();
 { const initApp = typeof document !== "undefined" ? $("#app") : null; if (initApp && getLang() === "en") initApp.innerHTML = `<p class="muted" style="padding-top:40px;text-align:center">${esc(t("app.loading"))}</p>`; }
 
@@ -1883,7 +1933,121 @@ function migrateProfile(p){
   if (!p) return p;
   return {kcalAdjust:0, deloadEvery:9, swaps:{}, adjustLog:[], injuries:[], supps:[], trainDays:[1,3,5], slot:"eve", equipment:"gym", ...p, schema:SCHEMA_VERSION};
 }
-function migrateDay(d){ return {meals:[], ...d, meals:Array.isArray(d.meals) ? d.meals : []}; }
+const CARDIO_TYPES = ["incline_walk", "run", "bike", "stairmaster", "elliptical", "row", "swim", "jump_rope", "hiit", "other"];
+const CARDIO_TYPE_SET = new Set(CARDIO_TYPES);
+const CARDIO_INTENSITIES = ["low", "mod", "high"];
+const CARDIO_INTENSITY_SET = new Set(CARDIO_INTENSITIES);
+const CARDIO_DURATIONS = [15, 20, 30, 45, 60];
+const CARDIO_MAX_PER_DAY = 20;
+const CARDIO_MAX_MIN = 600;
+const CARDIO_MAX_NAME = 40;
+const CARDIO_MAX_NOTE = 120;
+function clipText(s, max){ return Array.from(String(s ?? "").trim()).slice(0, max).join(""); }
+function parseCardioMinutes(raw){
+  if (typeof raw === "number") return Number.isInteger(raw) && raw >= 1 && raw <= CARDIO_MAX_MIN ? raw : null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n >= 1 && n <= CARDIO_MAX_MIN ? n : null;
+  }
+  return null;
+}
+function sanitizeCardioEntry(raw, fallbackId = ""){
+  if (!raw || typeof raw !== "object") return null;
+  const type = typeof raw.type === "string" && CARDIO_TYPE_SET.has(raw.type) ? raw.type : null;
+  if (!type) return null;
+  const minutes = parseCardioMinutes(raw.minutes);
+  if (minutes == null) return null;
+  const intensity = typeof raw.intensity === "string" && CARDIO_INTENSITY_SET.has(raw.intensity) ? raw.intensity : "low";
+  const customName = type === "other" ? clipText(raw.customName, CARDIO_MAX_NAME) : "";
+  if (type === "other" && !customName) return null;
+  const note = clipText(raw.note, CARDIO_MAX_NOTE);
+  const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 64) : (fallbackId || uid());
+  const out = { id, type, minutes, intensity };
+  if (type === "other") out.customName = customName;
+  if (note) out.note = note;
+  return out;
+}
+function sanitizeCardioList(list){
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (let i = 0; i < list.length && out.length < CARDIO_MAX_PER_DAY; i++) {
+    const clean = sanitizeCardioEntry(list[i], "c" + i);
+    if (clean) out.push(clean);
+  }
+  return out;
+}
+function cardioTypeLabel(type, lang = getLang()){
+  const dict = I18N[lang] || I18N.zh;
+  const key = "cardio.type." + type;
+  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : String(type || ""));
+}
+function cardioLabel(entry, lang = getLang()){
+  if (!entry) return "";
+  if (entry.type === "other") return String(entry.customName || "").trim() || cardioTypeLabel("other", lang);
+  return cardioTypeLabel(entry.type, lang);
+}
+function cardioIntensityLabel(k, lang = getLang()){
+  const dict = I18N[lang] || I18N.zh;
+  const key = "cardio.int." + k;
+  return hasOwn(dict, key) ? dict[key] : (hasOwn(I18N.zh, key) ? I18N.zh[key] : String(k || ""));
+}
+function formatCardioDailyItem(c, lang = getLang()){
+  const name = cardioLabel(c, lang);
+  const intLbl = cardioIntensityLabel(c.intensity, lang);
+  return lang === "en" ? `${name} ${c.minutes}m (${intLbl})` : `${name} ${c.minutes}分钟（${intLbl}）`;
+}
+function openCardioDraft(date = S.date, entry = null){
+  S.cardioDraft = S.cardioDraft || {};
+  if (entry) {
+    S.cardioDraft[date] = {
+      open: true,
+      editId: entry.id,
+      type: entry.type,
+      customName: entry.type === "other" ? (entry.customName || "") : "",
+      minutes: String(entry.minutes),
+      intensity: entry.intensity || "low",
+      intensityTouched: true,
+      note: entry.note || "",
+      err: null
+    };
+  } else {
+    const prev = S.cardioDraft[date];
+    S.cardioDraft[date] = prev && !prev.editId ? { ...prev, open: true, err: null } : {
+      open: true,
+      editId: null,
+      type: "incline_walk",
+      customName: "",
+      minutes: "20",
+      intensity: "low",
+      intensityTouched: false,
+      note: "",
+      err: null
+    };
+  }
+  return S.cardioDraft[date];
+}
+function syncCardioInputsFromDom(date = S.date){
+  const dr = S.cardioDraft?.[date];
+  if (!dr || !dr.open) return dr;
+  const cn = $("#cardio-custom-name");
+  if (cn && cn.value !== undefined) dr.customName = cn.value;
+  const mn = $("#cardio-minutes");
+  if (mn && mn.value !== undefined) dr.minutes = mn.value;
+  const nt = $("#cardio-note");
+  if (nt && nt.value !== undefined) dr.note = nt.value;
+  return dr;
+}
+function migrateDay(d){
+  const out = {meals:[], ...d, meals:Array.isArray(d.meals) ? d.meals : []};
+  if (out.cardio !== undefined) {
+    const clean = sanitizeCardioList(out.cardio);
+    if (clean.length) out.cardio = clean;
+    else delete out.cardio;
+  }
+  return out;
+}
 function snapTargets(){ const t = targets(); return {kcal:t.kcal, protein:t.protein, carbs:t.carbs, fat:t.fat, st:t.st, w:Math.round(t.w*10)/10, tdee:t.tdee}; }
 // 当天的营养目标存一份快照；以后改计划，这一天仍按当时的目标显示
 function stampTargets(d){ if (S.profile && (!d.targets || d.date === todayStr())) d.targets = snapTargets(); }
@@ -1989,6 +2153,7 @@ const dayTargets = date => S.days[date]?.targets || targets();
 
 async function loadAll(){
   S.pages = {};
+  S.cardioDraft = {};
   try {
     S.profile = migrateProfile(await S.store.get("app/profile"));
     const pendingLang = urlLangOverride || readPendingLang();
@@ -2806,6 +2971,74 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
   window.addEventListener("focus", () => { if (S.restTimer) syncRestTimer(); });
 }
 
+function cardioCard(date, day){
+  const list = sanitizeCardioList(day?.cardio);
+  const dr = S.cardioDraft?.[date];
+  const open = !!dr?.open;
+  const busy = !!S.busy.cardio;
+  const canAdd = list.length < CARDIO_MAX_PER_DAY;
+  const openLabel = list.length ? t("cardio.addMoreBtn") : t("cardio.openBtn");
+  const headBtn = open
+    ? `<button type="button" id="cardio-open-btn" class="chip on" data-act="cardio-cancel" aria-expanded="true" aria-controls="cardio-form"${busy?" disabled":""}>${esc(t("common.collapse"))}</button>`
+    : (canAdd
+      ? `<button type="button" id="cardio-open-btn" class="chip" data-act="cardio-open" aria-expanded="false"${busy?" disabled":""}>${esc(openLabel)}</button>`
+      : `<span class="small muted">${esc(t("cardio.maxHint", {max: CARDIO_MAX_PER_DAY}))}</span>`);
+
+  const listHtml = list.length ? `<div class="cardio-list">${list.map(item => {
+    const name = cardioLabel(item);
+    const intCls = item.intensity === "high" ? "warn" : (item.intensity === "mod" ? "on" : "");
+    return `<div class="cardio-item" data-cardio-id="${esc(item.id)}">
+      <div class="row between">
+        <div class="row" style="gap:6px;min-width:0">
+          <b>${esc(name)}</b>
+          <span class="num">${esc(t("cardio.minDisplay", {n: item.minutes}))}</span>
+          <span class="chip ${intCls}">${esc(cardioIntensityLabel(item.intensity))}</span>
+        </div>
+        <div class="row" style="gap:6px;flex:none">
+          <button type="button" class="btn small" data-act="cardio-edit" data-v="${esc(item.id)}" aria-label="${esc(t("cardio.editAria", {name, min: item.minutes}))}"${busy?" disabled":""}>${esc(t("cardio.edit"))}</button>
+          <button type="button" class="btn small danger" data-act="cardio-del" data-v="${esc(item.id)}" aria-label="${esc(t("cardio.delAria", {name, min: item.minutes}))}"${busy?" disabled":""}>${esc(t("common.delete"))}</button>
+        </div>
+      </div>
+      ${item.note ? `<p class="small muted">${esc(item.note)}</p>` : ""}
+    </div>`;
+  }).join("")}</div>` : "";
+
+  let formHtml = "";
+  if (open) {
+    const minVal = parseCardioMinutes(dr.minutes);
+    const errText = dr.err ? t(dr.err, {max: CARDIO_MAX_PER_DAY}) : "";
+    formHtml = `<div id="cardio-form" class="cardio-form">
+      <span class="lbl">${esc(t("cardio.typeLabel"))}</span>
+      <div class="row" role="group" aria-label="${esc(t("cardio.typeGroupAria"))}">${CARDIO_TYPES.map(k =>
+        `<button type="button" class="chip ${dr.type===k?"on":""}" aria-pressed="${dr.type===k}" data-act="cardio-type" data-v="${k}"${busy?" disabled":""}>${esc(cardioTypeLabel(k))}</button>`
+      ).join("")}</div>
+      ${dr.type === "other" ? `<label for="cardio-custom-name">${esc(t("cardio.customNameLabel"))}<input id="cardio-custom-name" data-cardio="customName" type="text" maxlength="${CARDIO_MAX_NAME}" autocomplete="off" value="${esc(dr.customName || "")}" placeholder="${esc(t("cardio.customNamePh"))}"${busy?" disabled":""}></label>` : ""}
+      <label for="cardio-minutes">${esc(t("cardio.minutesLabel"))}<input id="cardio-minutes" data-cardio="minutes" type="number" inputmode="numeric" min="1" max="${CARDIO_MAX_MIN}" step="1" autocomplete="off" value="${esc(dr.minutes ?? "")}" placeholder="20"${busy?" disabled":""}></label>
+      <div class="row" role="group" aria-label="${esc(t("cardio.minGroupAria"))}">${CARDIO_DURATIONS.map(m => {
+        const on = minVal === m;
+        return `<button type="button" class="chip ${on?"on":""}" aria-pressed="${on}" data-act="cardio-min" data-v="${m}"${busy?" disabled":""}>${esc(t("cardio.minChip", {n: m}))}</button>`;
+      }).join("")}</div>
+      <span class="lbl">${esc(t("cardio.intLabel"))}</span>
+      <div class="row" role="group" aria-label="${esc(t("cardio.intGroupAria"))}">${CARDIO_INTENSITIES.map(k =>
+        `<button type="button" class="chip ${dr.intensity===k?"on":""}" aria-pressed="${dr.intensity===k}" data-act="cardio-int" data-v="${k}"${busy?" disabled":""}>${esc(cardioIntensityLabel(k))}</button>`
+      ).join("")}</div>
+      <label for="cardio-note">${esc(t("cardio.noteLabel"))}<input id="cardio-note" data-cardio="note" type="text" maxlength="${CARDIO_MAX_NOTE}" autocomplete="off" value="${esc(dr.note || "")}" placeholder="${esc(t("cardio.notePh"))}"${busy?" disabled":""}></label>
+      ${errText ? `<p class="tip bad" id="cardio-err" role="alert">${esc(errText)}</p>` : ""}
+      <div class="row">
+        <button type="button" class="btn primary" data-act="cardio-save"${busy?" disabled":""}>${esc(dr.editId ? t("cardio.updateBtn") : t("cardio.saveBtn"))}</button>
+        <button type="button" class="btn" data-act="cardio-cancel"${busy?" disabled":""}>${esc(t("common.cancel"))}</button>
+      </div>
+    </div>`;
+  }
+
+  return `<section class="card" id="cardio-card">
+    <div class="row between"><h2>${esc(t("cardio.title"))}</h2>${headBtn}</div>
+    <p class="small muted">${esc(t("cardio.hint"))}</p>
+    ${listHtml}
+    ${formHtml}
+  </section>`;
+}
+
 function viewToday(){
   const p = S.profile, date = S.date, plan = planFor(date), day = S.days[date] || {}, tg = targets(), m = dayMacros(date), dt = dayTargets(date);
   const wk = weekIndex(date) + 1;
@@ -2846,6 +3079,8 @@ function viewToday(){
       ${overrideRow(plan, day)}
     </section>`;
   }
+  // 有氧运动（力量日与休息日皆可记录，不影响热量目标）
+  html += cardioCard(date, day);
   // 打卡
   const c = day.checkin || {}, cf = S.cfill?.[date] || {};
   const cv = k => Object.prototype.hasOwnProperty.call(cf, k) ? cf[k] : (c[k] ?? "");
@@ -3843,10 +4078,14 @@ function chart(cs){
   </svg><p class="small muted">${esc(t("log.weightLegend"))}</p>`;
 }
 function dayRow(d){
-  const m = dayMacros(d.date), w = d.workout;
+  const m = dayMacros(d.date), w = d.workout, cardio = sanitizeCardioList(d.cardio);
   const tags = [];
   if (w?.done) tags.push(`<span class="chip on">${esc(progLabel(w.key))}${w.feel?" · "+esc(feelLabel(w.feel)):""}</span>`);
   if (w?.pain && w.pain !== "none") tags.push(`<span class="chip ${w.pain==="pain"?"bad":"warn"}">${esc(w.pain==="pain"?t("log.painHard"):t("log.painMild"))}</span>`);
+  if (cardio.length) {
+    const summary = cardio.map(c => formatCardioDailyItem(c)).join(getLang() === "en" ? ", " : "、");
+    tags.push(`<span class="chip">${esc(t("log.cardioChip", {summary}))}</span>`);
+  }
   if (m.n) tags.push(`<span class="chip">${esc(t("log.mealsChip", {n:m.n, macros:m.est?t("log.mealsMacros", {kcal:fmtMacro("kcal", m.kcal) || "0", p:fmtMacro("protein", m.protein) || "0"}):""}))}</span>`);
   if (d.checkin?.sleep) tags.push(`<span class="chip">${esc(t("log.sleepChip", {h:d.checkin.sleep}))}</span>`);
   return `<button class="day" data-act="goto" data-v="${esc(d.date)}" style="width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;text-align:left">
@@ -4137,12 +4376,15 @@ function dataDigest(lang = getLang()){
     const feelEn = ["", I18N.en["feel.1"], I18N.en["feel.2"], I18N.en["feel.3"], I18N.en["feel.4"], I18N.en["feel.5"]];
     for (let i = 13; i >= 0; i--) {
       const date = addDays(today, -i), d = S.days[date]; if (!d) continue;
-      const c = d.checkin || {}, w = d.workout, m = dayMacros(date);
+      const c = d.checkin || {}, w = d.workout, m = dayMacros(date), cardio = sanitizeCardioList(d.cardio);
       let s = `${date}: `;
       if (c.weight) s += `weight ${c.weight}kg `; if (c.steps) s += `steps ${c.steps} `; if (c.sleep) s += `sleep ${c.sleep}h `; if (c.bf) s += `BF ${c.bf}% `; if (c.waist) s += `waist ${c.waist}cm `;
       if (w?.done) {
         const wTitle = PROGRAM[w.key] ? I18N.en[`prog.${w.key}.title`] : (w.key === "custom" ? I18N.en["prog.custom"] : I18N.en["prog.workout"]);
         s += `| Workout ${wTitle} feel:${feelEn[w.feel]||"unlogged"} pain:${w.pain==="pain"?"clear("+(w.painArea||"")+")":w.pain==="mild"?"mild("+(w.painArea||"")+")":"none"} ` + (w.exercises||[]).map(e => `${exDisp(e.name)} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("; ") + (w.note?` note:${w.note}`:"");
+      }
+      if (cardio.length) {
+        s += ` | Cardio: ` + cardio.map(x => `${cardioLabel(x, "en")} ${x.minutes}m (${cardioIntensityLabel(x.intensity, "en")})${x.note ? " [" + x.note + "]" : ""}`).join("; ");
       }
       if (m.n) s += ` | Meals ${m.n}` + (m.est ? ` est ${m.kcal}kcal P${m.protein}g C${m.carbs}g F${m.fat}g` : "") + ": " + d.meals.map(x => `${I18N.en["mealType."+x.type]||x.type}:${(x.text||"").slice(0,40)}`).join("; ");
       lines.push(s);
@@ -4162,10 +4404,13 @@ ${lines.join("\n") || "(no logs yet)"}`;
   }
   for (let i = 13; i >= 0; i--) {
     const date = addDays(today, -i), d = S.days[date]; if (!d) continue;
-    const c = d.checkin || {}, w = d.workout, m = dayMacros(date);
+    const c = d.checkin || {}, w = d.workout, m = dayMacros(date), cardio = sanitizeCardioList(d.cardio);
     let s = `${date}：`;
     if (c.weight) s += `体重${c.weight} `; if (c.steps) s += `步数${c.steps} `; if (c.sleep) s += `睡眠${c.sleep}h `; if (c.bf) s += `体脂${c.bf}% `; if (c.waist) s += `腰围${c.waist} `;
     if (w?.done) s += `| 训练 ${PROGRAM[w.key]?.title} 感受:${FEEL[w.feel]||"未填"} 疼痛:${w.pain==="pain"?"明显("+(w.painArea||"")+")":w.pain==="mild"?"轻微("+(w.painArea||"")+")":"无"} ` + (w.exercises||[]).map(e => `${e.name} ${e.sets.filter(x=>x.r!=="").map(x=>`${x.w||0}×${x.r}`).join(",")}`).join("；") + (w.note?` 备注:${w.note}`:"");
+    if (cardio.length) {
+      s += ` | 有氧：` + cardio.map(x => `${cardioLabel(x, "zh")} ${x.minutes}分钟（${cardioIntensityLabel(x.intensity, "zh")}）${x.note ? " 备注:" + x.note : ""}`).join("；");
+    }
     if (m.n) s += ` | 饮食${m.n}餐` + (m.est ? ` 估算${m.kcal}kcal 蛋白${m.protein}g 碳水${m.carbs}g 脂肪${m.fat}g` : "") + "：" + d.meals.map(x => `${x.type}:${(x.text||"").slice(0,40)}`).join("；");
     lines.push(s);
   }
@@ -4983,6 +5228,14 @@ function focusUndoTrigger(c){
   const exact = c.src ? list.find(el => el.dataset?.v === c.id && el.dataset?.src === c.src) : null;
   focusEl(exact || list.find(el => el.dataset?.v === c.id));
 }
+function focusCardioEdit(id){
+  if (id && typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
+    for (const el of document.querySelectorAll('[data-act="cardio-edit"]')) {
+      if (el.dataset?.v === id) { focusEl(el); return; }
+    }
+  }
+  focusEl($("#cardio-open-btn"));
+}
 document.addEventListener("keydown", ev => {
   if (ev.key !== "Escape") return;
   if (S.undoConflict) { const c = S.undoConflict; S.undoConflict = null; render(); focusUndoTrigger(c); ev.preventDefault(); }
@@ -4991,6 +5244,13 @@ document.addEventListener("keydown", ev => {
   else if (S.label) { S.label = null; render(); ev.preventDefault(); }
   else if (S.pwEdit && !S.pwEdit.busy) { S.pwEdit = null; render(); focusEl($('[data-act="pw-edit"]')); ev.preventDefault(); }
   else if (S.ufb && !S.ufb.busy) { closeTesterFeedback(true); ev.preventDefault(); }
+  else if (S.tab === "today" && S.cardioDraft?.[S.date]?.open && !S.busy.cardio) {
+    const editId = S.cardioDraft[S.date].editId;
+    delete S.cardioDraft[S.date];
+    render();
+    focusCardioEdit(editId);
+    ev.preventDefault();
+  }
 });
 document.addEventListener("click", async ev => {
   const b = ev.target.closest("[data-act]"); if (!b) return;
@@ -4998,7 +5258,7 @@ document.addEventListener("click", async ev => {
   if (act !== "del-meal" && act !== "del-more") S.confirmDel = null;
   if (act !== "ex-del") S.exDel = null;
   switch (act) {
-    case "lang": await setLang(v); break;
+    case "lang": syncCardioInputsFromDom(S.date); await setLang(v); break;
     case "consent-accept": {
       if (S.busy.consent) break;
       const terms = !!$("#cg-terms")?.checked, sensitive = !!$("#cg-sensitive")?.checked;
@@ -5019,7 +5279,7 @@ document.addEventListener("click", async ev => {
       break;
     }
     case "reload-data": location.reload(); break;
-    case "tab": S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
+    case "tab": syncCardioInputsFromDom(S.date); S.ed = null; S.adopt = null; S.undoConflict = null; if (v !== "today" && S.date > todayStr()) S.date = todayStr(); S.tab = v; lsSet("bj-tab", v); render(); window.scrollTo(0,0); break;
     case "page": {
       if (b.disabled) break;
       const [key, rawP] = String(v || "").split(":");
@@ -5040,8 +5300,8 @@ document.addEventListener("click", async ev => {
       announce(t("pager.announce", {section:t("pager.section." + key), page:pg.page, totalPages:pg.totalPages, total:pg.total}));
       break;
     }
-    case "date": S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
-    case "goto": S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
+    case "date": syncCardioInputsFromDom(S.date); S.ed = null; S.date = v === "0" ? todayStr() : addDays(S.date, +v); if (S.date > addDays(todayStr(), 7)) S.date = addDays(todayStr(), 7); render(); break;
+    case "goto": syncCardioInputsFromDom(S.date); S.date = v; S.tab = "today"; render(); window.scrollTo(0,0); break;
     case "edit": S.editing = true; render(); window.scrollTo(0,0); focusEl($("#f-age")); break;
     case "cancel-edit": S.editing = false; render(); focusEl($('[data-act="edit"]')); break;
     case "slot": updateDay(S.date, d => { d.slot = v; }).catch(()=>{}); break;
@@ -5166,6 +5426,179 @@ document.addEventListener("click", async ev => {
     case "rest-adj": adjustRestTimer(+v); break;
     case "rest-toggle": toggleRestTimerPause(); break;
     case "rest-dismiss": dismissRestTimer(); break;
+    case "cardio-open": {
+      if (S.busy.cardio) break;
+      const date = S.date;
+      if (S.cardioDraft?.[date]?.open) {
+        delete S.cardioDraft[date];
+        render();
+        focusEl($("#cardio-open-btn"));
+        break;
+      }
+      const list = sanitizeCardioList(S.days[date]?.cardio);
+      if (list.length >= CARDIO_MAX_PER_DAY) {
+        toast(t("cardio.errMax", {max: CARDIO_MAX_PER_DAY}));
+        break;
+      }
+      openCardioDraft(date);
+      render();
+      focusEl($('[data-act="cardio-type"]'));
+      break;
+    }
+    case "cardio-edit": {
+      if (S.busy.cardio) break;
+      const date = S.date;
+      const item = sanitizeCardioList(S.days[date]?.cardio).find(x => x.id === v);
+      if (!item) break;
+      openCardioDraft(date, item);
+      render();
+      focusEl(item.type === "other" ? $("#cardio-custom-name") : $("#cardio-minutes"));
+      break;
+    }
+    case "cardio-type": {
+      if (S.busy.cardio || !CARDIO_TYPE_SET.has(v)) break;
+      const dr = syncCardioInputsFromDom(S.date);
+      if (!dr || !dr.open) break;
+      dr.type = v;
+      dr.err = null;
+      if (!dr.intensityTouched) dr.intensity = v === "hiit" ? "high" : "low";
+      render();
+      focusEl(v === "other" ? $("#cardio-custom-name") : $(`[data-act="cardio-type"][data-v="${v}"]`));
+      break;
+    }
+    case "cardio-min": {
+      if (S.busy.cardio) break;
+      const dr = syncCardioInputsFromDom(S.date);
+      if (!dr || !dr.open) break;
+      dr.minutes = String(v);
+      dr.err = null;
+      render();
+      focusEl($(`[data-act="cardio-min"][data-v="${v}"]`));
+      break;
+    }
+    case "cardio-int": {
+      if (S.busy.cardio || !CARDIO_INTENSITY_SET.has(v)) break;
+      const dr = syncCardioInputsFromDom(S.date);
+      if (!dr || !dr.open) break;
+      dr.intensity = v;
+      dr.intensityTouched = true;
+      dr.err = null;
+      render();
+      focusEl($(`[data-act="cardio-int"][data-v="${v}"]`));
+      break;
+    }
+    case "cardio-cancel": {
+      if (S.busy.cardio) break;
+      const date = S.date;
+      const editId = S.cardioDraft?.[date]?.editId || null;
+      if (S.cardioDraft) delete S.cardioDraft[date];
+      render();
+      focusCardioEdit(editId);
+      break;
+    }
+    case "cardio-save": {
+      if (S.busy.cardio) break;
+      const date = S.date;
+      const dr = syncCardioInputsFromDom(date);
+      if (!dr || !dr.open) break;
+      const type = CARDIO_TYPE_SET.has(dr.type) ? dr.type : "incline_walk";
+      const customName = type === "other" ? clipText(dr.customName, CARDIO_MAX_NAME) : "";
+      if (type === "other" && !customName) {
+        dr.err = "cardio.errCustomName";
+        render();
+        toast(t("cardio.errCustomName"));
+        focusEl($("#cardio-custom-name"));
+        break;
+      }
+      const mins = parseCardioMinutes(dr.minutes);
+      if (mins == null) {
+        dr.err = "cardio.errMinutes";
+        render();
+        toast(t("cardio.errMinutes"));
+        focusEl($("#cardio-minutes"));
+        break;
+      }
+      const intensity = CARDIO_INTENSITY_SET.has(dr.intensity) ? dr.intensity : "low";
+      const note = clipText(dr.note, CARDIO_MAX_NOTE);
+      const isEdit = !!dr.editId;
+      const existing = sanitizeCardioList(S.days[date]?.cardio);
+      if (!isEdit && existing.length >= CARDIO_MAX_PER_DAY) {
+        dr.err = "cardio.errMax";
+        render();
+        toast(t("cardio.errMax", {max: CARDIO_MAX_PER_DAY}));
+        break;
+      }
+      const entry = { id: isEdit ? dr.editId : uid(), type, minutes: mins, intensity };
+      if (type === "other") entry.customName = customName;
+      if (note) entry.note = note;
+      S.busy.cardio = true;
+      render();
+      try {
+        let savedMode = isEdit ? "updated" : "saved";
+        let hitMax = false;
+        await updateDay(date, day => {
+          const list = sanitizeCardioList(day.cardio);
+          if (isEdit) {
+            const idx = list.findIndex(x => x.id === entry.id);
+            if (idx >= 0) {
+              list[idx] = entry;
+            } else if (list.length < CARDIO_MAX_PER_DAY) {
+              list.push(entry);
+              savedMode = "saved";
+            } else {
+              hitMax = true;
+              return;
+            }
+          } else {
+            if (list.length >= CARDIO_MAX_PER_DAY) { hitMax = true; return; }
+            list.push(entry);
+          }
+          day.cardio = list;
+        }, { quiet: true });
+        if (hitMax) {
+          if (S.cardioDraft?.[date]) S.cardioDraft[date].err = "cardio.errMax";
+          S.busy.cardio = false;
+          render();
+          toast(t("cardio.errMax", {max: CARDIO_MAX_PER_DAY}));
+          break;
+        }
+        if (S.cardioDraft) delete S.cardioDraft[date];
+        S.busy.cardio = false;
+        render();
+        const msg = t(savedMode === "updated" ? "cardio.toastUpdated" : "cardio.toastSaved");
+        toast(msg);
+        announce(msg);
+        focusEl($("#cardio-open-btn") || $("#cardio-card h2"));
+      } catch {
+        S.busy.cardio = false;
+        render();
+      }
+      break;
+    }
+    case "cardio-del": {
+      if (S.busy.cardio) break;
+      const date = S.date;
+      S.busy.cardio = true;
+      render();
+      try {
+        await updateDay(date, day => {
+          const next = sanitizeCardioList(day.cardio).filter(x => x.id !== v);
+          if (next.length) day.cardio = next;
+          else delete day.cardio;
+        }, { quiet: true });
+        if (S.cardioDraft?.[date]?.editId === v) delete S.cardioDraft[date];
+        S.busy.cardio = false;
+        render();
+        const msg = t("cardio.toastDeleted");
+        toast(msg);
+        announce(msg);
+        focusEl($("#cardio-open-btn") || $("#cardio-card h2"));
+      } catch {
+        S.busy.cardio = false;
+        render();
+      }
+      break;
+    }
     case "save-checkin": {
       const date = S.date, c = {}, snap = {};
       [["weight","#c-weight"],["steps","#c-steps"],["sleep","#c-sleep"],["bf","#c-bf"],["waist","#c-waist"]].forEach(([k,id]) => {
@@ -5267,6 +5700,7 @@ document.addEventListener("click", async ev => {
 function persistDrafts(){ lsSet("bj-drafts", S.drafts); }
 let logoutSyncMs = 5000;
 function clearUserLocal(id = S.uid || storageUser){
+  S.cardioDraft = {};
   if (!id) return;
   resetRestTimerState(id);
   try {
@@ -5411,6 +5845,7 @@ async function logout(btn){
     clearTimeout(syncDraft.t);
     storageUser = null;
     S.drafts = {};
+    S.cardioDraft = {};
     S.cfill = {};
     S.pages = {};
     clearUserLocal(id);
@@ -5444,6 +5879,21 @@ document.addEventListener("input", ev => {
   else if (el.id === "fb-text") lsSet("bj-fbtext", el.value);
   else if (el.id === "ufb-msg" && S.ufb) { S.ufb.message = el.value; const c = $("#ufb-count"); if (c) c.textContent = `${Array.from(el.value).length} / 2000`; }
   else if (el.dataset.mf) { S.mfill = {...(S.mfill || {}), [el.dataset.mf]: el.value}; }
+  else if (el.dataset.cardio) {
+    const dr = S.cardioDraft?.[S.date];
+    if (dr) {
+      dr[el.dataset.cardio] = el.value;
+      if (dr.err) dr.err = null;
+      if (el.dataset.cardio === "minutes") {
+        const parsed = parseCardioMinutes(el.value);
+        document.querySelectorAll?.('[data-act="cardio-min"]')?.forEach?.(btn => {
+          const on = parsed !== null && String(parsed) === btn.dataset?.v;
+          btn.classList?.toggle?.("on", on);
+          btn.setAttribute?.("aria-pressed", String(on));
+        });
+      }
+    }
+  }
   else if (/^c-(weight|steps|sleep|bf|waist)$/.test(el.id)) { const k = el.id.slice(2); S.cfill = {...(S.cfill || {}), [S.date]: {...(S.cfill?.[S.date] || {}), [k]: el.value}}; }
 });
 document.addEventListener("change", async ev => {
