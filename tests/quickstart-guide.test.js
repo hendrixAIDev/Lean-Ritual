@@ -42,6 +42,7 @@ function makeMemoryStore(initialDocs = {}) {
     docs,
     writes,
     failProfileWrites: false,
+    onProfileCommit: null,
     async get(p) { return docs.has(p) ? clone(docs.get(p)) : null; },
     async set(p, d) {
       if (store.failProfileWrites && p === 'app/profile') {
@@ -54,7 +55,11 @@ function makeMemoryStore(initialDocs = {}) {
     },
     async del(p) { writes.push({ op: 'del', path: p }); docs.delete(p); },
     async commit(changes) {
-      if (store.failProfileWrites && changes.some(ch => ch.path === 'app/profile' && ch.after !== undefined)) {
+      const hasProfileWrite = changes.some(ch => ch.path === 'app/profile' && ch.after !== undefined);
+      if (hasProfileWrite && typeof store.onProfileCommit === 'function') {
+        await store.onProfileCommit(changes);
+      }
+      if (store.failProfileWrites && hasProfileWrite) {
         const err = new Error('network');
         err.code = 'network';
         throw err;
@@ -702,7 +707,9 @@ test('7. Editing profile preserves guideDismissed; dismiss/reopen never pollutes
   await env.click('qs-dismiss');
   env.store.failProfileWrites = false;
   vm.runInContext('S.guideCollapsed = true; S.guideVeteranAutoHide = true;', env.ctx);
-  assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"');
+  const pendingBeforeLogout = JSON.parse(env.localStorage.getItem('bj-user:u1:bj-guide-pending'));
+  assert.equal(pendingBeforeLogout.state, 'dismissed');
+  assert.ok(typeof pendingBeforeLogout.id === 'string' && pendingBeforeLogout.id.length > 0);
   await env.click('logout');
   assert.equal(env.localStorage.getItem('bj-user:u1:bj-guide-pending'), null, 'logout must clear user-scoped guide pending intent');
   assert.equal(vm.runInContext('S.guideCollapsed', env.ctx), false);
@@ -712,6 +719,10 @@ test('7. Editing profile preserves guideDismissed; dismiss/reopen never pollutes
 test('8. Failed cloud writes preserve pending dismiss and reopen choices across reloads and flush when writes recover', async () => {
   const sharedStore = makeMemoryStore();
   const sharedLs = makeStorage({ 'bj-lang': 'zh' });
+  const readLsPending = () => {
+    const raw = sharedLs.getItem('bj-user:u1:bj-guide-pending');
+    return raw ? JSON.parse(raw) : null;
+  };
 
   // 8a. Brand-new account (cloud guideDismissed: false) -> failed qs-dismiss -> reload keeps hidden -> recovery flushes to cloud
   const s1 = mountEnv({ store: sharedStore, localStorage: sharedLs });
@@ -723,7 +734,8 @@ test('8. Failed cloud writes preserve pending dismiss and reopen choices across 
   assert.equal(vm.runInContext('isQuickstartVisible()', s1.ctx), false, 'UI stays dismissed despite failed write');
   assert.doesNotMatch(s1.appEl.innerHTML, /id="quickstart-card"/);
   assert.equal((await sharedStore.get('app/profile')).guideDismissed, false, 'cloud still has stale false');
-  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"');
+  assert.equal(readLsPending()?.state, 'dismissed');
+  assert.ok(typeof readLsPending()?.id === 'string' && readLsPending().id.length > 0);
 
   // Reload while cloud still has guideDismissed: false AND writes still fail
   const s2 = mountEnv({ store: sharedStore, localStorage: sharedLs });
@@ -731,7 +743,7 @@ test('8. Failed cloud writes preserve pending dismiss and reopen choices across 
   await new Promise(r => setImmediate(r));
   assert.equal(vm.runInContext('isQuickstartVisible()', s2.ctx), false, 'pending dismiss must override explicit cloud guideDismissed=false on reload');
   assert.doesNotMatch(s2.appEl.innerHTML, /id="quickstart-card"/);
-  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"dismissed"', 'pending flag stays until cloud write succeeds');
+  assert.equal(readLsPending()?.state, 'dismissed', 'pending flag stays until cloud write succeeds');
 
   // Writes recover -> reload flushes guideDismissed: true to cloud and clears pending key
   sharedStore.failProfileWrites = false;
@@ -756,7 +768,7 @@ test('8. Failed cloud writes preserve pending dismiss and reopen choices across 
   assert.equal(vm.runInContext('isQuickstartVisible()', s3.ctx), true, 'UI stays open despite failed reopen write');
   assert.match(s3.appEl.innerHTML, /id="quickstart-card"/);
   assert.equal((await sharedStore.get('app/profile')).guideDismissed, true, 'cloud still has stale true');
-  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"open"');
+  assert.equal(readLsPending()?.state, 'open');
 
   // Reload while cloud still has guideDismissed: true AND writes still fail
   const s4 = mountEnv({ store: sharedStore, localStorage: sharedLs });
@@ -764,7 +776,7 @@ test('8. Failed cloud writes preserve pending dismiss and reopen choices across 
   await new Promise(r => setImmediate(r));
   assert.equal(vm.runInContext('isQuickstartVisible()', s4.ctx), true, 'pending open must override explicit cloud guideDismissed=true on reload');
   assert.match(s4.appEl.innerHTML, /id="quickstart-card"/);
-  assert.equal(sharedLs.getItem('bj-user:u1:bj-guide-pending'), '"open"');
+  assert.equal(readLsPending()?.state, 'open');
 
   // Writes recover -> reload flushes guideDismissed: false to cloud and clears pending key
   sharedStore.failProfileWrites = false;
@@ -781,7 +793,7 @@ test('8. Failed cloud writes preserve pending dismiss and reopen choices across 
   assert.equal(vm.runInContext('isQuickstartVisible()', s5Fresh.ctx), true);
   assert.match(s5Fresh.appEl.innerHTML, /id="quickstart-card"/);
 
-  // 8c. If cloud already matches pending intent at loadAll(), clears pending key with zero extra profile writes
+  // 8c. Legacy bare string pending intent is normalized cleanly and cleared with zero extra writes if cloud already matches
   sharedLs.setItem('bj-user:u1:bj-guide-pending', '"open"');
   const writesBefore = sharedStore.writes.length;
   const s6 = mountEnv({ store: sharedStore, localStorage: sharedLs });
@@ -898,4 +910,248 @@ test('9. Strict record validation ignores empty/malformed checkin, meal, workout
   vm.runInContext(`S.days["2026-11-20"].workout = { key: "push", done: true, exercises: [] }; render();`, env.ctx);
   assert.equal(vm.runInContext('quickstartDoneCount()', env.ctx), 4);
   assert.match(env.appEl.innerHTML, /4 \/ 4/);
+});
+
+test('10. Linearizable operation IDs prevent ABA races across rapid dismiss/reopen sequences and background flushes', async () => {
+  const flushMicrotasks = async () => {
+    for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r));
+  };
+  const readPending = ctx => {
+    const p = vm.runInContext('readGuidePending()', ctx);
+    return p ? { state: p.state, id: p.id } : null;
+  };
+
+  // 10a. Exact 3-step ABA race (dismiss #1 -> reopen #2 -> dismiss #3):
+  //      Sub-case 1: All 3 clicks happen before #1 resolves; #1 succeeds while #2 is superseded and #3 fails (network read/write outage).
+  {
+    const store = makeMemoryStore();
+    const ls = makeStorage({ 'bj-lang': 'zh' });
+    const env = mountEnv({ store, localStorage: ls });
+    await env.submitForm(BASE_SETUP_DATA);
+
+    let releaseFirst;
+    let commitCall = 0;
+    let failGetAfterFirst = false;
+    const origGet = store.get.bind(store);
+    store.get = async p => {
+      if (failGetAfterFirst && p === 'app/profile') {
+        const err = new Error('network');
+        err.code = 'network';
+        throw err;
+      }
+      return origGet(p);
+    };
+    store.onProfileCommit = () => {
+      commitCall++;
+      if (commitCall === 1) return new Promise(res => { releaseFirst = res; });
+      const err = new Error('network');
+      err.code = 'network';
+      return Promise.reject(err);
+    };
+
+    const p1 = env.click('qs-dismiss');
+    await flushMicrotasks();
+    assert.equal(commitCall, 1, 'dismiss #1 commit is held in flight');
+    const id1 = vm.runInContext('readGuidePending()?.id', env.ctx);
+
+    await env.click('tab', 'me');
+    const p2 = env.click('qs-reopen');
+    const id2 = vm.runInContext('readGuidePending()?.id', env.ctx);
+    assert.notEqual(id2, id1);
+
+    const p3 = env.click('qs-dismiss');
+    const id3 = vm.runInContext('readGuidePending()?.id', env.ctx);
+    assert.notEqual(id3, id1);
+    assert.notEqual(id3, id2);
+
+    // Release #1 to succeed while network drops for subsequent #2/#3 operations
+    failGetAfterFirst = true;
+    releaseFirst();
+    await Promise.all([p1, p2, p3]);
+    await flushMicrotasks();
+
+    const pendingAfter = readPending(env.ctx);
+    assert.deepEqual(pendingAfter, { state: 'dismissed', id: id3 }, 'dismiss #1 ACK must NOT clear dismiss #3 pending marker');
+    assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), false);
+    assert.doesNotMatch(env.appEl.innerHTML, /id="quickstart-card"/);
+  }
+
+  //      Sub-case 2: #1 succeeds (cloud=true), #2 is held in commit -> #3 clicked -> #2 succeeds (cloud=false!) -> #3 fails!
+  {
+    const store = makeMemoryStore();
+    const ls = makeStorage({ 'bj-lang': 'zh' });
+    const env = mountEnv({ store, localStorage: ls });
+    await env.submitForm(BASE_SETUP_DATA);
+
+    // Dismiss #1 succeeds -> cloud guideDismissed = true
+    await env.click('qs-dismiss');
+    assert.equal((await store.get('app/profile')).guideDismissed, true);
+
+    // Hold Reopen #2 commit open inside store.commit, then fail Dismiss #3
+    let releaseSecond;
+    let commitSeq = 0;
+    store.onProfileCommit = () => {
+      commitSeq++;
+      if (commitSeq === 1) return new Promise(res => { releaseSecond = res; });
+      const err = new Error('network');
+      err.code = 'network';
+      return Promise.reject(err);
+    };
+
+    await env.click('tab', 'me');
+    const p2 = env.click('qs-reopen');
+    await flushMicrotasks();
+    assert.equal(commitSeq, 1, 'reopen #2 commit is held in flight');
+
+    // Before #2 resolves, user clicks Dismiss #3
+    const p3 = env.click('qs-dismiss');
+    const id3 = vm.runInContext('readGuidePending()?.id', env.ctx);
+
+    // Let #2 commit succeed (cloud becomes guideDismissed: false!) while #3 fails
+    releaseSecond();
+    await Promise.all([p2, p3]);
+    await flushMicrotasks();
+
+    assert.equal((await store.get('app/profile')).guideDismissed, false, 'cloud reflects #2 (false) since #3 failed');
+    assert.deepEqual(readPending(env.ctx), { state: 'dismissed', id: id3 }, '#2 ACK must not clear #3 pending marker');
+    assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), false, 'UI stays dismissed');
+    assert.doesNotMatch(env.appEl.innerHTML, /id="quickstart-card"/);
+
+    // Reload while cloud still has guideDismissed=false and writes still fail -> Quick Start stays dismissed!
+    store.onProfileCommit = null;
+    store.failProfileWrites = true;
+    const reloadedFail = mountEnv({ store, localStorage: ls });
+    await reloadedFail.loadAndRender();
+    await flushMicrotasks();
+    assert.equal(vm.runInContext('isQuickstartVisible()', reloadedFail.ctx), false, 'reload must keep Quick Start dismissed');
+    assert.doesNotMatch(reloadedFail.appEl.innerHTML, /id="quickstart-card"/);
+    assert.deepEqual(readPending(reloadedFail.ctx), { state: 'dismissed', id: id3 });
+
+    // Recovery reload -> flushes guideDismissed=true to cloud and clears bj-guide-pending
+    store.failProfileWrites = false;
+    const reloadedOk = mountEnv({ store, localStorage: ls });
+    await reloadedOk.loadAndRender();
+    await flushMicrotasks();
+    assert.equal((await store.get('app/profile')).guideDismissed, true, 'recovery reload flushes dismiss to cloud');
+    assert.equal(ls.getItem('bj-user:u1:bj-guide-pending'), null);
+    assert.equal(vm.runInContext('isQuickstartVisible()', reloadedOk.ctx), false);
+  }
+
+  // 10b. Inverse 3-step race (reopen #1 -> dismiss #2 -> reopen #3 where #1 & #2 succeed leaving cloud=true, and #3 fails)
+  {
+    const store = makeMemoryStore();
+    const ls = makeStorage({ 'bj-lang': 'zh' });
+    const env = mountEnv({ store, localStorage: ls });
+    await env.submitForm(BASE_SETUP_DATA);
+    await env.click('qs-dismiss');
+    assert.equal((await store.get('app/profile')).guideDismissed, true);
+
+    // Reopen #1 succeeds -> cloud guideDismissed = false
+    await env.click('tab', 'me');
+    await env.click('qs-reopen');
+    assert.equal((await store.get('app/profile')).guideDismissed, false);
+
+    // Hold Dismiss #2 commit open, click Reopen #3 from Me, release #2 (cloud=true), fail #3
+    let releaseDismiss2;
+    let commitSeq = 0;
+    store.onProfileCommit = () => {
+      commitSeq++;
+      if (commitSeq === 1) return new Promise(res => { releaseDismiss2 = res; });
+      const err = new Error('network');
+      err.code = 'network';
+      return Promise.reject(err);
+    };
+
+    const p2 = env.click('qs-dismiss');
+    await flushMicrotasks();
+    assert.equal(commitSeq, 1);
+
+    await env.click('tab', 'me');
+    const p3 = env.click('qs-reopen');
+    const id3 = vm.runInContext('readGuidePending()?.id', env.ctx);
+
+    releaseDismiss2();
+    await Promise.all([p2, p3]);
+    await flushMicrotasks();
+
+    assert.equal((await store.get('app/profile')).guideDismissed, true);
+    assert.deepEqual(readPending(env.ctx), { state: 'open', id: id3 });
+    assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), true);
+    assert.match(env.appEl.innerHTML, /id="quickstart-card"/);
+
+    // Reload while cloud=true and writes still fail -> stays open
+    store.onProfileCommit = null;
+    store.failProfileWrites = true;
+    const rFail = mountEnv({ store, localStorage: ls });
+    await rFail.loadAndRender();
+    await flushMicrotasks();
+    assert.equal(vm.runInContext('isQuickstartVisible()', rFail.ctx), true);
+    assert.match(rFail.appEl.innerHTML, /id="quickstart-card"/);
+    assert.deepEqual(readPending(rFail.ctx), { state: 'open', id: id3 });
+
+    // Recovery reload -> flushes guideDismissed=false and clears bj-guide-pending
+    store.failProfileWrites = false;
+    const rOk = mountEnv({ store, localStorage: ls });
+    await rOk.loadAndRender();
+    await flushMicrotasks();
+    assert.equal((await store.get('app/profile')).guideDismissed, false);
+    assert.equal(ls.getItem('bj-user:u1:bj-guide-pending'), null);
+    assert.equal(vm.runInContext('isQuickstartVisible()', rOk.ctx), true);
+  }
+
+  // 10c. User action racing with loadAll() background flush preserves the newer user action
+  {
+    const store = makeMemoryStore({
+      'app/profile': {
+        sex: 'm', age: 28, height: 176, weight: 72, bf: 15, steps: 9500,
+        exp: 'new', stage: 'cut', trainDays: [1, 3, 5], slot: 'eve', equipment: 'gym',
+        startDate: '2026-11-18', injuries: [], supps: [], lang: 'zh', guideDismissed: false
+      }
+    });
+    const ls = makeStorage({
+      'bj-lang': 'zh',
+      'bj-user:u1:bj-guide-pending': JSON.stringify({ state: 'dismissed', id: 'old-op-1' })
+    });
+
+    let releaseBgFlush;
+    let commitSeq = 0;
+    store.onProfileCommit = () => {
+      commitSeq++;
+      if (commitSeq === 1) return new Promise(res => { releaseBgFlush = res; });
+      const err = new Error('network');
+      err.code = 'network';
+      return Promise.reject(err);
+    };
+
+    const env = mountEnv({ store, localStorage: ls });
+    await env.loadAndRender();
+    await flushMicrotasks();
+    assert.equal(commitSeq, 1, 'loadAll() background flush commit is in flight');
+    assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), false);
+
+    // While background flush ("dismissed", old-op-1) is in flight, user goes to Me and clicks Reopen (fails)
+    await env.click('tab', 'me');
+    const pReopen = env.click('qs-reopen');
+    const newId = vm.runInContext('readGuidePending()?.id', env.ctx);
+    assert.notEqual(newId, 'old-op-1');
+
+    // Release background flush (succeeds writing cloud=true), while user's newer reopen fails
+    releaseBgFlush();
+    await pReopen;
+    await flushMicrotasks();
+
+    assert.equal((await store.get('app/profile')).guideDismissed, true, 'background flush committed old dismiss');
+    assert.deepEqual(readPending(env.ctx), { state: 'open', id: newId }, 'background flush ACK must NOT clear newer user reopen opId');
+    assert.equal(vm.runInContext('isQuickstartVisible()', env.ctx), true, 'UI stays open for newer user action');
+    assert.match(env.appEl.innerHTML, /id="quickstart-card"/);
+
+    // Reload when writes recover -> flushes newer reopen (guideDismissed=false) and clears bj-guide-pending
+    store.onProfileCommit = null;
+    const rOk = mountEnv({ store, localStorage: ls });
+    await rOk.loadAndRender();
+    await flushMicrotasks();
+    assert.equal((await store.get('app/profile')).guideDismissed, false, 'recovery flush persists newer user reopen');
+    assert.equal(ls.getItem('bj-user:u1:bj-guide-pending'), null);
+    assert.equal(vm.runInContext('isQuickstartVisible()', rOk.ctx), true);
+  }
 });

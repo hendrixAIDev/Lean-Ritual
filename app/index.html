@@ -2403,16 +2403,16 @@ async function loadAll(){
     await restoreWorkouts();
     const fb = await S.store.list("feedback", {order:"createdAt", limit:200});
     S.feedback = fb.map(d => d.data).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
-    const pendingGuide = getGuidePending();
-    if (S.profile && pendingGuide) {
-      const desired = pendingGuide === "dismissed";
+    const pendingGuide = readGuidePending();
+    if (S.profile && pendingGuide && !inFlightGuideOps.has(pendingGuide.id)) {
+      const desired = pendingGuide.state === "dismissed";
       if (S.profile.guideDismissed === desired) {
-        setGuidePending("");
+        clearGuidePending(pendingGuide.id);
       } else if (S.cloud && S.store && (typeof navigator === "undefined" || navigator.onLine !== false)) {
-        flushPendingGuideIntent(pendingGuide);
+        flushGuidePending(pendingGuide);
       }
     }
-    S.guideVeteranAutoHide = !!(S.profile && S.profile.guideDismissed === undefined && getGuidePending() !== "open" && quickstartDoneCount() === 4);
+    S.guideVeteranAutoHide = !!(S.profile && S.profile.guideDismissed === undefined && readGuidePending()?.state !== "open" && quickstartDoneCount() === 4);
   } catch (e) { console.error(e); S.loadError = true; }
 }
 
@@ -2774,12 +2774,12 @@ async function submitSetup(form){
     updatedAt:new Date().toISOString()};
   const today = todayStr();
   const chosenLang = validLang(S.explicitLang) || readPendingLang();
-  const pendingGuide = prev.startDate ? getGuidePending() : "";
+  const pendingGuide = prev.startDate ? readGuidePending() : null;
   const apply = p => {
     Object.assign(p, fields);
     if (chosenLang) p.lang = chosenLang;
     if (!prev.startDate && typeof p.guideDismissed !== "boolean") p.guideDismissed = false;
-    else if (pendingGuide) p.guideDismissed = pendingGuide === "dismissed";
+    else if (pendingGuide && readGuidePending()?.id === pendingGuide.id) p.guideDismissed = pendingGuide.state === "dismissed";
     p.startDate = p.startDate || today; p.kcalAdjust = p.kcalAdjust || 0; p.deloadEvery = p.deloadEvery || 9; p.schema = SCHEMA_VERSION;
   };
   S.busy.setup = true; if (btn) btn.disabled = true;
@@ -2791,8 +2791,8 @@ async function submitSetup(form){
       await write("profileHistory/" + h.id, h);
     }
     await updateProfile(apply);
-    if (!prev.startDate) { setGuidePending(""); S.guideVeteranAutoHide = false; S.guideCollapsed = false; }
-    else if (pendingGuide && getGuidePending() === pendingGuide) { setGuidePending(""); }
+    if (!prev.startDate) { clearGuidePending(); S.guideVeteranAutoHide = false; S.guideCollapsed = false; }
+    else if (pendingGuide) { clearGuidePending(pendingGuide.id); }
     if (chosenLang) clearPendingLang();
     if (h) { S.profileHistory = [h, ...(S.profileHistory||[])]; resetPage("profileHistory"); }
     S.editing = false; S.tab = "today";
@@ -3277,20 +3277,43 @@ function cardioCard(date, day){
 
 const GUIDE_PENDING_KEY = "bj-guide-pending";
 const CHECKIN_FIELDS = ["weight", "steps", "sleep", "bf", "waist"];
-function getGuidePending(){
-  const v = lsGet(GUIDE_PENDING_KEY, "");
-  return v === "dismissed" || v === "open" ? v : "";
+let guideOpSeq = 0;
+const inFlightGuideOps = new Set();
+function readGuidePending(){
+  const v = lsGet(GUIDE_PENDING_KEY, null);
+  if (v === "dismissed" || v === "open") return { state: v, id: "legacy-" + v };
+  if (v && typeof v === "object" && !Array.isArray(v) && (v.state === "dismissed" || v.state === "open") && typeof v.id === "string" && v.id.trim() !== "") {
+    return { state: v.state, id: v.id };
+  }
+  return null;
 }
-function setGuidePending(val){
-  if (val === "dismissed" || val === "open") lsSet(GUIDE_PENDING_KEY, val);
-  else lsDel(GUIDE_PENDING_KEY);
+function writeGuidePending(state){
+  if (state !== "dismissed" && state !== "open") { lsDel(GUIDE_PENDING_KEY); return null; }
+  const id = uid() + "-" + (++guideOpSeq);
+  lsSet(GUIDE_PENDING_KEY, { state, id });
+  return id;
 }
-function flushPendingGuideIntent(intent){
-  if (intent !== "dismissed" && intent !== "open") return Promise.resolve();
-  const desired = intent === "dismissed";
-  return updateProfile(p => { p.guideDismissed = desired; }, { silent: true })
-    .then(() => { if (getGuidePending() === intent) setGuidePending(""); })
-    .catch(() => {});
+function clearGuidePending(expectedId){
+  if (expectedId == null) { lsDel(GUIDE_PENDING_KEY); return; }
+  if (readGuidePending()?.id === expectedId) lsDel(GUIDE_PENDING_KEY);
+}
+function flushGuidePending(pending){
+  if (!pending || (pending.state !== "dismissed" && pending.state !== "open") || !pending.id) return Promise.resolve();
+  if (inFlightGuideOps.has(pending.id)) return Promise.resolve();
+  const opId = pending.id;
+  const desired = pending.state === "dismissed";
+  inFlightGuideOps.add(opId);
+  return updateProfile(p => {
+    const cur = readGuidePending();
+    if (cur && cur.id === opId) p.guideDismissed = desired;
+  }, { silent: true })
+    .then(() => { clearGuidePending(opId); })
+    .catch(() => {})
+    .finally(() => {
+      inFlightGuideOps.delete(opId);
+      const cur = readGuidePending();
+      if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+    });
 }
 function isFiniteNumVal(v){
   if (typeof v === "number") return Number.isFinite(v);
@@ -3342,9 +3365,9 @@ function quickstartDoneCount(){
 }
 function isQuickstartVisible(){
   if (!S.profile) return false;
-  const pending = getGuidePending();
-  if (pending === "dismissed") return false;
-  if (pending === "open") return true;
+  const pending = readGuidePending();
+  if (pending?.state === "dismissed") return false;
+  if (pending?.state === "open") return true;
   if (S.profile.guideDismissed === true) return false;
   if (S.profile.guideDismissed === false) return true;
   return !S.guideVeteranAutoHide;
@@ -5709,7 +5732,8 @@ document.addEventListener("click", async ev => {
     case "qs-dismiss": {
       if (!S.profile) break;
       syncCardioInputsFromDom(S.date);
-      setGuidePending("dismissed");
+      const opId = writeGuidePending("dismissed");
+      inFlightGuideOps.add(opId);
       S.profile.guideDismissed = true;
       S.guideCollapsed = false;
       render();
@@ -5718,14 +5742,23 @@ document.addEventListener("click", async ev => {
       toast(msg);
       announce(msg);
       try {
-        await updateProfile(p => { p.guideDismissed = true; });
-        if (getGuidePending() === "dismissed") setGuidePending("");
+        await updateProfile(p => {
+          const cur = readGuidePending();
+          if (!cur || cur.id === opId) p.guideDismissed = true;
+        });
+        clearGuidePending(opId);
       } catch {}
+      finally {
+        inFlightGuideOps.delete(opId);
+        const cur = readGuidePending();
+        if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+      }
       break;
     }
     case "qs-reopen": {
       if (!S.profile) break;
-      setGuidePending("open");
+      const opId = writeGuidePending("open");
+      inFlightGuideOps.add(opId);
       S.guideVeteranAutoHide = false;
       S.guideCollapsed = false;
       S.profile.guideDismissed = false;
@@ -5735,10 +5768,18 @@ document.addEventListener("click", async ev => {
       if (typeof window !== "undefined" && typeof window.scrollTo === "function") window.scrollTo(0, 0);
       focusEl($("#qs-heading") || $("#qs-toggle"));
       try {
-        await updateProfile(p => { p.guideDismissed = false; });
-        if (getGuidePending() === "open") setGuidePending("");
+        await updateProfile(p => {
+          const cur = readGuidePending();
+          if (!cur || cur.id === opId) p.guideDismissed = false;
+        });
+        clearGuidePending(opId);
         if (S.tab === "today") focusEl($("#qs-heading") || $("#qs-toggle"));
       } catch {}
+      finally {
+        inFlightGuideOps.delete(opId);
+        const cur = readGuidePending();
+        if (S.profile && cur) S.profile.guideDismissed = cur.state === "dismissed";
+      }
       break;
     }
     case "qs-go-checkin": {
@@ -6178,6 +6219,7 @@ function clearUserLocal(id = S.uid || storageUser){
   S.cardioDraft = {};
   S.guideCollapsed = false;
   S.guideVeteranAutoHide = false;
+  inFlightGuideOps.clear();
   if (!id) return;
   resetRestTimerState(id);
   try {
